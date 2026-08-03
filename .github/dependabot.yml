@@ -1,0 +1,75 @@
+# Keeps the three dependency surfaces current.
+#
+# This exists to make the `npm audit --audit-level=high` gate in ci.yml
+# sustainable. Without something watching upstream, that gate stays quiet until
+# an advisory lands, and then it fires on whatever unrelated PR happens to be
+# open next. Better to get a small dependency PR when the fix ships.
+#
+# Updates are grouped so a quiet week produces one PR rather than nine, and
+# minor/patch bumps are separated from majors — majors need a human, because
+# React 19, Tailwind 4 and recharts 3 all carry real refactor risk here.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /cloudbank/web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Families that CANNOT be bumped independently get their own group, so
+      # Dependabot proposes them together instead of opening PRs that are each
+      # individually unmergeable. @vitejs/plugin-react peers on an exact Vite
+      # major, so a lone `vite` bump fails to resolve.
+      vite:
+        patterns: ["vite", "@vitejs/*", "vitest", "@vitest/*"]
+      eslint:
+        # typescript belongs here: typescript-eslint peers on an exact TS
+        # range, so the two have to be proposed together once support lands.
+        patterns: ["eslint", "@eslint/*", "eslint-plugin-*", "typescript-eslint", "globals", "typescript"]
+      web-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # These majors are pinned; revisit deliberately, not via a bot.
+      # Tailwind 4 rewrites the PostCSS plugin form and the config format;
+      # recharts 3 and React 19 both change APIs the spending views rely on.
+      - dependency-name: react
+        update-types: [version-update:semver-major]
+      - dependency-name: react-dom
+        update-types: [version-update:semver-major]
+      - dependency-name: tailwindcss
+        update-types: [version-update:semver-major]
+      - dependency-name: recharts
+        update-types: [version-update:semver-major]
+      # TypeScript 7 is blocked UPSTREAM, not by our code: typescript-eslint
+      # 8.65.0 (the latest; there is no v9) peers `typescript >=4.8.4 <6.1.0`,
+      # so the install cannot resolve. Forcing it with --legacy-peer-deps would
+      # silently disable type-aware linting. Lift this once typescript-eslint
+      # widens its peer range.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+
+  # Note on websockets: its major bumps are deliberately NOT ignored, even
+  # though main.py depends on an exception name that moved in v15
+  # (InvalidStatusCode -> InvalidStatus). test_main_errors.py now covers both
+  # upstream failure handlers, so CI actually validates such a bump instead of
+  # rubber-stamping it — which is a better guard than a blanket ignore, and it
+  # is how the v16 bump was accepted on evidence.
+  - package-ecosystem: uv
+    directory: /cloudbank/proxy
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      proxy-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

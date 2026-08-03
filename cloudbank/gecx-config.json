@@ -1,0 +1,10 @@
+{
+  "gcp_project_id": "cxas-labs-emea",
+  "location": "us",
+  "app_name": "Cloudbank",
+  "deployed_app_id": "cloudbank",
+  "app_dir": "cxas_app/",
+  "model": "gemini-3.1-flash-live",
+  "modality": "audio",
+  "default_channel": "audio"
+}

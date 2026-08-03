@@ -1,0 +1,369 @@
+{
+  "user": {
+    "first_name": "Sarah",
+    "last_name": "Okonkwo",
+    "age": 56,
+    "location": "Bristol, UK",
+    "employment": "Head of Operations",
+    "email": "sarah.okonkwo@example.com",
+    "goals": [
+      "Overpay the mortgage before retirement",
+      "Keep an emergency fund topped up"
+    ]
+  },
+  "accounts": {
+    "current": {
+      "name": "Cloudbank Everyday Account",
+      "balance": 9340.15,
+      "currency": "GBP"
+    },
+    "mortgage": {
+      "balance": 96500.0,
+      "address": "8 Clifton Vale",
+      "interest_rate": 4.05,
+      "rate_type": "Fixed",
+      "term_remaining": "7 Years, 6 Mos",
+      "next_payment": {
+        "amount": 1120.0,
+        "day_of_month": 2
+      }
+    }
+  },
+  "transactions": [
+    {
+      "id": "txn-salary-s",
+      "days_ago": 1,
+      "vendor": "Salary",
+      "category": "income",
+      "amount": -6100.0
+    },
+    {
+      "id": "txn-mortgage-s",
+      "days_ago": 2,
+      "vendor": "Cloudbank Mortgage",
+      "category": "bills",
+      "amount": 1120.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mortgage-s-2",
+      "days_ago": 32,
+      "vendor": "Cloudbank Mortgage",
+      "category": "bills",
+      "amount": 1120.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mortgage-s-3",
+      "days_ago": 62,
+      "vendor": "Cloudbank Mortgage",
+      "category": "bills",
+      "amount": 1120.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-council-s",
+      "days_ago": 4,
+      "vendor": "Bristol City Council",
+      "category": "bills",
+      "amount": 215.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-council-s-2",
+      "days_ago": 34,
+      "vendor": "Bristol City Council",
+      "category": "bills",
+      "amount": 215.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-council-s-3",
+      "days_ago": 64,
+      "vendor": "Bristol City Council",
+      "category": "bills",
+      "amount": 215.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-s",
+      "days_ago": 6,
+      "vendor": "OVO Energy",
+      "category": "bills",
+      "amount": 118.2,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-s-2",
+      "days_ago": 36,
+      "vendor": "OVO Energy",
+      "category": "bills",
+      "amount": 118.2,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-s-3",
+      "days_ago": 66,
+      "vendor": "OVO Energy",
+      "category": "bills",
+      "amount": 118.2,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-broadband-s",
+      "days_ago": 11,
+      "vendor": "BT",
+      "category": "bills",
+      "amount": 54.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-broadband-s-2",
+      "days_ago": 41,
+      "vendor": "BT",
+      "category": "bills",
+      "amount": 54.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-broadband-s-3",
+      "days_ago": 71,
+      "vendor": "BT",
+      "category": "bills",
+      "amount": 54.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-insurance",
+      "days_ago": 3,
+      "vendor": "Aviva Home Insurance",
+      "category": "subscriptions",
+      "amount": 96.0,
+      "is_subscription": true,
+      "is_anomaly": true,
+      "renewal_days_ago": 3
+    },
+    {
+      "id": "txn-insurance-2",
+      "days_ago": 33,
+      "vendor": "Aviva Home Insurance",
+      "category": "subscriptions",
+      "amount": 48.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-insurance-3",
+      "days_ago": 63,
+      "vendor": "Aviva Home Insurance",
+      "category": "subscriptions",
+      "amount": 48.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-natgeo",
+      "days_ago": 16,
+      "vendor": "National Trust",
+      "category": "subscriptions",
+      "amount": 7.5,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-natgeo-2",
+      "days_ago": 46,
+      "vendor": "National Trust",
+      "category": "subscriptions",
+      "amount": 7.5,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-natgeo-3",
+      "days_ago": 76,
+      "vendor": "National Trust",
+      "category": "subscriptions",
+      "amount": 7.5,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-waitrose",
+      "days_ago": 2,
+      "vendor": "Waitrose",
+      "category": "groceries",
+      "amount": 88.4
+    },
+    {
+      "id": "txn-waitrose-2",
+      "days_ago": 10,
+      "vendor": "Waitrose",
+      "category": "groceries",
+      "amount": 94.15
+    },
+    {
+      "id": "txn-waitrose-3",
+      "days_ago": 18,
+      "vendor": "Waitrose",
+      "category": "groceries",
+      "amount": 76.3
+    },
+    {
+      "id": "txn-waitrose-4",
+      "days_ago": 34,
+      "vendor": "Waitrose",
+      "category": "groceries",
+      "amount": 91.05
+    },
+    {
+      "id": "txn-waitrose-5",
+      "days_ago": 43,
+      "vendor": "Waitrose",
+      "category": "groceries",
+      "amount": 85.6
+    },
+    {
+      "id": "txn-waitrose-6",
+      "days_ago": 64,
+      "vendor": "Waitrose",
+      "category": "groceries",
+      "amount": 79.9
+    },
+    {
+      "id": "txn-ms-s",
+      "days_ago": 7,
+      "vendor": "M&S Food",
+      "category": "groceries",
+      "amount": 42.1
+    },
+    {
+      "id": "txn-ms-s2",
+      "days_ago": 39,
+      "vendor": "M&S Food",
+      "category": "groceries",
+      "amount": 38.75
+    },
+    {
+      "id": "txn-ms-s3",
+      "days_ago": 68,
+      "vendor": "M&S Food",
+      "category": "groceries",
+      "amount": 45.2
+    },
+    {
+      "id": "txn-boston",
+      "days_ago": 5,
+      "vendor": "Boston Tea Party",
+      "category": "coffee_shops",
+      "amount": 4.4
+    },
+    {
+      "id": "txn-boston-2",
+      "days_ago": 22,
+      "vendor": "Boston Tea Party",
+      "category": "coffee_shops",
+      "amount": 8.8
+    },
+    {
+      "id": "txn-boston-3",
+      "days_ago": 41,
+      "vendor": "Boston Tea Party",
+      "category": "coffee_shops",
+      "amount": 4.4
+    },
+    {
+      "id": "txn-boston-4",
+      "days_ago": 59,
+      "vendor": "Boston Tea Party",
+      "category": "coffee_shops",
+      "amount": 4.4
+    },
+    {
+      "id": "txn-firstbus",
+      "days_ago": 8,
+      "vendor": "First Bus",
+      "category": "transport",
+      "amount": 62.0
+    },
+    {
+      "id": "txn-firstbus-2",
+      "days_ago": 37,
+      "vendor": "First Bus",
+      "category": "transport",
+      "amount": 62.0
+    },
+    {
+      "id": "txn-firstbus-3",
+      "days_ago": 67,
+      "vendor": "First Bus",
+      "category": "transport",
+      "amount": 62.0
+    },
+    {
+      "id": "txn-fuel-s",
+      "days_ago": 14,
+      "vendor": "Esso",
+      "category": "transport",
+      "amount": 58.3
+    },
+    {
+      "id": "txn-fuel-s2",
+      "days_ago": 46,
+      "vendor": "Esso",
+      "category": "transport",
+      "amount": 61.75
+    },
+    {
+      "id": "txn-rest-s",
+      "days_ago": 12,
+      "vendor": "The Ox",
+      "category": "eating_out",
+      "amount": 96.0
+    },
+    {
+      "id": "txn-rest-s2",
+      "days_ago": 45,
+      "vendor": "The Ox",
+      "category": "eating_out",
+      "amount": 88.5
+    },
+    {
+      "id": "txn-rest-s3",
+      "days_ago": 24,
+      "vendor": "Pasta Loco",
+      "category": "eating_out",
+      "amount": 54.2
+    },
+    {
+      "id": "txn-jl-s",
+      "days_ago": 19,
+      "vendor": "John Lewis",
+      "category": "shopping",
+      "amount": 145.0
+    },
+    {
+      "id": "txn-jl-s2",
+      "days_ago": 51,
+      "vendor": "John Lewis",
+      "category": "shopping",
+      "amount": 98.4
+    },
+    {
+      "id": "txn-garden",
+      "days_ago": 29,
+      "vendor": "Bristol Garden Centre",
+      "category": "shopping",
+      "amount": 67.2
+    },
+    {
+      "id": "txn-theatre",
+      "days_ago": 20,
+      "vendor": "Bristol Old Vic",
+      "category": "entertainment",
+      "amount": 72.0
+    },
+    {
+      "id": "txn-theatre-2",
+      "days_ago": 56,
+      "vendor": "Bristol Old Vic",
+      "category": "entertainment",
+      "amount": 64.0
+    }
+  ]
+}

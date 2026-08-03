@@ -1,0 +1,17 @@
+common_session_parameters:
+  first_name: "Chloe"
+
+conversations:
+  - conversation: persona_chloe_greeting
+    turns:
+      - user: "Hi!"
+        agent: "Good morning Chloe, I'm your Cloudbank assistant. How can I help you today?"
+      - user: "What can you do?"
+        agent: "Right now, I can take a quick look at your recent spending, pulling up transactions and flagging anything unusual. Fuller features, like savings and mortgage help, are arriving soon. Is there anything else I can help you with?"
+      - user: "Thanks, that's all"
+        agent: "Thank you Chloe, have a lovely day."
+    expectations:
+      - "The agent greets the customer by their first name (Chloe) somewhere in its first audible reply."
+      - "The agent identifies itself as the Cloudbank assistant at least once."
+      - "The agent does not invent banking features it cannot perform (no real balances, no transfers, no card actions, no booking)."
+    tags: [P0, persona, chloe, greeting]

@@ -1,0 +1,48 @@
+{
+    "name": "cloudbank",
+    "displayName": "Cloudbank",
+    "description": "Cloudbank conversational banking assistant — voice-first spend analysis, greeting the customer by name.",
+    "rootAgent": "root_agent",
+    "modelSettings": {
+        "model": "gemini-3.1-flash-live"
+    },
+    "languageSettings": {
+        "defaultLanguageCode": "en-GB"
+    },
+    "timeZoneSettings": {
+        "timeZone": "Europe/London"
+    },
+    "audioProcessingConfig": {
+        "synthesizeSpeechConfigs": {
+            "en-GB": {
+                "speakingRate": 1.0
+            }
+        }
+    },
+    "loggingSettings": {
+        "conversationLoggingSettings": {},
+        "evaluationAudioRecordingConfig": {
+            "gcsBucket": "gs://cloudbank-gecx-audio-evals"
+        }
+    },
+    "toolExecutionMode": "SEQUENTIAL",
+    "evaluationMetricsThresholds": {
+        "goldenEvaluationMetricsThresholds": {
+            "turnLevelMetricsThresholds": {
+                "semanticSimilaritySuccessThreshold": 3,
+                "overallToolInvocationCorrectnessThreshold": 1
+            },
+            "toolMatchingSettings": {
+                "extraToolCallBehavior": "ALLOW"
+            }
+        },
+        "goldenHallucinationMetricBehavior": "DISABLED"
+    },
+    "variableDeclarations": [
+        {
+            "name": "first_name",
+            "description": "Customer's first name from persona fixture; rendered into the greeting and closing via {first_name} templating.",
+            "schema": {"type": "STRING", "required": [], "default": ""}
+        }
+    ]
+}

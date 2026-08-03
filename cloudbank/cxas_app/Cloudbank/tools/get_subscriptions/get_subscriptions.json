@@ -1,0 +1,21 @@
+{
+  "displayName": "get_subscriptions",
+  "clientFunction": {
+    "name": "get_subscriptions",
+    "description": "Return the subscription set for a given month — the running monthly total and the individual subscription line items (e.g. Netflix, Spotify, British Gas). Use this when the customer asks about subscriptions, recurring charges, or monthly bills. Pass show=true when the customer asked to SEE the list (\"show me my subscriptions\", \"what are my recurring charges?\"): the app navigates to spending and surfaces the subscriptions-audit view. Returns { month_label, monthly_total, items:[{vendor,amount}] }.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "month": {
+          "type": "INTEGER",
+          "description": "Optional. 0 = current month (default), 1 = last month, 2 = two months ago."
+        },
+        "show": {
+          "type": "BOOLEAN",
+          "description": "Optional. When true, the app also navigates to the spending page and surfaces the subscriptions-audit view. Use when the customer asked to SEE the list; omit (or false) for pure data lookups like 'what am I paying for monthly?'."
+        }
+      },
+      "required": []
+    }
+  }
+}

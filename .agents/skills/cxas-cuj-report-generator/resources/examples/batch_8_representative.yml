@@ -1,0 +1,53 @@
+subintent_id: order-modify-items
+subintent_name: Modify Order Items
+parent_cuj: Digital Ordering
+turns:
+- speaker: Agent
+  text: Hello! Thanks for calling Dining Service. How can I help you today?
+- speaker: User
+  text: 'Hi, I placed order #9982, but I forgot to add an item. Can I still add something?'
+- speaker: Agent
+  text: Let me check the status of your order with the kitchen. If they haven't started cooking yet, we can modify it.
+- speaker: Agent
+  text: Checking order preparation progress.
+  tool_call:
+    name: get_order_status
+    payload:
+      order_id: '9982'
+    response:
+      status: success
+      order_state: received
+      modifiable: true
+- speaker: Agent
+  text: Yes, the order is still open for changes! What would you like to add?
+- speaker: User
+  text: Can you please add a Garlic Bread to that?
+- speaker: Agent
+  text: Adding Garlic Bread to active order and charging card.
+  tool_call:
+    name: modify_order_items
+    payload:
+      order_id: '9982'
+      add_items:
+      - name: Garlic Bread
+        quantity: 1
+    response:
+      status: success
+      updated: true
+      additional_charge: 5.99
+      new_total: 36.97
+- speaker: Agent
+  text: Perfect, I've added the Garlic Bread to your order! I charged the additional five ninety-nine to your card on file.
+- speaker: Agent
+  text: Is there anything else I can help you with today?
+- speaker: User
+  text: No, that's all. Thank you.
+- speaker: Agent
+  text: Thank you for calling Dining Service! Goodbye.
+  tool_call:
+    name: end_session
+    payload:
+      session_escalated: false
+      reason: Conversation completed successfully
+    response:
+      result: success

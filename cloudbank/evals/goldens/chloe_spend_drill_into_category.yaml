@@ -1,0 +1,21 @@
+common_session_parameters:
+  first_name: "Chloe"
+
+conversations:
+  - conversation: chloe_spend_drill_into_category
+    turns:
+      - user: "Hi!"
+        agent: "Good morning Chloe, I'm your Cloudbank assistant. How can I help you today?"
+      - user: "Show me my coffee shop spending."
+        tool_calls:
+          - action: get_category_breakdown
+            args:
+              category: coffee_shops
+              show: true
+        agent: "# silent — substantive content checked by expectations"
+    expectations:
+      - "The agent calls get_category_breakdown with category 'coffee_shops' and show=true (one tool call drives both the navigation/view-switch and the data fetch)."
+      - "The agent's response speaks the coffee-shop total in pounds (e.g. 'about £29')."
+      - "The spending turn is handled by spending_agent (not root_agent)."
+      - "The agent's response contains NO mention of \"transfer\", \"specialist\", \"colleague\", or \"let me\" handoff filler."
+    tags: [P0, chloe, spend_drilldown]

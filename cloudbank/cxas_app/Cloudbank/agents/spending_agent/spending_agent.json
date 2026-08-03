@@ -1,0 +1,13 @@
+{
+    "name": "spending_agent",
+    "displayName": "spending_agent",
+    "instruction": "agents/spending_agent/instruction.txt",
+    "tools": [
+        "get_overview",
+        "get_category_breakdown",
+        "get_vendor_breakdown",
+        "get_monthly_trend",
+        "get_subscriptions",
+        "search_help"
+    ]
+}

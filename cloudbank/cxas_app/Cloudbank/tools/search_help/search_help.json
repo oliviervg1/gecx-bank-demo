@@ -1,0 +1,7 @@
+{
+  "displayName": "search_help",
+  "googleSearchTool": {
+    "name": "search_help",
+    "description": "Search the web (via Google) for help on how to perform an action the customer cannot do inside their banking app. Primary use case: looking up how to cancel a third-party subscription such as Netflix, Spotify, or any other vendor whose recurring charge has appeared on the customer's statement. Pass a focused query like 'how to cancel Netflix subscription' or 'how to cancel Spotify in the UK'. If the search returns useful step-by-step guidance, summarise it in one short paragraph. If nothing relevant comes back, tell the customer you couldn't find clear instructions and suggest they check the provider's app or website."
+  }
+}

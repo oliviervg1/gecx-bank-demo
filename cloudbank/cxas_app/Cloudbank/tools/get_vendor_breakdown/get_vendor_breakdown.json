@@ -1,0 +1,25 @@
+{
+  "displayName": "get_vendor_breakdown",
+  "clientFunction": {
+    "name": "get_vendor_breakdown",
+    "description": "Return one month's totals and last 3 charges for a vendor. The vendor argument is matched case-insensitively as a SUBSTRING against transaction vendor names, so 'Tesco' matches both 'Tesco' and 'Tesco Express' (their totals are summed). Use this when the customer asks about a specific vendor — 'what have I spent at Tesco?', 'how much on Pret this month?'. Returns { matched_vendors:[…], month_label, total, count, recent:[{days_ago,amount}] }. An empty matched_vendors list with total=0 is a valid result — say plainly that you don't see any transactions for that vendor; do NOT treat it as an error. Pass show=true when the customer asked to SEE the vendor history (\"show me my Pret habit\"): the app navigates to spending and surfaces the vendor-history view.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "vendor": {
+          "type": "STRING",
+          "description": "Required. The vendor name as the customer said it. Matched case-insensitively as a substring."
+        },
+        "month": {
+          "type": "INTEGER",
+          "description": "Optional. 0 = current month (default), 1 = last month, 2 = two months ago."
+        },
+        "show": {
+          "type": "BOOLEAN",
+          "description": "Optional. When true, the app also navigates to the spending page and surfaces the vendor-history view. Use when the customer asked to SEE; omit (or false) for pure data lookups like 'how much have I spent at Tesco?'."
+        }
+      },
+      "required": ["vendor"]
+    }
+  }
+}
