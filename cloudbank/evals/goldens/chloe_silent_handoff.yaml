@@ -1,0 +1,26 @@
+common_session_parameters:
+  first_name: "Chloe"
+
+conversations:
+  - conversation: chloe_silent_handoff
+    turns:
+      - user: "Hi!"
+        agent: "Good morning Chloe, I'm your Cloudbank assistant. How can I help you today?"
+      - user: "Show me my spending."
+        tool_calls:
+          - action: get_overview
+            args:
+              show: true
+        agent: "# silent — substantive content checked by expectations"
+      - user: "Thanks, bye."
+        tool_calls:
+          - action: end_session
+            args: {}
+        agent: "# silent — substantive content checked by expectations"
+    expectations:
+      - "Turn 1: root_agent handles the greeting (no tool calls, warm reply using first_name)."
+      - "Turn 2: spending_agent handles the spending request (after silent transfer from root). Calls get_overview with show=true."
+      - "Turn 3: root_agent handles the closing (after silent transfer back from spending_agent). Calls end_session and speaks a warm sign-off."
+      - "Across all 3 turns, no spoken text contains \"transfer\", \"specialist\", \"colleague\", \"let me hand\", \"let me get\", or \"one moment\"."
+      - "The customer experiences a single continuous assistant; the two-agent topology is invisible at the speech layer."
+    tags: [P0, chloe, handoff, multi_agent]

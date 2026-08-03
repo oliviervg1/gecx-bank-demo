@@ -1,0 +1,13 @@
+@import '@fontsource-variable/inter';
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: theme('colors.brand.bg');
+  color: theme('colors.brand.text');
+  font-family: theme('fontFamily.sans');
+  -webkit-font-smoothing: antialiased;
+}

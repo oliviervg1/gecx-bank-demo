@@ -1,0 +1,26 @@
+{
+  "displayName": "get_monthly_trend",
+  "clientFunction": {
+    "name": "get_monthly_trend",
+    "description": "Return a 3-month spending trend (most-recent first), with a precomputed delta vs last month. THIS IS THE CANONICAL TREND SOURCE — never compute month-on-month deltas in your head; always call this tool. Optionally scoped to a single category OR a single vendor (mutually exclusive). Pass show=true when the customer wants to SEE the trend chart (\"how am I trending?\", \"how is Costa trending?\"): the app navigates to spending and surfaces the monthly-trend view scoped to the same category/vendor. Returns { scope:'overall'|'category'|'vendor', matched_vendors?:[…], months:[{label,total}], delta_vs_last_month }.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "category": {
+          "type": "STRING",
+          "description": "Optional. Scope the trend to a single category. Mutually exclusive with `vendor`.",
+          "enum": ["groceries", "coffee_shops", "eating_out", "subscriptions", "transport", "shopping", "bills", "entertainment"]
+        },
+        "vendor": {
+          "type": "STRING",
+          "description": "Optional. Scope the trend to a single vendor (case-insensitive substring match). Mutually exclusive with `category`."
+        },
+        "show": {
+          "type": "BOOLEAN",
+          "description": "Optional. When true, the app also navigates to the spending page and surfaces the monthly-trend view scoped to the same category/vendor. Use when the customer asked to SEE the trend; omit (or false) for pure data lookups."
+        }
+      },
+      "required": []
+    }
+  }
+}

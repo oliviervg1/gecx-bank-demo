@@ -1,0 +1,21 @@
+{
+  "displayName": "get_overview",
+  "clientFunction": {
+    "name": "get_overview",
+    "description": "Return the customer's spending headline for a given calendar month: total spend, the single biggest category, and (for the current month only) the flagged anomaly transaction if one exists. Call this as the natural first step on any spending question — it gives you the totals you need plus the anomaly hook for the warm 'I noticed Netflix renewed yesterday' narrative. Returns { month_label, total, top_category:{name,total}, anomaly?:{vendor,amount,renewal_days_ago} }. Pass show=true when the customer asked to SEE their spending (\"show me my spending\", \"open spending\"): the app navigates to the spending page and surfaces the overview view in addition to returning the data — no separate navigate_to call needed.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "month": {
+          "type": "INTEGER",
+          "description": "Optional. 0 = current month (default), 1 = last month, 2 = two months ago. Values outside 0..2 return { error: 'no_data_for_month' }."
+        },
+        "show": {
+          "type": "BOOLEAN",
+          "description": "Optional. When true, the app also navigates to the spending page and surfaces the overview view. Use when the customer asked to SEE/OPEN spending; omit (or false) for pure data lookups."
+        }
+      },
+      "required": []
+    }
+  }
+}

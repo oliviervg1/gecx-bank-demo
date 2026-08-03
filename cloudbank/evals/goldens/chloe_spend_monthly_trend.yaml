@@ -1,0 +1,20 @@
+common_session_parameters:
+  first_name: "Chloe"
+
+conversations:
+  - conversation: chloe_spend_monthly_trend
+    turns:
+      - user: "Hi!"
+        agent: "Good morning Chloe, I'm your Cloudbank assistant. How can I help you today?"
+      - user: "How am I doing this month versus last?"
+        tool_calls:
+          - action: get_monthly_trend
+            args:
+              show: true
+        agent: "# silent — substantive content checked by expectations"
+    expectations:
+      - "The agent calls get_monthly_trend with show=true (and no category/vendor for the overall trend) — one tool call drives both the chart view and the data fetch."
+      - "The agent's response describes the month-on-month delta in plain English."
+      - "The spending turn is handled by spending_agent (not root_agent)."
+      - "The agent's response contains NO mention of \"transfer\", \"specialist\", \"colleague\", or \"let me\" handoff filler."
+    tags: [P0, chloe, spend_trend]

@@ -1,0 +1,27 @@
+# navigate_to's job: the non-spending tabs.
+#
+# The spending path never uses navigate_to — the `show` flag fuses navigation
+# and data fetch into a single get_* call, and spending_agent does not declare
+# navigate_to at all. So this golden covers the case that does use it:
+# root_agent handling a non-spending tab, with no sub-agent transfer involved.
+
+common_session_parameters:
+  first_name: "Chloe"
+
+conversations:
+  - conversation: chloe_navigate_to_mortgage
+    turns:
+      - user: "Hi!"
+        agent: "Good morning Chloe, I'm your Cloudbank assistant. How can I help you today?"
+      - user: "Open my mortgage."
+        tool_calls:
+          - action: navigate_to
+            args:
+              pageId: mortgage
+        agent: "# silent — short confirmation text varies"
+    expectations:
+      - "The agent calls the navigate_to tool with pageId 'mortgage'."
+      - "The turn is handled by root_agent — a non-spending tab needs no transfer to spending_agent."
+      - "The agent speaks a short confirmation as well as calling the tool; it does not end the turn on the tool call alone."
+      - "The agent's response contains NO mention of \"transfer\", \"specialist\", \"colleague\", or \"let me\" handoff filler."
+    tags: [P0, persona, chloe, navigate_to]

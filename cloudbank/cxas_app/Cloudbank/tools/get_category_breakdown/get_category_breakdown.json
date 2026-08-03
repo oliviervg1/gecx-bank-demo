@@ -1,0 +1,26 @@
+{
+  "displayName": "get_category_breakdown",
+  "clientFunction": {
+    "name": "get_category_breakdown",
+    "description": "Return one month's totals and top 3 vendors for a single spending category. Call this when the customer asks about a specific category — 'how much on coffee?', 'show me my groceries', 'what did I spend on transport last month?'. Returns { category, month_label, total, top_vendors:[{vendor,total,count}] }. Pass show=true when the customer asked to SEE the breakdown (\"show me coffee\", \"break down my groceries\"): the app navigates to the spending page and surfaces the category-drilldown view in addition to returning the data.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "category": {
+          "type": "STRING",
+          "description": "Required. The spending category.",
+          "enum": ["groceries", "coffee_shops", "eating_out", "subscriptions", "transport", "shopping", "bills", "entertainment"]
+        },
+        "month": {
+          "type": "INTEGER",
+          "description": "Optional. 0 = current month (default), 1 = last month, 2 = two months ago."
+        },
+        "show": {
+          "type": "BOOLEAN",
+          "description": "Optional. When true, the app also navigates to the spending page and surfaces the category-drilldown view. Use when the customer asked to SEE; omit (or false) for pure data lookups like 'how much on coffee this month?'."
+        }
+      },
+      "required": ["category"]
+    }
+  }
+}

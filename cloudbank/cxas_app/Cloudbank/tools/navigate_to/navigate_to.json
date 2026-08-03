@@ -1,0 +1,18 @@
+{
+  "displayName": "navigate_to",
+  "clientFunction": {
+    "name": "navigate_to",
+    "description": "Navigate the customer's app to a specific page. Use this when the customer asks to see, open, or go to one of the four tabs (home, spending, mortgage, profile). Call it once and continue the conversation naturally — do NOT describe the navigation in words.",
+    "parameters": {
+      "type": "OBJECT",
+      "properties": {
+        "pageId": {
+          "type": "STRING",
+          "description": "Required. The identifier of the page to navigate to.",
+          "enum": ["home", "spending", "mortgage", "profile"]
+        }
+      },
+      "required": ["pageId"]
+    }
+  }
+}

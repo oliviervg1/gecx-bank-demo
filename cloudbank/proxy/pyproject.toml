@@ -1,0 +1,67 @@
+[project]
+name = "cloudbank-proxy"
+version = "0.0.1"
+description = "BidiRunSession proxy for the Cloudbank Gemini Live demo"
+requires-python = ">=3.10"
+dependencies = [
+  "fastapi>=0.136,<1.0",
+  "uvicorn[standard]>=0.52,<1.0",
+  # >=15 is a hard floor, not a preference: main.py catches
+  # websockets.exceptions.InvalidStatus, which only exists from v15 (it was
+  # InvalidStatusCode in <=14). Resolving 13.x/14.x raises AttributeError
+  # inside the exception handler. Verified present in 16.x too, and
+  # test_main_errors.py now asserts the handler works, so the ceiling can move
+  # on evidence rather than on caution.
+  "websockets>=15,<17",
+  # The [requests] extra is required, not cosmetic: auth.py imports
+  # google.auth.transport.requests, which raises ImportError without it. This
+  # went unnoticed because the shared workspace .venv happens to carry requests
+  # via cxas-scrapi's dependency tree — a clean install of just this package
+  # could not start.
+  "google-auth[requests]>=2.56.2,<3",
+  "pydantic>=2.13,<3",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=9,<10",
+  # 1.x changed asyncio_mode handling and the default fixture loop scope
+  # relied on by [tool.pytest.ini_options] below.
+  "pytest-asyncio>=1.4,<2",
+  "anyio>=4.14,<5",
+  # Runtime code never imports httpx; it is pulled in only by
+  # fastapi.testclient in src/proxy/tests/test_main.py.
+  "httpx>=0.28,<1.0",
+  "ruff>=0.14,<1.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/proxy"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src"]
+
+[tool.ruff.lint]
+# Pragmatic starting set: pyflakes/pycodestyle correctness, import order,
+# bugbear, pyupgrade, and the security rules (S) that matter for a
+# credential-holding relay. Narrow enough to pass clean today so it can gate CI.
+select = ["E", "F", "W", "I", "B", "UP", "S"]
+ignore = [
+  "E501",   # long lines are a formatter concern, not a correctness one
+  "B008",   # FastAPI's Depends()-in-defaults idiom
+]
+
+[tool.ruff.lint.per-file-ignores]
+# Asserts are the point of a test, and the "hardcoded password" heuristic
+# fires on every fake token literal in the auth fixtures.
+"src/proxy/tests/*" = ["S101", "S105", "S106"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["src/proxy/tests"]

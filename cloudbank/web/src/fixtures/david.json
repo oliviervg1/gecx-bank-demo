@@ -1,0 +1,414 @@
+{
+  "user": {
+    "first_name": "David",
+    "last_name": "Bennett",
+    "age": 45,
+    "location": "Leeds, UK",
+    "employment": "Full-time professional",
+    "email": "david.bennett@example.com",
+    "goals": [
+      "Pay off the mortgage in 10 years",
+      "Keep savings liquid for the children"
+    ]
+  },
+  "accounts": {
+    "current": {
+      "name": "Cloudbank Everyday Account",
+      "balance": 6820.4,
+      "currency": "GBP"
+    },
+    "mortgage": {
+      "balance": 148200.0,
+      "address": "42 Cardigan Road",
+      "interest_rate": 3.9,
+      "rate_type": "Fixed (expires in 6 months)",
+      "term_remaining": "10 Years, 0 Mos",
+      "next_payment": {
+        "amount": 1480.0,
+        "day_of_month": 1
+      }
+    }
+  },
+  "transactions": [
+    {
+      "id": "txn-salary",
+      "days_ago": 2,
+      "vendor": "Salary",
+      "category": "income",
+      "amount": -5400.0
+    },
+    {
+      "id": "txn-mortgage-dd",
+      "days_ago": 1,
+      "vendor": "Cloudbank Mortgage",
+      "category": "bills",
+      "amount": 1480.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mortgage-dd-2",
+      "days_ago": 31,
+      "vendor": "Cloudbank Mortgage",
+      "category": "bills",
+      "amount": 1480.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mortgage-dd-3",
+      "days_ago": 61,
+      "vendor": "Cloudbank Mortgage",
+      "category": "bills",
+      "amount": 1480.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-council-tax",
+      "days_ago": 3,
+      "vendor": "Leeds City Council",
+      "category": "bills",
+      "amount": 198.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-council-tax-2",
+      "days_ago": 33,
+      "vendor": "Leeds City Council",
+      "category": "bills",
+      "amount": 198.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-council-tax-3",
+      "days_ago": 63,
+      "vendor": "Leeds City Council",
+      "category": "bills",
+      "amount": 198.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy",
+      "days_ago": 5,
+      "vendor": "British Gas",
+      "category": "bills",
+      "amount": 142.6,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-2",
+      "days_ago": 35,
+      "vendor": "British Gas",
+      "category": "bills",
+      "amount": 142.6,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-3",
+      "days_ago": 65,
+      "vendor": "British Gas",
+      "category": "bills",
+      "amount": 142.6,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-broadband",
+      "days_ago": 7,
+      "vendor": "Sky",
+      "category": "bills",
+      "amount": 68.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-broadband-2",
+      "days_ago": 37,
+      "vendor": "Sky",
+      "category": "bills",
+      "amount": 68.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-broadband-3",
+      "days_ago": 67,
+      "vendor": "Sky",
+      "category": "bills",
+      "amount": 68.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mobile",
+      "days_ago": 9,
+      "vendor": "EE",
+      "category": "bills",
+      "amount": 45.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mobile-2",
+      "days_ago": 39,
+      "vendor": "EE",
+      "category": "bills",
+      "amount": 45.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mobile-3",
+      "days_ago": 69,
+      "vendor": "EE",
+      "category": "bills",
+      "amount": 45.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-gym",
+      "days_ago": 4,
+      "vendor": "PureGym Family",
+      "category": "subscriptions",
+      "amount": 62.0,
+      "is_subscription": true,
+      "is_anomaly": true,
+      "renewal_days_ago": 4
+    },
+    {
+      "id": "txn-gym-2",
+      "days_ago": 34,
+      "vendor": "PureGym Family",
+      "category": "subscriptions",
+      "amount": 38.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-gym-3",
+      "days_ago": 64,
+      "vendor": "PureGym Family",
+      "category": "subscriptions",
+      "amount": 38.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-netflix-d",
+      "days_ago": 12,
+      "vendor": "Netflix",
+      "category": "subscriptions",
+      "amount": 17.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-netflix-d-2",
+      "days_ago": 42,
+      "vendor": "Netflix",
+      "category": "subscriptions",
+      "amount": 17.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-netflix-d-3",
+      "days_ago": 72,
+      "vendor": "Netflix",
+      "category": "subscriptions",
+      "amount": 17.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-sainsburys",
+      "days_ago": 2,
+      "vendor": "Sainsbury's",
+      "category": "groceries",
+      "amount": 128.4
+    },
+    {
+      "id": "txn-sainsburys-2",
+      "days_ago": 9,
+      "vendor": "Sainsbury's",
+      "category": "groceries",
+      "amount": 96.15
+    },
+    {
+      "id": "txn-sainsburys-3",
+      "days_ago": 16,
+      "vendor": "Sainsbury's",
+      "category": "groceries",
+      "amount": 141.2
+    },
+    {
+      "id": "txn-sainsburys-4",
+      "days_ago": 33,
+      "vendor": "Sainsbury's",
+      "category": "groceries",
+      "amount": 132.8
+    },
+    {
+      "id": "txn-sainsburys-5",
+      "days_ago": 40,
+      "vendor": "Sainsbury's",
+      "category": "groceries",
+      "amount": 118.95
+    },
+    {
+      "id": "txn-sainsburys-6",
+      "days_ago": 62,
+      "vendor": "Sainsbury's",
+      "category": "groceries",
+      "amount": 124.3
+    },
+    {
+      "id": "txn-sainsburys-7",
+      "days_ago": 69,
+      "vendor": "Sainsbury's",
+      "category": "groceries",
+      "amount": 110.05
+    },
+    {
+      "id": "txn-coop",
+      "days_ago": 6,
+      "vendor": "Co-op",
+      "category": "groceries",
+      "amount": 24.6
+    },
+    {
+      "id": "txn-coop-2",
+      "days_ago": 27,
+      "vendor": "Co-op",
+      "category": "groceries",
+      "amount": 31.15
+    },
+    {
+      "id": "txn-coop-3",
+      "days_ago": 55,
+      "vendor": "Co-op",
+      "category": "groceries",
+      "amount": 28.4
+    },
+    {
+      "id": "txn-rail",
+      "days_ago": 3,
+      "vendor": "Northern Rail",
+      "category": "transport",
+      "amount": 92.0
+    },
+    {
+      "id": "txn-rail-2",
+      "days_ago": 31,
+      "vendor": "Northern Rail",
+      "category": "transport",
+      "amount": 92.0
+    },
+    {
+      "id": "txn-rail-3",
+      "days_ago": 61,
+      "vendor": "Northern Rail",
+      "category": "transport",
+      "amount": 92.0
+    },
+    {
+      "id": "txn-fuel",
+      "days_ago": 8,
+      "vendor": "Shell",
+      "category": "transport",
+      "amount": 71.2
+    },
+    {
+      "id": "txn-fuel-2",
+      "days_ago": 38,
+      "vendor": "Shell",
+      "category": "transport",
+      "amount": 68.9
+    },
+    {
+      "id": "txn-fuel-3",
+      "days_ago": 66,
+      "vendor": "Shell",
+      "category": "transport",
+      "amount": 74.1
+    },
+    {
+      "id": "txn-costa-d",
+      "days_ago": 5,
+      "vendor": "Costa",
+      "category": "coffee_shops",
+      "amount": 3.75
+    },
+    {
+      "id": "txn-costa-d2",
+      "days_ago": 13,
+      "vendor": "Costa",
+      "category": "coffee_shops",
+      "amount": 3.75
+    },
+    {
+      "id": "txn-costa-d3",
+      "days_ago": 36,
+      "vendor": "Costa",
+      "category": "coffee_shops",
+      "amount": 7.5
+    },
+    {
+      "id": "txn-costa-d4",
+      "days_ago": 58,
+      "vendor": "Costa",
+      "category": "coffee_shops",
+      "amount": 3.75
+    },
+    {
+      "id": "txn-pizza",
+      "days_ago": 11,
+      "vendor": "Pizza Express",
+      "category": "eating_out",
+      "amount": 64.5
+    },
+    {
+      "id": "txn-pizza-2",
+      "days_ago": 42,
+      "vendor": "Pizza Express",
+      "category": "eating_out",
+      "amount": 58.2
+    },
+    {
+      "id": "txn-curry",
+      "days_ago": 20,
+      "vendor": "Akbar's",
+      "category": "eating_out",
+      "amount": 78.4
+    },
+    {
+      "id": "txn-curry-2",
+      "days_ago": 50,
+      "vendor": "Akbar's",
+      "category": "eating_out",
+      "amount": 71.1
+    },
+    {
+      "id": "txn-jl",
+      "days_ago": 15,
+      "vendor": "John Lewis",
+      "category": "shopping",
+      "amount": 210.0
+    },
+    {
+      "id": "txn-jl-2",
+      "days_ago": 47,
+      "vendor": "John Lewis",
+      "category": "shopping",
+      "amount": 89.99
+    },
+    {
+      "id": "txn-decathlon",
+      "days_ago": 25,
+      "vendor": "Decathlon",
+      "category": "shopping",
+      "amount": 112.5
+    },
+    {
+      "id": "txn-cinema-d",
+      "days_ago": 18,
+      "vendor": "Everyman Leeds",
+      "category": "entertainment",
+      "amount": 44.0
+    },
+    {
+      "id": "txn-cinema-d2",
+      "days_ago": 52,
+      "vendor": "Everyman Leeds",
+      "category": "entertainment",
+      "amount": 38.0
+    }
+  ]
+}

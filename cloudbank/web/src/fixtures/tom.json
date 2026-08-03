@@ -1,0 +1,433 @@
+{
+  "user": {
+    "first_name": "Tom",
+    "last_name": "Harding",
+    "age": 32,
+    "location": "London, UK",
+    "employment": "Freelance graphic designer",
+    "email": "tom.harding@example.com",
+    "goals": [
+      "Build a rainy-day safety net",
+      "Smooth out variable income"
+    ]
+  },
+  "accounts": {
+    "current": {
+      "name": "Cloudbank Everyday Account",
+      "balance": 840.5,
+      "currency": "GBP"
+    }
+  },
+  "transactions": [
+    {
+      "id": "txn-invoice",
+      "days_ago": 3,
+      "vendor": "Client Invoice",
+      "category": "income",
+      "amount": -2150.0
+    },
+    {
+      "id": "txn-rent",
+      "days_ago": 1,
+      "vendor": "Hamilton Lettings",
+      "category": "bills",
+      "amount": 1450.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-rent-2",
+      "days_ago": 31,
+      "vendor": "Hamilton Lettings",
+      "category": "bills",
+      "amount": 1450.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-rent-3",
+      "days_ago": 61,
+      "vendor": "Hamilton Lettings",
+      "category": "bills",
+      "amount": 1450.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-t",
+      "days_ago": 6,
+      "vendor": "Octopus Energy",
+      "category": "bills",
+      "amount": 78.4,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-t-2",
+      "days_ago": 36,
+      "vendor": "Octopus Energy",
+      "category": "bills",
+      "amount": 78.4,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-energy-t-3",
+      "days_ago": 66,
+      "vendor": "Octopus Energy",
+      "category": "bills",
+      "amount": 78.4,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mobile-t",
+      "days_ago": 10,
+      "vendor": "Giffgaff",
+      "category": "bills",
+      "amount": 20.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mobile-t-2",
+      "days_ago": 40,
+      "vendor": "Giffgaff",
+      "category": "bills",
+      "amount": 20.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-mobile-t-3",
+      "days_ago": 70,
+      "vendor": "Giffgaff",
+      "category": "bills",
+      "amount": 20.0,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-adobe",
+      "days_ago": 2,
+      "vendor": "Adobe Creative Cloud",
+      "category": "subscriptions",
+      "amount": 199.0,
+      "is_subscription": true,
+      "is_anomaly": true,
+      "renewal_days_ago": 2
+    },
+    {
+      "id": "txn-spotify-t",
+      "days_ago": 8,
+      "vendor": "Spotify",
+      "category": "subscriptions",
+      "amount": 11.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-spotify-t-2",
+      "days_ago": 38,
+      "vendor": "Spotify",
+      "category": "subscriptions",
+      "amount": 11.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-spotify-t-3",
+      "days_ago": 68,
+      "vendor": "Spotify",
+      "category": "subscriptions",
+      "amount": 11.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-icloud",
+      "days_ago": 14,
+      "vendor": "iCloud",
+      "category": "subscriptions",
+      "amount": 8.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-icloud-2",
+      "days_ago": 44,
+      "vendor": "iCloud",
+      "category": "subscriptions",
+      "amount": 8.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-icloud-3",
+      "days_ago": 74,
+      "vendor": "iCloud",
+      "category": "subscriptions",
+      "amount": 8.99,
+      "is_subscription": true
+    },
+    {
+      "id": "txn-coffee-0-0",
+      "days_ago": 1,
+      "vendor": "Pret a Manger",
+      "category": "coffee_shops",
+      "amount": 3.6
+    },
+    {
+      "id": "txn-coffee-0-1",
+      "days_ago": 5,
+      "vendor": "Grind",
+      "category": "coffee_shops",
+      "amount": 3.2
+    },
+    {
+      "id": "txn-coffee-0-2",
+      "days_ago": 9,
+      "vendor": "Ozone Coffee",
+      "category": "coffee_shops",
+      "amount": 3.85
+    },
+    {
+      "id": "txn-coffee-0-3",
+      "days_ago": 13,
+      "vendor": "Pret a Manger",
+      "category": "coffee_shops",
+      "amount": 3.6
+    },
+    {
+      "id": "txn-coffee-0-4",
+      "days_ago": 17,
+      "vendor": "Grind",
+      "category": "coffee_shops",
+      "amount": 3.2
+    },
+    {
+      "id": "txn-coffee-1-0",
+      "days_ago": 31,
+      "vendor": "Pret a Manger",
+      "category": "coffee_shops",
+      "amount": 3.6
+    },
+    {
+      "id": "txn-coffee-1-1",
+      "days_ago": 35,
+      "vendor": "Grind",
+      "category": "coffee_shops",
+      "amount": 3.2
+    },
+    {
+      "id": "txn-coffee-1-2",
+      "days_ago": 39,
+      "vendor": "Ozone Coffee",
+      "category": "coffee_shops",
+      "amount": 3.85
+    },
+    {
+      "id": "txn-coffee-1-3",
+      "days_ago": 43,
+      "vendor": "Pret a Manger",
+      "category": "coffee_shops",
+      "amount": 3.6
+    },
+    {
+      "id": "txn-coffee-1-4",
+      "days_ago": 47,
+      "vendor": "Grind",
+      "category": "coffee_shops",
+      "amount": 3.2
+    },
+    {
+      "id": "txn-coffee-2-0",
+      "days_ago": 61,
+      "vendor": "Pret a Manger",
+      "category": "coffee_shops",
+      "amount": 3.6
+    },
+    {
+      "id": "txn-coffee-2-1",
+      "days_ago": 65,
+      "vendor": "Grind",
+      "category": "coffee_shops",
+      "amount": 3.2
+    },
+    {
+      "id": "txn-coffee-2-2",
+      "days_ago": 69,
+      "vendor": "Ozone Coffee",
+      "category": "coffee_shops",
+      "amount": 3.85
+    },
+    {
+      "id": "txn-coffee-2-3",
+      "days_ago": 73,
+      "vendor": "Pret a Manger",
+      "category": "coffee_shops",
+      "amount": 3.6
+    },
+    {
+      "id": "txn-coffee-2-4",
+      "days_ago": 77,
+      "vendor": "Grind",
+      "category": "coffee_shops",
+      "amount": 3.2
+    },
+    {
+      "id": "txn-lunch-0-0",
+      "days_ago": 2,
+      "vendor": "Itsu",
+      "category": "eating_out",
+      "amount": 9.4
+    },
+    {
+      "id": "txn-lunch-0-1",
+      "days_ago": 7,
+      "vendor": "Leon",
+      "category": "eating_out",
+      "amount": 8.75
+    },
+    {
+      "id": "txn-lunch-0-2",
+      "days_ago": 12,
+      "vendor": "Deliveroo",
+      "category": "eating_out",
+      "amount": 22.3
+    },
+    {
+      "id": "txn-lunch-0-3",
+      "days_ago": 17,
+      "vendor": "Franco Manca",
+      "category": "eating_out",
+      "amount": 14.5
+    },
+    {
+      "id": "txn-lunch-1-0",
+      "days_ago": 32,
+      "vendor": "Itsu",
+      "category": "eating_out",
+      "amount": 9.4
+    },
+    {
+      "id": "txn-lunch-1-1",
+      "days_ago": 37,
+      "vendor": "Leon",
+      "category": "eating_out",
+      "amount": 8.75
+    },
+    {
+      "id": "txn-lunch-1-2",
+      "days_ago": 42,
+      "vendor": "Deliveroo",
+      "category": "eating_out",
+      "amount": 22.3
+    },
+    {
+      "id": "txn-lunch-1-3",
+      "days_ago": 47,
+      "vendor": "Franco Manca",
+      "category": "eating_out",
+      "amount": 14.5
+    },
+    {
+      "id": "txn-lunch-2-0",
+      "days_ago": 62,
+      "vendor": "Itsu",
+      "category": "eating_out",
+      "amount": 9.4
+    },
+    {
+      "id": "txn-lunch-2-1",
+      "days_ago": 67,
+      "vendor": "Leon",
+      "category": "eating_out",
+      "amount": 8.75
+    },
+    {
+      "id": "txn-lunch-2-2",
+      "days_ago": 72,
+      "vendor": "Deliveroo",
+      "category": "eating_out",
+      "amount": 22.3
+    },
+    {
+      "id": "txn-lunch-2-3",
+      "days_ago": 77,
+      "vendor": "Franco Manca",
+      "category": "eating_out",
+      "amount": 14.5
+    },
+    {
+      "id": "txn-tesco-t",
+      "days_ago": 4,
+      "vendor": "Tesco Express",
+      "category": "groceries",
+      "amount": 34.2
+    },
+    {
+      "id": "txn-tesco-t2",
+      "days_ago": 12,
+      "vendor": "Tesco Express",
+      "category": "groceries",
+      "amount": 28.9
+    },
+    {
+      "id": "txn-tesco-t3",
+      "days_ago": 35,
+      "vendor": "Tesco Express",
+      "category": "groceries",
+      "amount": 41.6
+    },
+    {
+      "id": "txn-tesco-t4",
+      "days_ago": 44,
+      "vendor": "Tesco Express",
+      "category": "groceries",
+      "amount": 30.15
+    },
+    {
+      "id": "txn-tesco-t5",
+      "days_ago": 65,
+      "vendor": "Tesco Express",
+      "category": "groceries",
+      "amount": 36.8
+    },
+    {
+      "id": "txn-tfl",
+      "days_ago": 5,
+      "vendor": "TfL",
+      "category": "transport",
+      "amount": 42.3
+    },
+    {
+      "id": "txn-tfl-2",
+      "days_ago": 33,
+      "vendor": "TfL",
+      "category": "transport",
+      "amount": 38.7
+    },
+    {
+      "id": "txn-tfl-3",
+      "days_ago": 63,
+      "vendor": "TfL",
+      "category": "transport",
+      "amount": 45.1
+    },
+    {
+      "id": "txn-muji",
+      "days_ago": 21,
+      "vendor": "Muji",
+      "category": "shopping",
+      "amount": 46.0
+    },
+    {
+      "id": "txn-uniqlo",
+      "days_ago": 49,
+      "vendor": "Uniqlo",
+      "category": "shopping",
+      "amount": 62.9
+    },
+    {
+      "id": "txn-gig",
+      "days_ago": 17,
+      "vendor": "Village Underground",
+      "category": "entertainment",
+      "amount": 28.0
+    },
+    {
+      "id": "txn-gig-2",
+      "days_ago": 54,
+      "vendor": "Barbican",
+      "category": "entertainment",
+      "amount": 35.0
+    }
+  ]
+}
