@@ -5,7 +5,7 @@ description = "BidiRunSession proxy for the Cloudbank Gemini Live demo"
 requires-python = ">=3.10"
 dependencies = [
   "fastapi>=0.136,<1.0",
-  "uvicorn[standard]>=0.52,<1.0",
+  "uvicorn[standard]>=0.52.1,<1.0",
   # >=15 is a hard floor, not a preference: main.py catches
   # websockets.exceptions.InvalidStatus, which only exists from v15 (it was
   # InvalidStatusCode in <=14). Resolving 13.x/14.x raises AttributeError
