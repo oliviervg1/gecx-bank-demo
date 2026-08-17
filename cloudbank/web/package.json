@@ -18,14 +18,14 @@
   "dependencies": {
     "@fontsource-variable/inter": "^5.3.0",
     "framer-motion": "^12.43.0",
-    "lucide-react": "^1.28.0",
+    "lucide-react": "^1.31.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "recharts": "^2.15.4"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@testing-library/jest-dom": "^7.0.0",
+    "@testing-library/jest-dom": "^7.0.1",
     "@testing-library/react": "^16.3.2",
     "@types/react": "^18.3.31",
     "@types/react-dom": "^18.3.7",
@@ -35,8 +35,8 @@
     "eslint-plugin-react-hooks": "^7.1.1",
     "eslint-plugin-react-refresh": "^0.5.3",
     "globals": "^17.8.0",
-    "happy-dom": "^20.11.1",
-    "postcss": "^8.5.25",
+    "happy-dom": "^20.11.2",
+    "postcss": "^8.5.26",
     "tailwindcss": "^3.4.19",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.65.0",
