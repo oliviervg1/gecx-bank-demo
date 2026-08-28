@@ -7,7 +7,7 @@ import json
 import pytest
 
 from proxy.protocol import MAX_CLIENT_FRAME_BYTES, AudioFrame, ClientStart
-from proxy.relay import Relay
+from proxy.relay import Relay, _drain_exceptions
 
 
 class FakeBrowser:
@@ -29,6 +29,46 @@ class FakeBrowser:
 
     async def close(self) -> None:
         await self._inbox.put(None)
+
+
+@pytest.mark.asyncio
+async def test_drain_exceptions_retrieves_every_failure_not_just_the_first() -> None:
+    """When both pumps fail, every exception must be *retrieved*.
+
+    `run()` used to do `for task in done: task.result()`, which raises on the
+    first member of a set and leaves the sibling's exception unretrieved —
+    asyncio then logs "Task exception was never retrieved" with a full
+    traceback at GC time, which is the noise seen in the live proxy log.
+    Returning both is what proves both were consumed.
+    """
+
+    async def boom(message: str) -> None:
+        raise RuntimeError(message)
+
+    first = asyncio.create_task(boom("upstream died"))
+    second = asyncio.create_task(boom("browser died"))
+    await asyncio.gather(first, second, return_exceptions=True)
+
+    errors = _drain_exceptions([first, second])
+
+    assert [str(e) for e in errors] == ["upstream died", "browser died"]
+
+
+@pytest.mark.asyncio
+async def test_drain_exceptions_ignores_cancelled_and_clean_tasks() -> None:
+    async def fine() -> None:
+        return None
+
+    async def forever() -> None:
+        await asyncio.sleep(3600)
+
+    clean = asyncio.create_task(fine())
+    cancelled = asyncio.create_task(forever())
+    await asyncio.sleep(0)
+    cancelled.cancel()
+    await asyncio.gather(clean, cancelled, return_exceptions=True)
+
+    assert _drain_exceptions([clean, cancelled]) == []
 
 
 @pytest.mark.asyncio

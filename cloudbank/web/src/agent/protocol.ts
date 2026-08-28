@@ -1,7 +1,10 @@
 // Browser ↔ proxy WS protocol. Mirrors cloudbank/proxy/src/proxy/protocol.py.
 
 export type ClientMsg =
-  | { type: 'start'; persona: 'chloe' | 'david' | 'tom' | 'sarah'; variables: Record<string, string> }
+  // `sessionId` names the CES conversation to (re)join. The browser owns it so
+  // that a reconnect after CES's ~20-30s inactivity close resumes the same
+  // conversation rather than opening a blank one. See agent/sessionId.ts.
+  | { type: 'start'; persona: 'chloe' | 'david' | 'tom' | 'sarah'; variables: Record<string, string>; sessionId: string }
   | { type: 'audio'; data: string } // base64 PCM16 16k
   | { type: 'text'; text: string }
   | { type: 'tool_response'; id: string; response: { output: Record<string, unknown> } | { error: string } }

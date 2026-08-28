@@ -199,6 +199,96 @@ def test_upstream_closing_after_handshake_is_reported(monkeypatch):
         assert "upstream closed" in _recv_error(ws)
 
 
+# ── Session resumption ────────────────────────────────────────────────────
+
+
+class _FakeUpstream:
+    """Minimal stand-in for the CES socket returned by websockets.connect().
+
+    Ends its iteration immediately so the relay's upstream pump finishes and
+    _run_session returns, leaving the frames the proxy sent in `sink`.
+    """
+
+    def __init__(self, sink: list[str]) -> None:
+        self.sink = sink
+
+    async def __aenter__(self) -> _FakeUpstream:
+        return self
+
+    async def __aexit__(self, *_exc: object) -> bool:
+        return False
+
+    async def send(self, raw: str) -> None:
+        self.sink.append(raw)
+
+    def __aiter__(self) -> _FakeUpstream:
+        return self
+
+    async def __anext__(self) -> str:
+        raise StopAsyncIteration
+
+    async def close(self) -> None:
+        pass
+
+
+def _capture_upstream_frames(monkeypatch, start_payload: dict) -> list[dict]:
+    monkeypatch.setattr(
+        main, "_load_app_resource", lambda: ("projects/p/locations/us/apps/a", "us")
+    )
+
+    async def token():
+        return "t-1"
+
+    monkeypatch.setattr(main._tokens, "get_token", token)
+    sink: list[str] = []
+    monkeypatch.setattr(main.websockets, "connect", lambda *a, **k: _FakeUpstream(sink))
+    with client.websocket_connect("/ws/agent") as ws:
+        ws.send_text(json.dumps(start_payload))
+        ws.receive_text()  # 'ready', emitted once config is away
+    return [json.loads(f) for f in sink]
+
+
+def test_start_frame_session_id_is_used_for_the_ces_session(monkeypatch):
+    """Resuming the same CES session across a reconnect is the whole point:
+    CES closes an inactive BidiRunSession after ~20-30s, and only the session
+    id carries the conversation across that gap."""
+    resume_id = "3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13"
+    frames = _capture_upstream_frames(
+        monkeypatch,
+        {"type": "start", "persona": "chloe", "variables": {}, "sessionId": resume_id},
+    )
+    assert frames[0]["config"]["session"] == (
+        f"projects/p/locations/us/apps/a/sessions/{resume_id}"
+    )
+
+
+def test_hostile_session_id_never_reaches_the_ces_resource_path(monkeypatch):
+    """session_id is interpolated into the resource path, so a traversal
+    attempt must be replaced rather than forwarded."""
+    frames = _capture_upstream_frames(
+        monkeypatch,
+        {
+            "type": "start",
+            "persona": "chloe",
+            "variables": {},
+            "sessionId": "../../apps/victim/sessions/x",
+        },
+    )
+    session = frames[0]["config"]["session"]
+    assert "victim" not in session
+    assert ".." not in session
+    assert session.startswith("projects/p/locations/us/apps/a/sessions/")
+
+
+def test_absent_session_id_still_gets_a_session(monkeypatch):
+    frames = _capture_upstream_frames(
+        monkeypatch, {"type": "start", "persona": "chloe", "variables": {}}
+    )
+    session = frames[0]["config"]["session"]
+    assert session.startswith("projects/p/locations/us/apps/a/sessions/")
+    assert len(session.rsplit("/", 1)[-1]) == 36
+
+
 # ── Hosted dev origins ────────────────────────────────────────────────────
 
 
