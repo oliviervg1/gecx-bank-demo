@@ -28,6 +28,13 @@ class ClientStart(BaseModel):
     # The client (web) computes them from the persona fixture and sends
     # them on every start frame — the proxy is a dumb relay.
     variables: dict[str, str]
+    # CES session to resume. The browser owns this so that a reconnect after
+    # CES's ~20-30s inactivity close lands back in the SAME conversation
+    # rather than a blank one. Absent on the first connect and from older
+    # clients. NOT trusted: main._resolve_session_id replaces anything that
+    # is not a plain UUID, because it is interpolated into the CES resource
+    # path in relay._send_initial_config.
+    sessionId: str | None = None
 
 
 class AudioFrame(BaseModel):

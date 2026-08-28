@@ -238,11 +238,37 @@ non-technical audience.
 - **The proxy sends a typed `{type:'error'}` envelope on every failure path** —
   bad config, missing ADC, malformed frame, unreachable upstream — not only on
   `ConnectionClosedError`.
+- **CES closes an inactive BidiRunSession after ~20–30s, and the app reconnects
+  through it.** The close arrives as `1007 (invalid frame payload data) …
+  failed_precondition` (measured at 20.7s, 21.6s and 31.0s). It is routine, not
+  a fault: under push-to-talk the mic is not created until the first press, so a
+  tab nobody has spoken to sends nothing at all and is closed every ~30s. A
+  socket that stayed up at least `SESSION_ESTABLISHED_MS` (10s) therefore
+  reconnects *without* consuming retry budget. Before that rule, four idle
+  cycles took an untouched tab to the Retry pill in about two minutes with
+  nothing actually wrong.
 - **`AgentProvider` auto-retries 3× with exponential backoff** before showing
-  the Retry pill. CES occasionally closes a new BidiRunSession with
-  `1007 (invalid frame payload data) … failed_precondition`; the retry usually
-  absorbs it. If the Retry pill does appear, a no-op `./cloudbank/push.sh`
-  generally clears it.
+  the Retry pill, for the failures that are real. Those kill the socket within a
+  second or two of handshake — bad origin, missing ADC, upstream 403, and the
+  transient `failed_precondition` that CES throws at a *new* session. If the
+  Retry pill does appear, a no-op `./cloudbank/push.sh` generally clears it.
+- **The browser owns the CES session id, so a reconnect resumes the
+  conversation.** `agent/sessionId.ts` mints one per tab and every `start` frame
+  carries it; reconnecting with the same id lands back in the same conversation
+  (verified against CES: a reused id recalls the previous turn, a fresh id
+  answers "you haven't asked about any shops yet"). The proxy re-parses it as a
+  UUID and substitutes its own if it does not parse — it is interpolated into
+  the CES resource path, so an unvalidated client string would be a
+  path-injection channel into another app's sessions.
+- **A session that produced no agent output gives up its id.** One rule, two
+  cases: a tab nobody has spoken to holds no context worth resuming, and a
+  resume onto a CES session that has aged out comes back *mute* — the socket
+  connects, the config is accepted, and then the agent answers nothing until the
+  idle timeout kills it, while the pill still reads "Hold to talk". Reusing that
+  id again would keep the agent deaf indefinitely. Resume reliability decays
+  with the gap (measured 2/2 at 60s, 1/2 at 120s, 1/3 at 240s, 0/3 at 600s),
+  which is why the reconnect is eager — it keeps the gap near a second — rather
+  than deferred to the next press.
 
 ### Testing
 

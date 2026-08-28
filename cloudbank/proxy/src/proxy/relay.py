@@ -35,6 +35,24 @@ from .protocol import (
 log = logging.getLogger(__name__)
 
 
+def _drain_exceptions(tasks: list[asyncio.Task[None]]) -> list[BaseException]:
+    """Retrieve the exception from every finished task, in the given order.
+
+    Every task must be consumed, not just the one we intend to re-raise: an
+    exception left unretrieved is reported by asyncio as "Task exception was
+    never retrieved", complete with traceback, whenever the task is collected.
+    Cancelled and cleanly-finished tasks contribute nothing.
+    """
+    errors: list[BaseException] = []
+    for task in tasks:
+        if not task.done() or task.cancelled():
+            continue
+        exc = task.exception()
+        if exc is not None:
+            errors.append(exc)
+    return errors
+
+
 class _BrowserSocket(Protocol):
     async def receive_text(self) -> str: ...
     async def send_text(self, raw: str) -> None: ...
@@ -78,10 +96,9 @@ class Relay:
         # rather than leaving it awaiting. A bare gather() propagates the first
         # exception but does NOT cancel its sibling, which then surfaced only
         # as a "Task exception was never retrieved" warning at GC time.
-        tasks = [
-            asyncio.create_task(self._pump_browser_to_upstream()),
-            asyncio.create_task(self._pump_upstream_to_browser()),
-        ]
+        browser_pump = asyncio.create_task(self._pump_browser_to_upstream())
+        upstream_pump = asyncio.create_task(self._pump_upstream_to_browser())
+        tasks = [browser_pump, upstream_pump]
         try:
             done, pending = await asyncio.wait(tasks, return_when=asyncio.FIRST_COMPLETED)
             for task in pending:
@@ -89,9 +106,16 @@ class Relay:
             if pending:
                 await asyncio.gather(*pending, return_exceptions=True)
             # Re-raise the first real failure so main.py's handlers can map it
-            # onto an error envelope for the browser.
-            for task in done:
-                task.result()
+            # onto an error envelope for the browser. Every finished task is
+            # drained, not just the one that raises: iterating `done` (a set)
+            # and calling .result() stopped at an arbitrary member and left the
+            # sibling's exception unretrieved, which asyncio then reported as
+            # "Task exception was never retrieved". The upstream pump is
+            # checked first because its ConnectionClosedError carries the CES
+            # close code that becomes the browser's error envelope.
+            errors = _drain_exceptions([upstream_pump, browser_pump])
+            if errors:
+                raise errors[0]
         finally:
             for task in tasks:
                 if not task.done():

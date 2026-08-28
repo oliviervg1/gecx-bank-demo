@@ -85,3 +85,21 @@ def test_client_start_accepts_variables() -> None:
 def test_client_start_requires_variables() -> None:
     with pytest.raises(ValueError):
         parse_client_msg('{"type": "start", "persona": "chloe"}')
+
+
+def test_client_start_accepts_session_id() -> None:
+    """The browser owns the CES session id so a reconnect can resume the same
+    conversation; see _resolve_session_id for the validation that follows."""
+    msg = parse_client_msg(
+        '{"type": "start", "persona": "chloe", "variables": {},'
+        ' "sessionId": "3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13"}'
+    )
+    assert isinstance(msg, ClientStart)
+    assert msg.sessionId == "3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13"
+
+
+def test_client_start_session_id_is_optional() -> None:
+    """Older clients (and the very first connect) send no id at all."""
+    msg = parse_client_msg('{"type": "start", "persona": "chloe", "variables": {}}')
+    assert isinstance(msg, ClientStart)
+    assert msg.sessionId is None

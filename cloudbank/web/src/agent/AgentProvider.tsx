@@ -7,6 +7,7 @@ import { usePersona } from '../personas/PersonaProvider'
 import { getFixture } from '../data/fixture'
 import { buildSessionVariables } from './sessionVariables'
 import { readPushToTalkFromLocation } from './pushToTalk'
+import { newSessionId } from './sessionId'
 
 type ConnState = 'idle' | 'connecting' | 'ready' | 'error'
 // 'held' is push-to-talk transmitting; 'listening' is the always-on mode
@@ -54,6 +55,21 @@ const MAX_AUTO_RETRIES = 3
 // from onclose, so an upstream that rejects every session is not hammered as
 // fast as the browser can open sockets.
 const RETRY_BASE_DELAY_MS = 400
+
+// A socket that stayed up at least this long was working; its close is the
+// routine one, not a failure.
+//
+// CES closes a BidiRunSession that receives no speech after ~20-30s with 1007
+// failed_precondition (measured repeatedly: 20.7s, 21.6s, 31.0s). That is not
+// an error condition — it happens to every tab that is simply sitting there,
+// because under push-to-talk the mic is not even created until the first
+// press, so an untouched tab sends nothing at all. Spending retry budget on it
+// meant four idle cycles (~2 minutes) took the demo to the Retry pill with
+// nothing actually wrong. The genuinely broken cases — bad origin, no ADC,
+// upstream 403, the transient failed_precondition on a NEW session — all kill
+// the socket within a second or two of handshake, well under this threshold,
+// so they still exhaust the budget and still surface the pill.
+const SESSION_ESTABLISHED_MS = 10_000
 
 export function AgentProvider({ children }: { children: ReactNode }) {
   const [connState, setConnState] = useState<ConnState>('idle')
@@ -118,6 +134,11 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   // Pending backoff timer, cleared on cleanup so a queued retry can't outlive
   // the effect that scheduled it.
   const retryTimerRef = useRef<number | null>(null)
+  // The CES conversation this tab is having. Held across reconnects so the
+  // socket that replaces an idle-closed one resumes the same conversation
+  // instead of starting blank. Cleared whenever a session ends without having
+  // produced agent output — see the onclose handler for why.
+  const sessionIdRef = useRef<string | null>(null)
   // Lazy-init: `useRef(createRegistry())` evaluates the initializer on
   // every render (value is discarded after the first set). Build once.
   const registryRef = useRef<Registry | null>(null)
@@ -130,6 +151,15 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     intentionalCloseRef.current = false
     const ws = new WebSocket(PROXY_URL)
     wsRef.current = ws
+    // Wall-clock at construction, used by onclose to tell a routine idle close
+    // from a socket that never got going. Read from Date.now() rather than a
+    // timer so it stays correct across a suspended/backgrounded tab.
+    const startedAt = Date.now()
+    // Resume the tab's conversation, or start one. Held in a local as well as
+    // the ref because onclose may null the ref out; this attempt still has to
+    // report the id it actually opened with.
+    if (sessionIdRef.current === null) sessionIdRef.current = newSessionId()
+    const sessionId = sessionIdRef.current
     // Per-attempt local: tracks whether the server signalled 'end' (clean)
     // or 'error' (retry candidate) before the close arrived.
     let closeReason: 'end' | 'error' | null = null
@@ -174,6 +204,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
         type: 'start',
         persona,
         variables: buildSessionVariables(getFixture(persona)),
+        sessionId,
       }))
     }
     ws.onclose = () => {
@@ -194,8 +225,35 @@ export function AgentProvider({ children }: { children: ReactNode }) {
         return
       }
 
+      // A session that never produced agent output holds no context worth
+      // resuming, so drop its id and let the next attempt open a clean one.
+      // This covers two cases with one rule:
+      //  - a tab nobody has spoken to yet (the agent does not speak first, so
+      //    there is genuinely nothing to carry over); and
+      //  - a resume onto a CES session that has aged out. That does NOT fail
+      //    loudly — the socket connects, the config is accepted, and then the
+      //    agent answers nothing at all until the idle timeout kills it.
+      //    Reusing the same id again would keep the agent deaf indefinitely
+      //    while the pill still reads "Hold to talk".
+      if (!sawUpstreamData) sessionIdRef.current = null
+
       // Either the server sent an explicit 'error' envelope (proxy upstream
-      // failure) or the transport dropped without warning. Burn an auto-retry
+      // failure) or the transport dropped without warning.
+      if (Date.now() - startedAt >= SESSION_ESTABLISHED_MS) {
+        // The socket was up long enough to have been working, so this is the
+        // routine CES inactivity close. Reconnect immediately and restore the
+        // budget rather than spending it — a tab left open would otherwise
+        // reach the Retry pill after four idle cycles with nothing wrong.
+        autoRetryAttemptsRef.current = 0
+        lastErrorMessageRef.current = null
+        retryTimerRef.current = window.setTimeout(() => {
+          retryTimerRef.current = null
+          setConnectionAttempt((n) => n + 1)
+        }, RETRY_BASE_DELAY_MS)
+        return
+      }
+
+      // Short-lived close: something is actually wrong. Burn an auto-retry
       // budget entry; if exhausted, surface the Retry pill.
       if (autoRetryAttemptsRef.current < MAX_AUTO_RETRIES) {
         autoRetryAttemptsRef.current += 1
