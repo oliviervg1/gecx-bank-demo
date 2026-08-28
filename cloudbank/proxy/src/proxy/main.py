@@ -132,6 +132,24 @@ def _allowed_variable_keys() -> frozenset[str]:
     return frozenset({"first_name"})
 
 
+def _resolve_session_id(requested: str | None) -> str:
+    """Return the CES session id to use, generating one unless the client sent
+    a well-formed UUID.
+
+    The result is interpolated into `{app_resource}/sessions/{id}` by the relay,
+    so a client-supplied value is a path-injection channel: `../../apps/other/
+    sessions/x` would point the session at a different app. Parsing as a UUID
+    and re-emitting the *parsed* value (rather than the input) means no caller
+    string ever reaches the resource path verbatim.
+    """
+    if requested:
+        try:
+            return str(uuid.UUID(requested))
+        except (ValueError, AttributeError, TypeError):
+            log.warning("ignoring malformed sessionId from client")
+    return str(uuid.uuid4())
+
+
 def _sanitize_variables(variables: dict[str, str]) -> dict[str, str]:
     allowed = _allowed_variable_keys()
     clean: dict[str, str] = {}
@@ -255,7 +273,7 @@ async def _run_session(ws: WebSocket) -> None:
                 browser=_FastApiBrowserAdapter(ws),
                 upstream=upstream,
                 app_resource=app_resource,
-                session_id=str(uuid.uuid4()),
+                session_id=_resolve_session_id(start.sessionId),
                 persona_variables=persona_variables,
             )
             await relay.run(start=start)

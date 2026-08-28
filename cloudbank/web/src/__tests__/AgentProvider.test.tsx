@@ -385,6 +385,231 @@ describe('AgentProvider', () => {
     }
   })
 
+  // ── CES session resumption ──────────────────────────────────────────────
+  // CES closes a BidiRunSession that receives no speech after ~20-30s with
+  // 1007 failed_precondition. The reconnect is therefore routine, not an
+  // error — but a reconnect on a fresh session id starts a blank
+  // conversation. The id below is what carries the context across the gap.
+
+  const startFrames = (instances: { sent: string[] }[]) =>
+    instances
+      .flatMap((ws) => ws.sent)
+      .map((raw) => JSON.parse(raw))
+      .filter((m) => m.type === 'start')
+
+  it('sends a session id on the start frame', async () => {
+    const spy = installWebSocketSpy()
+    try {
+      await act(async () => {
+        render(
+          <PersonaProvider>
+            <AgentProvider>
+              <Probe />
+            </AgentProvider>
+          </PersonaProvider>,
+        )
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        spy.instances[0].openFromServer()
+        await flushMicrotasks()
+      })
+      const [start] = startFrames(spy.instances)
+      expect(start.sessionId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i,
+      )
+    } finally {
+      spy.restore()
+    }
+  })
+
+  it('reuses the session id after a session that produced agent output', async () => {
+    const spy = installWebSocketSpy()
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        render(
+          <PersonaProvider>
+            <AgentProvider>
+              <Probe />
+            </AgentProvider>
+          </PersonaProvider>,
+        )
+        await flushMicrotasks()
+      })
+      // A real conversation happened, so there IS context worth resuming.
+      await act(async () => {
+        const ws = spy.instances[0]
+        ws.openFromServer()
+        ws.deliver({ type: 'ready' })
+        ws.deliver({ type: 'text', text: "You've spent £83 at Costa." })
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25_000)   // CES idle window
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        spy.instances[0].closeFromServer()
+        await flushMicrotasks()
+      })
+      // The replacement socket is constructed when React commits the effect
+      // after the backoff timer fires, so flush before reaching for it.
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        spy.instances[1].openFromServer()
+        await flushMicrotasks()
+      })
+      const frames = startFrames(spy.instances)
+      expect(frames).toHaveLength(2)
+      expect(frames[1].sessionId).toBe(frames[0].sessionId)
+    } finally {
+      vi.useRealTimers()
+      spy.restore()
+    }
+  })
+
+  it('discards the session id when a session produced no agent output', async () => {
+    // Two cases collapse into one rule. A tab nobody spoke to holds no context
+    // worth resuming; and a session resumed onto an expired CES id comes back
+    // mute — it accepts the config, answers nothing, and dies at the idle
+    // timeout. Reusing that id again would keep the agent deaf forever, so a
+    // silent session always yields a fresh id.
+    const spy = installWebSocketSpy()
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        render(
+          <PersonaProvider>
+            <AgentProvider>
+              <Probe />
+            </AgentProvider>
+          </PersonaProvider>,
+        )
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        const ws = spy.instances[0]
+        ws.openFromServer()
+        ws.deliver({ type: 'ready' })   // proxy-level only; no agent output
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(25_000)
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        spy.instances[0].closeFromServer()
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(5000)
+        await flushMicrotasks()
+      })
+      await act(async () => {
+        spy.instances[1].openFromServer()
+        await flushMicrotasks()
+      })
+      const frames = startFrames(spy.instances)
+      expect(frames).toHaveLength(2)
+      expect(frames[1].sessionId).not.toBe(frames[0].sessionId)
+    } finally {
+      vi.useRealTimers()
+      spy.restore()
+    }
+  })
+
+  it('keeps reconnecting past the retry budget when each session was long-lived', async () => {
+    // The idle close arrives ~20-30s in, on a session that was working. That
+    // is routine, so it must not consume the budget reserved for a genuinely
+    // broken upstream — otherwise an untouched tab reaches the Retry pill
+    // after 4 idle cycles (~2 minutes) and the demo is dead.
+    const spy = installWebSocketSpy()
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        render(
+          <PersonaProvider>
+            <AgentProvider>
+              <Probe />
+            </AgentProvider>
+          </PersonaProvider>,
+        )
+        await flushMicrotasks()
+      })
+      const idleCycle = async () => {
+        const ws = spy.instances[spy.instances.length - 1]
+        await act(async () => {
+          ws.openFromServer()
+          ws.deliver({ type: 'ready' })
+          await flushMicrotasks()
+        })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(25_000)
+          ws.deliver({ type: 'error', message: 'upstream closed (1007): failed_precondition' })
+          ws.closeFromServer()
+          await flushMicrotasks()
+        })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5000)
+          await flushMicrotasks()
+        })
+      }
+      // Six cycles — twice the MAX_AUTO_RETRIES budget.
+      for (let i = 0; i < 6; i++) await idleCycle()
+      expect(spy.instances).toHaveLength(7)
+      expect(screen.getByTestId('state').textContent).toBe('connecting')
+    } finally {
+      vi.useRealTimers()
+      spy.restore()
+    }
+  })
+
+  it('still surfaces the Retry pill when sessions die immediately', async () => {
+    // The complement of the test above: a genuinely broken upstream kills
+    // sockets right after handshake, and that must still exhaust the budget
+    // rather than reconnect forever.
+    const spy = installWebSocketSpy()
+    vi.useFakeTimers()
+    try {
+      await act(async () => {
+        render(
+          <PersonaProvider>
+            <AgentProvider>
+              <Probe />
+            </AgentProvider>
+          </PersonaProvider>,
+        )
+        await flushMicrotasks()
+      })
+      const dieImmediately = async () => {
+        const ws = spy.instances[spy.instances.length - 1]
+        await act(async () => {
+          ws.openFromServer()
+          ws.deliver({ type: 'error', message: 'upstream 403' })
+          ws.closeFromServer()
+          await flushMicrotasks()
+        })
+        await act(async () => {
+          await vi.advanceTimersByTimeAsync(5000)
+          await flushMicrotasks()
+        })
+      }
+      await dieImmediately()
+      await dieImmediately()
+      await dieImmediately()
+      await dieImmediately()
+      expect(spy.instances).toHaveLength(4)
+      expect(screen.getByTestId('state').textContent).toBe('error')
+    } finally {
+      vi.useRealTimers()
+      spy.restore()
+    }
+  })
+
   it('registers all 5 spending-data ClientFunctions plus navigate_to', async () => {
     await act(async () => {
       render(<App />)
