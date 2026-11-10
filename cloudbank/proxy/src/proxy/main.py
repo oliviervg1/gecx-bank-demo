@@ -1,23 +1,32 @@
-"""FastAPI entrypoint for the BidiRunSession proxy.
+"""FastAPI entrypoint for the hardened localhost BidiRunSession proxy.
 
-Security posture: this proxy holds Application Default Credentials and opens
-CES sessions with them, so anyone who can open a WebSocket to it can spend the
-developer's GCP quota under the developer's identity. It is intended for
-localhost development only. The controls here (Origin allowlist, connection
-cap, frame size caps, variable allowlist) make that stance explicit rather than
-relying on uvicorn happening to default to 127.0.0.1 — but they are NOT a
-substitute for authentication. Do not expose this on a routable interface
-without adding one.
+Security posture: this proxy holds local Application Default Credentials (ADC)
+and opens CX Agent Studio BidiRunSession streams with them. It is intended
+strictly for localhost development (127.0.0.1) and MUST NOT be bound to 0.0.0.0
+or exposed remotely without authentication.
+
+Defense-in-depth controls enforced here:
+- Exact-match Origin validation (missing Origin rejected, zero wildcard/suffix
+  fallthrough, exact PROXY_ALLOWED_ORIGINS override).
+- Concurrent session cap (PROXY_MAX_SESSIONS, default 4).
+- Explicit 5-key CLIENT_SEEDABLE_VARIABLES allowlist rejecting unknown or
+  missing keys, ASCII-strict validation on scalar variables, and full Draft-07
+  JSON Schema validation on customer_snapshot loaded directly from
+  cloudbank/shared/customer_snapshot.schema.json.
 """
 from __future__ import annotations
 
+import datetime
+import functools
 import json
 import logging
 import os
+import re
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
+from typing import Any
 
+import jsonschema
 import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
@@ -25,6 +34,7 @@ from .auth import GoogleTokenProvider
 from .protocol import (
     MAX_CLIENT_FRAME_BYTES,
     ClientStart,
+    Persona,
     ServerError,
     parse_client_msg,
     serialize_server_msg,
@@ -38,146 +48,263 @@ app = FastAPI(title="Cloudbank BidiRunSession proxy")
 _tokens = GoogleTokenProvider()
 
 # Default resolves to <repo>/cloudbank/gecx-config.json when launched from
-# cloudbank/proxy/ (the documented run directory). Override via GECX_CONFIG.
-_CONFIG_PATH = Path(os.environ.get("GECX_CONFIG", "../gecx-config.json"))
-
-# Browser origins permitted to open a session. CORS does not apply to
-# WebSockets, so without this check any page the developer happens to be
-# visiting can connect to localhost:8080 and drive a fully-authenticated
-# Gemini Live session billed to their project (cross-site WebSocket hijacking).
-# Requests with NO Origin header are allowed through: only browsers set Origin,
-# and a non-browser client already needs network access to the port.
-_DEFAULT_ALLOWED_ORIGINS = "http://localhost:5173,http://127.0.0.1:5173"
-_ALLOWED_ORIGINS = frozenset(
-    o.strip()
-    for o in os.environ.get("PROXY_ALLOWED_ORIGINS", _DEFAULT_ALLOWED_ORIGINS).split(",")
-    if o.strip()
+# cloudbank/proxy/ (or falls back relative to this file). Override via GECX_CONFIG.
+_DEFAULT_CONFIG_PATH = Path(__file__).resolve().parents[3] / "gecx-config.json"
+_SNAPSHOT_SCHEMA_PATH = (
+    Path(__file__).resolve().parents[3] / "shared" / "customer_snapshot.schema.json"
 )
 
-# Hosted dev environments serve the Vite app from a generated per-user HTTPS
-# host and reach the proxy through Vite's own /ws/agent proxy, so the Origin is
-# that host rather than localhost. An exact-match allowlist silently 403s every
-# connection there, which reads in the browser as "the proxy is down".
-#
-# These suffixes are all per-user workspaces behind the provider's SSO, so
-# accepting them is a much smaller concession than it looks: reaching one still
-# requires being signed in as the developer. Set PROXY_ALLOWED_ORIGINS to
-# override the whole policy if you want strict exact-matching.
-_HOSTED_DEV_SUFFIXES = (
-    ".cloudshell.dev",          # Google Cloud Shell
-    ".cloudworkstations.dev",   # Cloud Workstations
-    ".github.dev",              # GitHub Codespaces
-    ".gitpod.io",
+_DEFAULT_LOCAL_ORIGINS = (
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
 )
+_SAFE_HOST_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9.\-]{0,252}\Z")
+_SAFE_SLUG_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9\-]{0,120}\Z")
 
+CLIENT_SEEDABLE_VARIABLES: frozenset[str] = frozenset(
+    {
+        "persona_id",
+        "first_name",
+        "demo_date",
+        "time_of_day",
+        "customer_snapshot",
+    }
+)
+MAX_SNAPSHOT_BYTES = 32 * 1024
 
-def _origin_allowed(origin: str) -> bool:
-    if origin in _ALLOWED_ORIGINS:
-        return True
-    try:
-        parsed = urlparse(origin)
-    except ValueError:
-        return False
-    # Only over TLS, and match on the parsed hostname rather than the raw
-    # string so `https://evil.com/?x=.cloudshell.dev` cannot sneak through.
-    if parsed.scheme != "https" or not parsed.hostname:
-        return False
-    return any(parsed.hostname.endswith(suffix) for suffix in _HOSTED_DEV_SUFFIXES)
+# Explicit ASCII character classes + \A...\Z anchors (never $, \s, or \d).
+_FIRST_NAME_RE = re.compile(r"\A[A-Za-z][A-Za-z0-9 '\-]{0,59}\Z")
+_DEMO_DATE_RE = re.compile(r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
+_VALID_PERSONAS = frozenset({"chloe", "david", "tom", "sarah"})
+_VALID_TIMES_OF_DAY = frozenset({"morning", "afternoon", "evening"})
 
-# Upstream frame cap. Set explicitly rather than left at max_size=None, which
-# disables the websockets library's own limit and lets a client push arbitrarily
-# large payloads through to Google. 4 MiB is far above any real audio frame
-# (24 kHz PCM16 chunks are single-digit KB) while still being bounded.
 _MAX_UPSTREAM_FRAME_BYTES = 4 * 1024 * 1024
-
-# Ceiling on simultaneous sessions. Each accepted socket opens a NEW upstream
-# CES session, so an unbounded connect loop is a cost-amplification vector.
 _MAX_CONCURRENT_SESSIONS = int(os.environ.get("PROXY_MAX_SESSIONS", "4"))
+DEFAULT_MAX_IDLE_SECONDS = 900.0
+DEFAULT_KEEPALIVE_SECONDS = 10.0
+
 _active_sessions = 0
 
-_MAX_VARIABLE_VALUE_LEN = 200
+
+class VariableValidationError(ValueError):
+    """Raised when a ClientStart variable fails allowlist or schema validation."""
+
+    def __init__(self, field: str, reason: str) -> None:
+        self.field = field
+        self.reason = reason
+        super().__init__(f"invalid {field}: {reason}")
+
+
+@functools.lru_cache(maxsize=1)
+def _snapshot_validator() -> jsonschema.Draft7Validator:
+    """Load and compile cloudbank/shared/customer_snapshot.schema.json once."""
+    schema = json.loads(_SNAPSHOT_SCHEMA_PATH.read_text(encoding="utf-8"))
+    jsonschema.Draft7Validator.check_schema(schema)
+    return jsonschema.Draft7Validator(schema)
+
+
+def _allowed_origins() -> frozenset[str]:
+    """Return exact permitted browser Origin values with zero wildcard fallthrough."""
+    override = os.environ.get("PROXY_ALLOWED_ORIGINS")
+    if override is not None:
+        return frozenset(
+            item.strip()
+            for item in override.split(",")
+            if item.strip() and "\n" not in item and "\r" not in item
+        )
+
+    allowed = set(_DEFAULT_LOCAL_ORIGINS)
+    web_host = os.environ.get("WEB_HOST", "")
+    if web_host and _SAFE_HOST_RE.fullmatch(web_host):
+        allowed.add(f"https://{web_host}")
+
+    codespace = os.environ.get("CODESPACE_NAME", "")
+    cs_domain = os.environ.get(
+        "GITHUB_CODESPACES_PORT_FORWARDING_DOMAIN", "app.github.dev"
+    )
+    if (
+        codespace
+        and _SAFE_SLUG_RE.fullmatch(codespace)
+        and _SAFE_HOST_RE.fullmatch(cs_domain)
+    ):
+        allowed.add(f"https://{codespace}-5173.{cs_domain}")
+
+    return frozenset(allowed)
+
+
+def _origin_allowed(origin: str | None) -> bool:
+    """Require a non-empty Origin header matching an exact allowed origin."""
+    if not origin or "\n" in origin or "\r" in origin:
+        return False
+    return origin in _allowed_origins()
+
+
+def _parse_strict_iso_date(value: str, field_name: str) -> datetime.date:
+    """Validate YYYY-MM-DD with ASCII digits and real calendar bounds."""
+    if not isinstance(value, str) or not _DEMO_DATE_RE.fullmatch(value):
+        raise VariableValidationError(field_name, "expected ASCII YYYY-MM-DD date")
+    year = int(value[0:4])
+    month = int(value[5:7])
+    day = int(value[8:10])
+    if year < 2000 or year > 2100:
+        raise VariableValidationError(field_name, "year out of range 2000..2100")
+    try:
+        return datetime.date(year, month, day)
+    except ValueError as exc:
+        raise VariableValidationError(field_name, "invalid calendar date") from exc
+
+
+def validate_seed_variables(
+    variables: dict[str, Any],
+    *,
+    expected_persona: Persona | None = None,
+) -> dict[str, Any]:
+    """Validate ClientStart.variables strictly against CLIENT_SEEDABLE_VARIABLES."""
+    if not isinstance(variables, dict):
+        raise VariableValidationError("variables", "expected object")
+
+    extra_keys = sorted(set(variables.keys()) - CLIENT_SEEDABLE_VARIABLES)
+    if extra_keys:
+        bad = str(extra_keys[0])
+        raise VariableValidationError(bad, f"field {bad!r} is not client-seedable")
+
+    missing_keys = sorted(CLIENT_SEEDABLE_VARIABLES - set(variables.keys()))
+    if missing_keys:
+        missing = missing_keys[0]
+        raise VariableValidationError(missing, f"missing required field {missing!r}")
+
+    persona_id = variables["persona_id"]
+    if not isinstance(persona_id, str) or persona_id not in _VALID_PERSONAS:
+        raise VariableValidationError("persona_id", "must be a known persona id")
+    if expected_persona is not None and persona_id != expected_persona:
+        raise VariableValidationError(
+            "persona_id", "must match start.persona"
+        )
+
+    first_name = variables["first_name"]
+    if not isinstance(first_name, str) or not _FIRST_NAME_RE.fullmatch(first_name):
+        raise VariableValidationError(
+            "first_name",
+            "must be 1..60 ASCII letters, digits, spaces, apostrophes, or hyphens",
+        )
+
+    demo_date = variables["demo_date"]
+    _parse_strict_iso_date(demo_date, "demo_date")
+
+    time_of_day = variables["time_of_day"]
+    if not isinstance(time_of_day, str) or time_of_day not in _VALID_TIMES_OF_DAY:
+        raise VariableValidationError(
+            "time_of_day", "must be morning, afternoon, or evening"
+        )
+
+    snapshot = variables["customer_snapshot"]
+    if not isinstance(snapshot, dict):
+        raise VariableValidationError("customer_snapshot", "must be an object")
+
+    try:
+        encoded = json.dumps(snapshot, separators=(",", ":"), allow_nan=False)
+    except (TypeError, ValueError) as exc:
+        raise VariableValidationError(
+            "customer_snapshot", "contains non-finite or non-JSON values"
+        ) from exc
+
+    if len(encoded.encode("utf-8")) > MAX_SNAPSHOT_BYTES:
+        raise VariableValidationError(
+            "customer_snapshot", f"exceeds {MAX_SNAPSHOT_BYTES} byte limit"
+        )
+
+    validator = _snapshot_validator()
+    errors = sorted(validator.iter_errors(snapshot), key=lambda e: list(e.path))
+    if errors:
+        err = errors[0]
+        loc = ".".join(str(p) for p in err.path) or "root"
+        raise VariableValidationError(
+            "customer_snapshot", f"schema violation at {loc}: {err.message}"
+        )
+
+    mortgage = (snapshot.get("accounts") or {}).get("mortgage")
+    if isinstance(mortgage, dict) and "fixed_until" in mortgage:
+        try:
+            _parse_strict_iso_date(str(mortgage["fixed_until"]), "customer_snapshot")
+        except VariableValidationError as exc:
+            raise VariableValidationError(
+                "customer_snapshot", f"invalid accounts.mortgage.fixed_until: {exc.reason}"
+            ) from exc
+
+    return {
+        "persona_id": persona_id,
+        "first_name": first_name,
+        "demo_date": demo_date,
+        "time_of_day": time_of_day,
+        "customer_snapshot": snapshot,
+    }
+
+
+def _config_path() -> Path:
+    raw = os.environ.get("GECX_CONFIG")
+    if raw:
+        return Path(raw)
+    cwd_rel = Path("../gecx-config.json")
+    return cwd_rel if cwd_rel.exists() else _DEFAULT_CONFIG_PATH
 
 
 def _load_app_resource() -> tuple[str, str]:
-    cfg = json.loads(_CONFIG_PATH.read_text())
+    cfg = json.loads(_config_path().read_text(encoding="utf-8"))
     project_id = cfg["gcp_project_id"]
     location = cfg["location"]
     app_id = cfg.get("deployed_app_id")
     if not app_id:
-        raise KeyError("deployed_app_id not set in gecx-config.json — run `cxas push` (Task 16) first")
+        raise KeyError("deployed_app_id not set in gecx-config.json")
     resource = f"projects/{project_id}/locations/{location}/apps/{app_id}"
     return resource, location
 
 
-def _allowed_variable_keys() -> frozenset[str]:
-    """Variable names the app actually declares.
-
-    Session variables are client-supplied and are templated into the system
-    instruction (`{first_name}`), so relaying the dict unfiltered is a
-    prompt-injection channel. Read the declared names from app.json so this
-    cannot drift from the agent config; fall back to the one variable the app
-    declares.
-    """
-    try:
-        cfg = json.loads(_CONFIG_PATH.read_text())
-        app_json = (
-            _CONFIG_PATH.parent / cfg.get("app_dir", "cxas_app/") / cfg["app_name"] / "app.json"
-        )
-        declared = json.loads(app_json.read_text()).get("variableDeclarations", [])
-        names = frozenset(d["name"] for d in declared if isinstance(d, dict) and "name" in d)
-        if names:
-            return names
-    except (OSError, json.JSONDecodeError, KeyError, TypeError):
-        log.warning("could not read variableDeclarations from app.json; using default allowlist")
-    return frozenset({"first_name"})
-
-
 def _resolve_session_id(requested: str | None) -> str:
-    """Return the CES session id to use, generating one unless the client sent
-    a well-formed UUID.
-
-    The result is interpolated into `{app_resource}/sessions/{id}` by the relay,
-    so a client-supplied value is a path-injection channel: `../../apps/other/
-    sessions/x` would point the session at a different app. Parsing as a UUID
-    and re-emitting the *parsed* value (rather than the input) means no caller
-    string ever reaches the resource path verbatim.
-    """
-    if requested:
+    """Return a canonical UUID session id, replacing any non-UUID input."""
+    if requested and isinstance(requested, str) and "\n" not in requested and "\r" not in requested:
         try:
-            return str(uuid.UUID(requested))
+            parsed = uuid.UUID(requested)
+            if str(parsed) == requested.lower():
+                return str(parsed)
         except (ValueError, AttributeError, TypeError):
             log.warning("ignoring malformed sessionId from client")
+    elif requested:
+        log.warning("ignoring malformed sessionId from client")
     return str(uuid.uuid4())
 
 
-def _sanitize_variables(variables: dict[str, str]) -> dict[str, str]:
-    allowed = _allowed_variable_keys()
-    clean: dict[str, str] = {}
-    for key, value in variables.items():
-        if key not in allowed:
-            log.warning("dropping undeclared session variable %r", key)
-            continue
-        if not isinstance(value, str) or len(value) > _MAX_VARIABLE_VALUE_LEN:
-            log.warning("dropping oversized/invalid session variable %r", key)
-            continue
-        clean[key] = value
-    return clean
-
-
-async def _fail(ws: WebSocket, message: str) -> None:
-    """Send a typed error envelope, then close.
-
-    Uses the Pydantic model rather than hand-built JSON: the previous
-    f-string interpolated exception text straight into a JSON literal, which
-    both leaked internals (filesystem paths out of FileNotFoundError) and
-    produced malformed frames whenever the text contained a quote or backslash.
-    """
+def _max_idle_seconds() -> float:
+    raw = os.environ.get("PROXY_MAX_IDLE_SECONDS")
+    if not raw:
+        return DEFAULT_MAX_IDLE_SECONDS
     try:
-        await ws.send_text(serialize_server_msg(ServerError(message=message)))
+        val = float(raw)
+        return val if val > 0 else DEFAULT_MAX_IDLE_SECONDS
+    except ValueError:
+        return DEFAULT_MAX_IDLE_SECONDS
+
+
+def _keepalive_seconds() -> float:
+    raw = os.environ.get("PROXY_KEEPALIVE_SECONDS")
+    if not raw:
+        return DEFAULT_KEEPALIVE_SECONDS
+    try:
+        val = float(raw)
+        return val if val > 0 else DEFAULT_KEEPALIVE_SECONDS
+    except ValueError:
+        return DEFAULT_KEEPALIVE_SECONDS
+
+
+async def _fail(ws: WebSocket, message: str, *, field: str | None = None) -> None:
+    """Send a structured ServerError envelope and close the WebSocket."""
+    try:
+        await ws.send_text(
+            serialize_server_msg(ServerError(message=message, field=field))
+        )
     except (WebSocketDisconnect, RuntimeError):
         pass
     try:
-        await ws.close()
+        await ws.close(code=1008)
     except RuntimeError:
         pass
 
@@ -192,8 +319,8 @@ async def ws_agent(ws: WebSocket) -> None:
     global _active_sessions
 
     origin = ws.headers.get("origin")
-    if origin is not None and not _origin_allowed(origin):
-        log.warning("rejecting websocket from disallowed origin %r", origin)
+    if not _origin_allowed(origin):
+        log.warning("rejecting websocket from missing or disallowed origin %r", origin)
         await ws.close(code=1008)
         return
 
@@ -221,9 +348,6 @@ async def _run_session(ws: WebSocket) -> None:
         await _fail(ws, "frame too large")
         return
 
-    # parse_client_msg raises ValueError on anything malformed. Unguarded, a
-    # single garbage first frame escaped the endpoint entirely — an unhandled
-    # exception plus a traceback, with the browser seeing only a bare close.
     try:
         start = parse_client_msg(start_raw)
     except ValueError:
@@ -236,17 +360,21 @@ async def _run_session(ws: WebSocket) -> None:
         return
 
     try:
+        persona_variables = validate_seed_variables(
+            start.variables, expected_persona=start.persona
+        )
+    except VariableValidationError as exc:
+        log.warning("rejecting invalid start variable %s: %s", exc.field, exc.reason)
+        await _fail(ws, str(exc), field=exc.field)
+        return
+
+    try:
         app_resource, location = _load_app_resource()
     except (FileNotFoundError, KeyError, json.JSONDecodeError):
-        # Detail goes to the server log; the client is told only that it failed.
         log.exception("could not load gecx-config.json")
         await _fail(ws, "server configuration error")
         return
 
-    persona_variables = _sanitize_variables(start.variables)
-
-    # Expired or absent ADC is the most likely local-dev failure, and used to
-    # produce no envelope at all because this call sat outside every try.
     try:
         token = await _tokens.get_token()
     except Exception:
@@ -254,15 +382,15 @@ async def _run_session(ws: WebSocket) -> None:
         await _fail(ws, "server authentication error")
         return
 
-    # Canonical URL pattern from cxas_scrapi.core.sessions.BIDI_SESSION_URI —
-    # the plan's `ces.{location}.rep.googleapis.com` host was wrong.
     upstream_url = (
         "wss://ces.googleapis.com/ws/"
         "google.cloud.ces.v1.SessionService/BidiRunSession/"
         f"locations/{location}"
     )
 
-    log.info("opening upstream WS for app=%s", app_resource)
+    resolved_session_id = _resolve_session_id(start.sessionId)
+    relay: Relay | None = None
+    log.info("opening upstream WS for app=%s session=%s", app_resource, resolved_session_id)
     try:
         async with websockets.connect(
             upstream_url,
@@ -273,25 +401,19 @@ async def _run_session(ws: WebSocket) -> None:
                 browser=_FastApiBrowserAdapter(ws),
                 upstream=upstream,
                 app_resource=app_resource,
-                session_id=_resolve_session_id(start.sessionId),
+                session_id=resolved_session_id,
                 persona_variables=persona_variables,
+                keepalive_interval_seconds=_keepalive_seconds(),
+                max_idle_seconds=_max_idle_seconds(),
             )
             await relay.run(start=start)
     except websockets.exceptions.InvalidStatus as exc:
-        # websockets v15+ renamed InvalidStatusCode -> InvalidStatus; the
-        # dependency floor in pyproject.toml is >=15 for exactly this reason.
         status_code = getattr(exc.response, "status_code", "?")
         log.exception("upstream rejected connection (status=%s)", status_code)
         await _fail(ws, f"upstream {status_code}")
     except websockets.exceptions.ConnectionClosedError as exc:
-        # CES closed the upstream WS *after* a successful handshake (e.g. the
-        # transient `failed_precondition` on BidiRunSession documented in the
-        # README). Without a final envelope the browser sees only ws.onclose
-        # and cannot distinguish failure from a clean end_session.
-        # Read the close frame off `rcvd` rather than `exc.code`/`exc.reason`:
-        # those shortcuts are deprecated (websockets 13.1) and will be removed.
-        # `rcvd` is None when the peer vanished without a close frame, which is
-        # what 1006 means.
+        if relay is not None and relay.ended_cleanly:
+            return
         rcvd = getattr(exc, "rcvd", None)
         code = getattr(rcvd, "code", None) or 1006
         reason = (getattr(rcvd, "reason", "") or "").strip()
@@ -305,7 +427,6 @@ async def _run_session(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     except (OSError, websockets.exceptions.InvalidURI, TimeoutError):
-        # Proxy cannot reach CES at all — DNS, TLS, offline, malformed URL.
         log.exception("could not reach upstream")
         await _fail(ws, "could not reach upstream")
 
@@ -321,3 +442,9 @@ class _FastApiBrowserAdapter:
 
     async def send_text(self, raw: str) -> None:
         await self._ws.send_text(raw)
+
+    async def close(self) -> None:
+        try:
+            await self._ws.close()
+        except RuntimeError:
+            pass

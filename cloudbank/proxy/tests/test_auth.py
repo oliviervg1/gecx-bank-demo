@@ -9,12 +9,12 @@ from proxy.auth import GoogleTokenProvider
 
 
 class _FakeCreds:
-    def __init__(self, token: str, expired: bool = False) -> None:
+    def __init__(self, token: str | None, expired: bool = False) -> None:
         self.token = token
         self.expired = expired
         self.refresh_calls = 0
 
-    def refresh(self, _request) -> None:
+    def refresh(self, _request: object) -> None:
         self.refresh_calls += 1
         self.expired = False
 
@@ -31,8 +31,10 @@ async def test_returns_token_on_first_call() -> None:
 @pytest.mark.asyncio
 async def test_refreshes_when_expired() -> None:
     creds = _FakeCreds(token="t-1", expired=True)
-    with patch("proxy.auth.google.auth.default", return_value=(creds, "proj-x")), \
-         patch("proxy.auth.Request", return_value=MagicMock()):
+    with (
+        patch("proxy.auth.google.auth.default", return_value=(creds, "proj-x")),
+        patch("proxy.auth.Request", return_value=MagicMock()),
+    ):
         provider = GoogleTokenProvider()
         await provider.get_token()
     assert creds.refresh_calls == 1
@@ -41,8 +43,20 @@ async def test_refreshes_when_expired() -> None:
 @pytest.mark.asyncio
 async def test_caches_credentials_across_calls() -> None:
     creds = _FakeCreds(token="t-1")
-    with patch("proxy.auth.google.auth.default", return_value=(creds, "proj-x")) as m:
+    with patch("proxy.auth.google.auth.default", return_value=(creds, "proj-x")) as mock_default:
         provider = GoogleTokenProvider()
         await provider.get_token()
         await provider.get_token()
-    assert m.call_count == 1
+    assert mock_default.call_count == 1
+
+
+@pytest.mark.asyncio
+async def test_raises_when_refresh_leaves_token_none() -> None:
+    creds = _FakeCreds(token=None, expired=True)
+    with (
+        patch("proxy.auth.google.auth.default", return_value=(creds, "proj-x")),
+        patch("proxy.auth.Request", return_value=MagicMock()),
+    ):
+        provider = GoogleTokenProvider()
+        with pytest.raises(RuntimeError, match="no access token"):
+            await provider.get_token()
