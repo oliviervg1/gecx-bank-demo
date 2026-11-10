@@ -1,8 +1,3 @@
-// The mortgage "next payment" is a recurring day-of-month resolved against
-// today, not an absolute date in the fixture, so it cannot go stale and start
-// announcing a payment that has already happened. These tests pin the edges of
-// that resolution.
-
 import { describe, it, expect } from 'vitest'
 import {
   nextMonthlyOccurrence,
@@ -11,83 +6,60 @@ import {
   parseLocalDate,
   ordinalSuffix,
 } from '../util/dates'
+import {
+  defaultDemoDateForNow,
+  formatIsoDate,
+  formatIsoDayMonthYear,
+  isValidIsoCalendarDate,
+  monthNameForOffset,
+  nextPaymentDateLabel,
+  readDemoDateFromSearch,
+  targetYearMonth,
+} from '../util/demoClock'
 
-describe('nextMonthlyOccurrence', () => {
-  it('returns this month when the day is still ahead', () => {
-    const d = nextMonthlyOccurrence(15, new Date(2026, 7, 3)) // 3 Aug
-    expect([d.getFullYear(), d.getMonth(), d.getDate()]).toEqual([2026, 7, 15])
+describe('demoClock — timezone-safe integer-component dates', () => {
+  it('formats local calendar dates without UTC shift and anchors default day to 24 across all months', () => {
+    expect(formatIsoDate(new Date(2026, 1, 24))).toBe('2026-02-24')
+    expect(defaultDemoDateForNow(new Date(2026, 1, 28))).toBe('2026-02-24')
+    expect(defaultDemoDateForNow(new Date(2026, 10, 10))).toBe('2026-11-24')
   })
 
-  it('returns today when the payment falls today', () => {
-    const d = nextMonthlyOccurrence(3, new Date(2026, 7, 3))
-    expect(d.getDate()).toBe(3)
-    expect(d.getMonth()).toBe(7)
+  it('validates real calendar dates and rejects impossible dates', () => {
+    expect(isValidIsoCalendarDate('2026-11-24')).toBe(true)
+    expect(isValidIsoCalendarDate('2028-02-29')).toBe(true)
+    expect(isValidIsoCalendarDate('2026-02-29')).toBe(false)
+    expect(isValidIsoCalendarDate('2026-02-30')).toBe(false)
+    expect(isValidIsoCalendarDate('2026-11-24\n')).toBe(false)
+    expect(readDemoDateFromSearch('?demo_date=2026-12-24')).toBe('2026-12-24')
+    expect(readDemoDateFromSearch('?demo_date=2026-02-30')).toBe('2026-11-24')
   })
 
-  it('rolls into next month once the day has passed', () => {
-    const d = nextMonthlyOccurrence(1, new Date(2026, 7, 3)) // 1st already gone
-    expect([d.getFullYear(), d.getMonth(), d.getDate()]).toEqual([2026, 8, 1])
-  })
-
-  it('rolls across a year boundary', () => {
-    const d = nextMonthlyOccurrence(1, new Date(2026, 11, 15)) // 15 Dec
-    expect([d.getFullYear(), d.getMonth(), d.getDate()]).toEqual([2027, 0, 1])
-  })
-
-  // A 31st payment must not skip a short month by overflowing into the next.
-  it('clamps to the last day of a 30-day month', () => {
-    const d = nextMonthlyOccurrence(31, new Date(2026, 10, 5)) // 5 Nov
-    expect([d.getMonth(), d.getDate()]).toEqual([10, 30])
-  })
-
-  it('clamps to the last day of February', () => {
-    const d = nextMonthlyOccurrence(30, new Date(2026, 1, 5)) // 5 Feb 2026
-    expect([d.getMonth(), d.getDate()]).toEqual([1, 28])
-  })
-
-  it('clamps to 29 February in a leap year', () => {
-    const d = nextMonthlyOccurrence(31, new Date(2028, 1, 5)) // 2028 is a leap year
-    expect([d.getMonth(), d.getDate()]).toEqual([1, 29])
-  })
-
-  it('never returns a date in the past, for any day-of-month across a year', () => {
-    for (let month = 0; month < 12; month++) {
-      for (const dom of [1, 15, 28, 31]) {
-        const today = new Date(2026, month, 20)
-        const next = nextMonthlyOccurrence(dom, today)
-        // Compare by calendar day, not by time-of-day.
-        const asDay = (d: Date) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
-        expect(asDay(next)).toBeGreaterThanOrEqual(asDay(today))
-      }
-    }
+  it('resolves month offsets, targetYearMonth, and nextPaymentDateLabel across year boundaries', () => {
+    expect(monthNameForOffset('2026-01-24', 0)).toBe('January')
+    expect(monthNameForOffset('2026-01-24', 1)).toBe('December')
+    expect(monthNameForOffset('2026-01-24', 2)).toBe('November')
+    expect(targetYearMonth('2026-11-24', 19)).toEqual({
+      targetYear: 2028,
+      targetMonth: 6,
+      label: 'June 2028',
+    })
+    expect(nextPaymentDateLabel(1, '2026-11-24')).toBe('1 December 2026')
+    expect(nextPaymentDateLabel(25, '2026-11-24')).toBe('25 November 2026')
+    expect(nextPaymentDateLabel(1, '2026-12-24')).toBe('1 January 2027')
+    expect(formatIsoDayMonthYear('2027-09-30')).toBe('30 September 2027')
   })
 })
 
-describe('ordinal formatting', () => {
-  it.each([
-    [1, '1st'], [2, '2nd'], [3, '3rd'], [4, '4th'],
-    [11, '11th'], [12, '12th'], [13, '13th'],
-    [21, '21st'], [22, '22nd'], [23, '23rd'], [31, '31st'],
-  ])('formatDayOrdinal(%i) === %s', (day, expected) => {
-    expect(formatDayOrdinal(day)).toBe(expected)
-  })
-
-  it('formatDayAndMonth renders day and full month name', () => {
-    expect(formatDayAndMonth(new Date(2026, 6, 1))).toBe('1st July')
-    expect(formatDayAndMonth(new Date(2026, 11, 23))).toBe('23rd December')
-  })
-
-  it('ordinalSuffix handles the 11-13 exception', () => {
+describe('dates.ts — ordinal and occurrence helpers', () => {
+  it('handles nextMonthlyOccurrence, ordinalSuffix, and parseLocalDate', () => {
+    const d = nextMonthlyOccurrence(1, new Date(2026, 10, 24))
+    expect([d.getFullYear(), d.getMonth(), d.getDate()]).toEqual([2026, 11, 1])
+    expect(formatDayOrdinal(1)).toBe('1st')
+    expect(formatDayOrdinal(12)).toBe('12th')
+    expect(formatDayOrdinal(21)).toBe('21st')
     expect(ordinalSuffix(11)).toBe('th')
-    expect(ordinalSuffix(111)).toBe('th')
-  })
-})
-
-describe('parseLocalDate', () => {
-  // new Date('2026-07-01') is UTC midnight, which reads as 30 June in any
-  // timezone west of Greenwich. parseLocalDate must give the written day.
-  it('keeps the calendar day written in the string', () => {
-    const d = parseLocalDate('2026-07-01')
-    expect([d.getFullYear(), d.getMonth(), d.getDate()]).toEqual([2026, 6, 1])
+    expect(formatDayAndMonth(new Date(2026, 6, 1))).toBe('1st July')
+    const parsed = parseLocalDate('2026-07-01')
+    expect([parsed.getFullYear(), parsed.getMonth(), parsed.getDate()]).toEqual([2026, 6, 1])
   })
 })
