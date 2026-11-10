@@ -27,9 +27,6 @@
     }
   },
   "loggingSettings": {
-    "redactionConfig": {
-      "enableRedaction": true
-    },
     "conversationLoggingSettings": {}
   },
   "toolExecutionMode": "SEQUENTIAL",
@@ -84,11 +81,6 @@
     {
       "name": "handoff_context",
       "description": "One-shot cross-spoke pivot context carrying freed_monthly_pence.",
-      "schema": { "type": "OBJECT", "required": [] }
-    },
-    {
-      "name": "paused_workflow",
-      "description": "Paused journey stack for multi-spoke conversations.",
       "schema": { "type": "OBJECT", "required": [] }
     },
     {

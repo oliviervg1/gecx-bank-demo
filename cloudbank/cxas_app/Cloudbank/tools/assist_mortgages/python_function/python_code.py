@@ -91,6 +91,15 @@ def assist_mortgages(
         statement_month = _MONTH_NAMES[anchor_month - 1]
 
         mortgage = snapshot.get("mortgage")
+        mortgage_st = dict(context.state.get("mortgage_state") or {})
+        if (
+            mortgage is None
+            and not clean_query
+            and monthly_pence <= 0
+            and lump_pence <= 0
+            and mortgage_st.get("pending_savings_pivot")
+        ):
+            return _handle_unclear()
         if mortgage is None:
             context.state["unclear_count"] = "0"
             return _handle_renter_guidance(snapshot, statement_month)
@@ -297,24 +306,24 @@ def _normalize_snapshot(raw: dict) -> dict:
 
 
 def _parse_demo_date() -> tuple[int, int, int]:
-    """Parse YYYY-MM-DD by integer components."""
+    """Parse YYYY-MM-DD by integer components without timezone shifts."""
     raw = (
         str(context.state.get("demo_date") or "").strip()
         or str(context.state.get(_PLATFORM_CURRENT_DATE_KEY) or "").strip()
         or _DEFAULT_DEMO_DATE
     )
-    elems = [x for x in raw.split("-") if x.isdigit()]
-    if len(elems) == 3:
-        year = int(elems[0])
-        month = int(elems[1])
-        day = int(elems[2])
+    parts = raw.split("-")
+    if len(parts) == 3 and all(p.isdigit() for p in parts):
+        year = int(parts[0])
+        month = int(parts[1])
+        day = int(parts[2])
         if 1 <= month <= 12 and 1 <= day <= 31:
             return year, month, day
     return 2026, 11, 24
 
 
 def _format_gbp(amount_pence: int) -> str:
-    """Format integer pence as £X,XXX.XX."""
+    """Format integer pence as £X,XXX.XX without float division."""
     sign = "-" if amount_pence < 0 else ""
     pounds, pence = divmod(abs(amount_pence), 100)
     return f"{sign}£{pounds:,}.{pence:02d}"
@@ -604,7 +613,7 @@ def _handle_switch_intent(switch_intent: str) -> dict:
             if switch_intent == "EVERYDAY_BANKING"
             else "savings projections"
         )
-        if pass_count > 2:
+        if pass_count > 4:
             return {
                 "agent_action": f"Sure, tell me what you would like to check on your {label}."
             }

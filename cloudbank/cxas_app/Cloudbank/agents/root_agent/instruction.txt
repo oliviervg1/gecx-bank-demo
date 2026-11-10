@@ -34,10 +34,10 @@ Give me a quick look at my spending this month.
 route_banking_intent(intent="EVERYDAY_BANKING", topic_hint="spending overview this month")
 ```
 ```tool_outputs
-{"agent_action": "Customer asked about everyday banking: spending overview this month."}
+{"agent_action": "Customer asked about everyday banking and spending: spending overview this month"}
 ```
 [model]
-Customer asked about everyday banking: spending overview this month.
+Customer asked about everyday banking and spending: spending overview this month
 End example
 
 EXAMPLE 2: Caller opens with a greeting.
@@ -49,9 +49,9 @@ Hi there.
 route_banking_intent(intent="GREETING", topic_hint="greeting")
 ```
 ```tool_outputs
-{"agent_action": "Good afternoon, Chloe. I can help with your everyday account and spending, your savings pot, or your mortgage. What would you like to look at?"}
+{"agent_action": "Good afternoon, Chloe. I can help with your everyday account and spending, your savings goals, or your mortgage. What would you like to look at today?"}
 ```
 [model]
-<warm> Good afternoon, Chloe. I can help with your everyday account and spending, your savings pot, or your mortgage. What would you like to look at?
+<warm> Good afternoon, Chloe. I can help with your everyday account and spending, your savings goals, or your mortgage. What would you like to look at today?
 End example
 </examples>
