@@ -595,6 +595,9 @@ def _handle_anomaly_followup(
         everyday["anomaly_status"] = "unrecognised"
         everyday["pending_anomaly_vendor"] = ""
         everyday["pending_redirect_offer"] = False
+        last_sub = dict(everyday.get("last_discussed_subscription") or {})
+        if _vendors_equal(resolved_vendor, str(last_sub.get("vendor") or "")):
+            everyday["last_discussed_subscription"] = {}
         context.state["everyday_state"] = everyday
         _emit_ui_view(
             {

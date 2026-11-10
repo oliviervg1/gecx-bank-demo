@@ -60,7 +60,7 @@ def before_model_callback(
     try:
         state = callback_context.state
         if state.get("call_complete") == "released":
-            return LlmResponse.from_parts(parts=[])
+            return LlmResponse.from_parts(parts=[Part.from_text(text="")])
 
         # 1. Hide restricted tools on every pass so only the active controller is exposed.
         llm_request.config.hide_tool("end_session")

@@ -1,0 +1,200 @@
+evals:
+  - name: sim_chloe_hero_spending_to_savings_and_mortgage
+    tags:
+      - P0
+      - hero
+      - multi_product
+    max_turns: 10
+    use_tool_fakes: true
+    session_parameters:
+      persona_id: "chloe"
+      first_name: "Chloe"
+      demo_date: "2026-11-24"
+      time_of_day: "afternoon"
+      customer_snapshot:
+        user:
+          first_name: "Chloe"
+          last_name: "Williams"
+          age: 29
+          location: "Manchester, UK"
+          employment: "Product Manager"
+          email: "chloe.williams@example.com"
+          annual_income_pence: 5200000
+          goals:
+            - "Build a £10,000 Home Emergency Pot"
+            - "Trim recurring subscriptions and overpay the mortgage"
+        accounts:
+          current:
+            name: "Cloudbank Everyday Account"
+            sort_code: "04-00-75"
+            account_number_last4: "4821"
+            balance_pence: 425075
+            currency: "GBP"
+          savings:
+            name: "Cloudbank Easy Access Saver"
+            balance_pence: 485000
+            gross_rate_bps: 441
+            aer_bps: 450
+            monthly_contribution_pence: 20000
+            goal_name: "Home Emergency Pot"
+            goal_target_pence: 1000000
+          mortgage:
+            balance_pence: 21450000
+            address: "123 Forest Avenue, Manchester"
+            interest_rate_bps: 420
+            rate_type: "Fixed"
+            fixed_until: "2027-09-30"
+            term_remaining_months: 220
+            next_payment:
+              amount_pence: 139971
+              day_of_month: 1
+            annual_overpayment_allowance_pence: 2145000
+            overpaid_this_year_pence: 0
+            renewal_options:
+              - id: "fix-2yr"
+                label: "2-year Fixed"
+                term_years: 2
+                rate_bps: 389
+              - id: "fix-5yr"
+                label: "5-year Fixed"
+                term_years: 5
+                rate_bps: 374
+        transactions:
+          - { id: "txn-salary", month_offset: 0, day: 1, vendor: "Salary", category: "income", amount_pence: -320000 }
+          - { id: "txn-mortgage-01", month_offset: 0, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 139971, is_subscription: true }
+          - { id: "txn-netflix", month_offset: 0, day: 21, vendor: "Netflix", category: "subscriptions", amount_pence: 4500, is_subscription: true, is_anomaly: true }
+          - { id: "txn-netflix-02", month_offset: 1, day: 21, vendor: "Netflix", category: "subscriptions", amount_pence: 1799, is_subscription: true }
+    steps:
+      - goal: "Ask for a summary of November spending and respond to the flagged £45 Netflix charge by confirming recognition and asking how to cancel Netflix."
+        success_criteria: "The assistant reports November spending, highlights the £45 Netflix charge, and shares concise plain-spoken cancellation steps."
+        response_guide: "Confirm that you recognise the Netflix plan upgrade and ask how to cancel it."
+        max_turns: 3
+      - goal: "Accept the offer to see what redirecting £45 a month into savings achieves, then ask what overpaying the mortgage by £200 a month would save."
+        success_criteria: "The assistant reports the Home Emergency Pot completion timeline at £245 a month (19 months, June 2028) and the £200 monthly mortgage overpayment savings (£17,849.18 interest saved, 3 years and 2 months shaved off)."
+        response_guide: "Ask first about redirecting the £45 into savings, then pivot to a £200 monthly mortgage overpayment, and say goodbye once answered."
+        max_turns: 4
+    expectations:
+      - "The assistant identifies the £45 Netflix charge in November and provides concise spoken cancellation steps."
+      - "The assistant reports that adding £45 a month reaches the £10,000 Home Emergency Pot in 19 months (June 2028)."
+      - "The assistant reports that overpaying the mortgage by £200 a month saves £17,849.18 in interest and shaves 3 years and 2 months off the remaining term with an indicative-illustration note."
+
+  - name: sim_tom_renter_borrowing_to_first_home_deposit
+    tags:
+      - P1
+      - renter
+      - savings
+    max_turns: 8
+    use_tool_fakes: true
+    session_parameters:
+      persona_id: "tom"
+      first_name: "Tom"
+      demo_date: "2026-11-24"
+      time_of_day: "afternoon"
+      customer_snapshot:
+        user:
+          first_name: "Tom"
+          last_name: "Harding"
+          age: 32
+          location: "London, UK"
+          employment: "Freelance Graphic Designer"
+          email: "tom.harding@example.com"
+          annual_income_pence: 4200000
+          monthly_rent_pence: 145000
+          goals:
+            - "Reach £35,000 First Home Deposit"
+        accounts:
+          current:
+            name: "Cloudbank Everyday Account"
+            sort_code: "04-00-75"
+            account_number_last4: "1954"
+            balance_pence: 184050
+            currency: "GBP"
+          savings:
+            name: "Cloudbank First Home Saver"
+            balance_pence: 1420000
+            gross_rate_bps: 465
+            aer_bps: 475
+            monthly_contribution_pence: 35000
+            goal_name: "First Home Deposit"
+            goal_target_pence: 3500000
+        transactions:
+          - { id: "txn-rent", month_offset: 0, day: 1, vendor: "Hamilton Lettings", category: "bills", amount_pence: 145000, is_subscription: true }
+          - { id: "txn-adobe", month_offset: 0, day: 22, vendor: "Adobe Creative Cloud", category: "subscriptions", amount_pence: 19900, is_subscription: true, is_anomaly: true }
+    steps:
+      - goal: "Ask how much you could roughly borrow toward a first home, then accept the offer to check your First Home Deposit timeline."
+        success_criteria: "The assistant explains indicative borrowing up to £189,000 on £42,000 income (around £224,000 budget with the £35,000 deposit) and then reports the 47-month First Home Deposit timeline."
+        response_guide: "Ask about first-home mortgage borrowing readiness, say yes to reviewing your deposit savings pot, and then thank the assistant and say goodbye."
+        max_turns: 4
+    expectations:
+      - "The assistant explains that Tom does not currently hold a Cloudbank mortgage and gives an indicative borrowing figure of £189,000 alongside an indicative-illustration note."
+      - "The assistant reports the First Home Deposit balance of £14,200 toward the £35,000 target reaching completion in 47 months (October 2030)."
+
+  - name: sim_sarah_overpayment_exceeds_erc_allowance
+    tags:
+      - P1
+      - mortgage
+      - allowance
+    max_turns: 6
+    use_tool_fakes: true
+    session_parameters:
+      persona_id: "sarah"
+      first_name: "Sarah"
+      demo_date: "2026-11-24"
+      time_of_day: "evening"
+      customer_snapshot:
+        user:
+          first_name: "Sarah"
+          last_name: "Okonkwo"
+          age: 56
+          location: "Bristol, UK"
+          employment: "Head of Operations"
+          email: "sarah.okonkwo@example.com"
+          annual_income_pence: 9800000
+          goals:
+            - "Clear the mortgage before retirement"
+        accounts:
+          current:
+            name: "Cloudbank Everyday Account"
+            sort_code: "04-00-75"
+            account_number_last4: "6612"
+            balance_pence: 934015
+            currency: "GBP"
+          savings:
+            name: "Cloudbank Premier Saver"
+            balance_pence: 2150000
+            gross_rate_bps: 441
+            aer_bps: 450
+            monthly_contribution_pence: 40000
+            goal_name: "Retirement Emergency Reserve"
+            goal_target_pence: 2500000
+          mortgage:
+            balance_pence: 9650000
+            address: "8 Clifton Vale, Bristol"
+            interest_rate_bps: 405
+            rate_type: "Fixed"
+            fixed_until: "2028-03-31"
+            term_remaining_months: 90
+            next_payment:
+              amount_pence: 124510
+              day_of_month: 2
+            annual_overpayment_allowance_pence: 965000
+            overpaid_this_year_pence: 600000
+            renewal_options:
+              - id: "fix-2yr"
+                label: "2-year Fixed"
+                term_years: 2
+                rate_bps: 389
+              - id: "fix-5yr"
+                label: "5-year Fixed"
+                term_years: 5
+                rate_bps: 374
+        transactions:
+          - { id: "txn-insurance", month_offset: 0, day: 23, vendor: "Aviva Home Insurance", category: "subscriptions", amount_pence: 9600, is_subscription: true, is_anomaly: true }
+    steps:
+      - goal: "Ask what happens if you overpay your mortgage by £400 a month and whether that stays within your annual fee-free overpayment allowance."
+        success_criteria: "The assistant reports £4,800 in year one exceeding the £3,650 remaining fee-free allowance by £1,150, shaving 2 years off the term and saving £4,340.38 in interest."
+        response_guide: "Ask about overpaying £400 a month on your mortgage and say goodbye after receiving the answer."
+        max_turns: 3
+    expectations:
+      - "The assistant warns that £4,800 in year one exceeds Sarah's remaining £3,650 fee-free overpayment allowance by £1,150 and could incur an early repayment charge."
+      - "The assistant states the indicative term reduction of 2 years and interest saving of £4,340.38 with the indicative-illustration sentence."
