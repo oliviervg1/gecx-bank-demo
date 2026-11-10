@@ -747,7 +747,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     for cmd in ("sync", "sync-evals"):
         p_sync = sub.add_parser(cmd, add_help=False)
-        p_sync.add_argument("target")
+        p_sync.add_argument("target", nargs="?", default=None)
 
     for cmd in ("run", "run-evals"):
         p_run = sub.add_parser(cmd, add_help=False)

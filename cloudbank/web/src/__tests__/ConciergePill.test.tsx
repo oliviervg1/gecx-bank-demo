@@ -99,4 +99,41 @@ describe('ConciergePill', () => {
     fireEvent.click(screen.getByRole('button'))
     expect(v.reconnect).toHaveBeenCalledTimes(1)
   })
+
+  it('uses plain executive tooltip copy instead of leaking raw errorMessage on hover', () => {
+    const { rerender } = render(
+      withAgent(
+        makeAgent({
+          pushToTalk: false,
+          phase: 'error',
+          connState: 'error',
+          errorMessage:
+            'Connection error. Check that the localhost proxy is running on port 8080. upstream closed (1006)',
+        }),
+      ),
+    )
+    const pill = screen.getByRole('button')
+    expect(pill).toHaveAttribute('title', 'Select Reconnect to start a new concierge session')
+    expect(pill.getAttribute('title')).not.toContain('8080')
+    expect(pill.getAttribute('title')).not.toContain('1006')
+    expect(pill.getAttribute('title')).not.toContain('proxy')
+
+    rerender(
+      withAgent(
+        makeAgent({
+          pushToTalk: true,
+          phase: 'error',
+          connState: 'ready',
+          micState: 'muted',
+          micDenied: true,
+          errorMessage: 'Audio capture failed (NotAllowedError: Permission denied). Hold to retry.',
+        }),
+      ),
+    )
+    expect(pill).toHaveAttribute(
+      'title',
+      'Allow microphone access in your browser, then hold to talk',
+    )
+    expect(pill.getAttribute('title')).not.toContain('NotAllowedError')
+  })
 })

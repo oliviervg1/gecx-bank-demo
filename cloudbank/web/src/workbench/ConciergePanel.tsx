@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from 'react'
-import { AlertCircle, ExternalLink, PauseCircle, RefreshCw, Send, Sparkles } from 'lucide-react'
+import { AlertCircle, ExternalLink, MicOff, PauseCircle, RefreshCw, Send, Sparkles } from 'lucide-react'
 import { useAgent } from '../agent/AgentProvider'
 import { useFixture } from '../data/useFixture'
 import type { ServerSearchSuggestionsMsg } from '../agent/protocol'
@@ -113,6 +113,7 @@ export function ConciergePanel() {
     agent.activeAgentName,
     agent.latestUiState?.page,
   )
+  const isMicBlockedOnly = agent.micDenied && agent.connState !== 'error'
 
   function handleTextSubmit(e: FormEvent) {
     e.preventDefault()
@@ -152,7 +153,33 @@ export function ConciergePanel() {
         className="flex-1 min-h-0 overflow-y-auto px-5 py-5 space-y-4"
       >
         {agent.turns.length === 0 ? (
-          agent.phase === 'error' ? (
+          isMicBlockedOnly ? (
+            <div
+              data-testid="concierge-mic-blocked-state"
+              className="h-full flex flex-col justify-center items-start max-w-lg py-6"
+            >
+              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-muted mb-2">
+                <MicOff size={15} className="text-brand-gold" />
+                <span>Microphone access is off</span>
+              </div>
+              <p className="text-[15px] text-brand-text leading-relaxed">
+                Allow microphone access in your browser to speak, or choose a question or type below to continue.
+              </p>
+
+              <div className="mt-5 w-full space-y-2">
+                {STARTER_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => agent.submitText(prompt)}
+                    className="w-full text-left px-3.5 py-2.5 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13.5px] text-brand-text hover:bg-white hover:border-brand-green transition-colors"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          ) : agent.phase === 'error' ? (
             <div
               data-testid="concierge-unavailable-state"
               className="h-full flex flex-col justify-center items-start max-w-md py-6"
@@ -251,20 +278,32 @@ export function ConciergePanel() {
               </div>
             ))}
 
-            {agent.phase === 'error' && (
+            {isMicBlockedOnly ? (
               <div
-                data-testid="concierge-error-banner"
-                className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13px] text-brand-text flex items-center justify-between gap-3"
+                data-testid="concierge-mic-blocked-banner"
+                className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13px] text-brand-text flex items-center gap-2.5"
               >
-                <span>Concierge connection unavailable — select Reconnect to continue.</span>
-                <button
-                  type="button"
-                  onClick={agent.reconnect}
-                  className="font-semibold text-brand-green hover:underline shrink-0"
-                >
-                  Reconnect
-                </button>
+                <MicOff size={15} className="text-brand-gold shrink-0" />
+                <span>
+                  Microphone access is off — allow microphone access in your browser to speak, or type your question below.
+                </span>
               </div>
+            ) : (
+              agent.phase === 'error' && (
+                <div
+                  data-testid="concierge-error-banner"
+                  className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13px] text-brand-text flex items-center justify-between gap-3"
+                >
+                  <span>Concierge connection unavailable — select Reconnect to continue.</span>
+                  <button
+                    type="button"
+                    onClick={agent.reconnect}
+                    className="font-semibold text-brand-green hover:underline shrink-0"
+                  >
+                    Reconnect
+                  </button>
+                </div>
+              )
             )}
           </>
         )}

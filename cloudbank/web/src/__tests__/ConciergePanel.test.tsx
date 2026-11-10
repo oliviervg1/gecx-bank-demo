@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
 import { MotionConfig } from 'framer-motion'
 import App from '../App'
@@ -269,5 +269,87 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       ws.deliver({ type: 'ui_state', tier: 1, state: { seq: 7, page: 'home' } })
     })
     expect(await screen.findByText('Accounts Overview')).toBeInTheDocument()
+  })
+
+  it('shows microphone permission guidance instead of connection error when mic is blocked on an open socket, keeping text input live', async () => {
+    const origMediaDevices = navigator.mediaDevices
+    const origAudioCtx = globalThis.AudioContext
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: vi
+          .fn()
+          .mockRejectedValue(
+            Object.assign(new Error('Permission denied'), { name: 'NotAllowedError' }),
+          ),
+      },
+    })
+    // Provide a stub AudioContext so createAudioCapture reaches getUserMedia.
+    ;(globalThis as unknown as { AudioContext: unknown }).AudioContext = class {
+      state = 'running'
+      sampleRate = 48000
+      audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) }
+      resume = vi.fn().mockResolvedValue(undefined)
+      close = vi.fn().mockResolvedValue(undefined)
+      createMediaStreamSource = vi.fn()
+      createGain = vi.fn(() => ({ gain: { value: 0 }, connect: vi.fn() }))
+      destination = {}
+    }
+
+    try {
+      Object.assign(HTMLElement.prototype, {
+        setPointerCapture: vi.fn(),
+        releasePointerCapture: vi.fn(),
+      })
+
+      render(
+        <MotionConfig reducedMotion="always">
+          <App />
+        </MotionConfig>,
+      )
+
+      const ws = sockets[sockets.length - 1]
+      await act(async () => {
+        ws.open()
+        ws.deliver({ type: 'ready', sessionId: 'sess-mic-denied' })
+      })
+
+      const pill = screen.getByRole('button', { name: /Hold to talk/i })
+      await act(async () => {
+        fireEvent.pointerDown(pill, { pointerId: 1 })
+      })
+
+      // Panel displays microphone-permission guidance, NOT "Concierge connection unavailable".
+      expect(screen.getByTestId('concierge-mic-blocked-state')).toHaveTextContent(
+        /Allow microphone access in your browser to speak/i,
+      )
+      expect(screen.queryByTestId('concierge-unavailable-state')).toBeNull()
+      expect(screen.queryByText(/Concierge connection unavailable/i)).toBeNull()
+      expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
+
+      // Pill tooltip uses plain executive guidance, never leaking NotAllowedError.
+      const blockedPill = screen.getByRole('button', { name: /Mic blocked/i })
+      expect(blockedPill).toHaveAttribute(
+        'title',
+        'Allow microphone access in your browser, then hold to talk',
+      )
+
+      // Text input remains the immediate path forward over the SAME open socket!
+      const input = screen.getByLabelText('Ask your Cloudbank concierge')
+      fireEvent.change(input, { target: { value: 'Show my savings pot' } })
+      fireEvent.submit(input.closest('form')!)
+
+      expect(sockets).toHaveLength(1)
+      const textFrames = ws.sent
+        .map((raw) => JSON.parse(raw) as { type: string; text?: string })
+        .filter((m) => m.type === 'text')
+      expect(textFrames).toEqual([{ type: 'text', text: 'Show my savings pot' }])
+    } finally {
+      Object.defineProperty(navigator, 'mediaDevices', {
+        configurable: true,
+        value: origMediaDevices,
+      })
+      ;(globalThis as unknown as { AudioContext: unknown }).AudioContext = origAudioCtx
+    }
   })
 })

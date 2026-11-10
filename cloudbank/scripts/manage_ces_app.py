@@ -24,6 +24,7 @@ driven through the ``cxas_scrapi`` SDK directly, never by shelling out to the
 
 import argparse
 import base64
+from datetime import datetime, timezone
 import io
 import json
 import logging
@@ -69,6 +70,78 @@ def apps_client(ws: Workspace):
     from cxas_scrapi.core.apps import Apps
 
     return Apps(project_id=ws.project_id, location=ws.location)
+
+
+def tools_client(app_resource: str):
+    """Returns an SDK ``Tools`` client scoped to ``app_resource``."""
+    from cxas_scrapi.core.tools import Tools
+
+    return Tools(app_name=app_resource)
+
+
+_SYSTEM_TOOL_NAMES = frozenset({"end_session", "transfer_to_agent"})
+
+
+def expected_bundle_tool_names(app_dir: Path) -> set[str]:
+    """Returns the set of custom tool and toolset display names in ``app_dir``."""
+    names: set[str] = set()
+    for subdir_name in ("tools", "toolsets"):
+        root = app_dir / subdir_name
+        if not root.is_dir():
+            continue
+        for entry in sorted(root.iterdir()):
+            if not entry.is_dir() or entry.name.startswith("."):
+                continue
+            manifest = entry / f"{entry.name}.json"
+            if manifest.is_file():
+                data = json.loads(manifest.read_text(encoding="utf-8"))
+                names.add(
+                    str(data.get("displayName") or data.get("name") or entry.name)
+                )
+    return names
+
+
+def _is_system_tool(tool_obj) -> bool:
+    """Returns True for platform built-in system tools returned by ListTools."""
+    try:
+        if "system_tool" in tool_obj:
+            return True
+    except TypeError:
+        if getattr(tool_obj, "system_tool", None) is not None:
+            return True
+    display = getattr(tool_obj, "display_name", "") or ""
+    return display in _SYSTEM_TOOL_NAMES
+
+
+def verify_expected_tools(ws: Workspace, app_resource: str) -> None:
+    """Verifies remote tool declarations match ``ws.app_dir`` with zero orphans."""
+    expected = expected_bundle_tool_names(ws.app_dir)
+    remote_items = tools_client(app_resource).list_tools()
+    remote_names = {
+        (
+            getattr(item, "display_name", "")
+            or getattr(item, "name", "").rsplit("/", 1)[-1]
+        )
+        for item in remote_items
+        if not _is_system_tool(item)
+    }
+    missing = sorted(expected - remote_names)
+    orphans = sorted(remote_names - expected)
+    if missing or orphans:
+        parts = []
+        if missing:
+            parts.append(f"missing={missing}")
+        if orphans:
+            parts.append(f"orphans={orphans}")
+        raise RuntimeError(
+            f"Tool declaration mismatch on '{app_resource}': " + ", ".join(parts)
+        )
+    logger.info(
+        "✅ Verified %d expected tool declarations on %s: %s",
+        len(expected),
+        app_resource,
+        ", ".join(sorted(expected)),
+    )
 
 
 def sanitize_branch_name(branch_name: str) -> str:
@@ -265,6 +338,7 @@ def push_app(ws: Workspace, app_resource: str, display_name: str) -> None:
             + "; ".join(str(w) for w in warnings)
         )
     logger.info("✅ Pushed app bundle as '%s'.", display_name)
+    verify_expected_tools(ws, app_resource)
 
 
 def pr_eval(ws: Workspace, branch_name: str) -> None:
@@ -714,10 +788,38 @@ def handle_post_checkout(
 
 USAGE_LINE = (
     "Usage: python manage_ces_app.py [--config <gecx-config.json>] "
-    "[branch|delete|cleanup-stale|checkout|pr-eval|provision-sandbox|"
+    "[push|branch|delete|cleanup-stale|checkout|pr-eval|provision-sandbox|"
     "resolve-resource|list-versions|create-version|list-deployments|"
     "create-deployment|promote] [args...]"
 )
+
+
+def _display_name_for_target(ws: Workspace, target: str | None) -> str:
+    """Resolves the displayName written into the imported app archive."""
+    if not target or target in ("prod", "production"):
+        return ws.app_name
+    if target == "dev":
+        return ws.dev_display_name
+    if target.startswith("projects/") or re.match(r"^[0-9a-fA-F-]{36}$", target):
+        app_res = resolve_app_resource(ws, target)
+        if app_res == ws.prod_app_resource:
+            return ws.app_name
+        if ws.dev_app_id and app_res == ws.app_resource(ws.dev_app_id):
+            return ws.dev_display_name
+        return ws.app_name
+    return branch_display_name(ws, target)
+
+
+def _push_cli(ws: Workspace, args: argparse.Namespace) -> None:
+    """`push [target] [--create-version [VERSION_NAME]]`."""
+    app_resource = resolve_app_resource(ws, args.target)
+    display_name = _display_name_for_target(ws, args.target)
+    push_app(ws, app_resource, display_name)
+    if args.create_version is not None:
+        version_name = args.create_version or datetime.now(timezone.utc).strftime(
+            "v-%Y%m%d-%H%M%S"
+        )
+        create_version(ws, version_name, app_resource=app_resource)
 
 
 def _delete_cli(ws: Workspace, args: argparse.Namespace) -> None:
@@ -755,6 +857,17 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(add_help=False, prog="manage_ces_app.py")
     add_config_argument(parser)
     sub = parser.add_subparsers(dest="action")
+
+    p_push = sub.add_parser("push", add_help=False)
+    p_push.add_argument("target", nargs="?", default=None)
+    p_push.add_argument(
+        "--create-version",
+        dest="create_version",
+        nargs="?",
+        const="",
+        default=None,
+    )
+    p_push.set_defaults(func=_push_cli)
 
     p_branch = sub.add_parser("branch", add_help=False)
     p_branch.add_argument("branch_name", nargs="?", default=None)
