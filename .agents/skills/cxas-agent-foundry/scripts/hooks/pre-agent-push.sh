@@ -14,7 +14,7 @@
 # limitations under the License.
 
 # Validates CXAS push target resource names against cloudbank/gecx-config.json
-# before allowing cxas push, push.sh, or manage_ces_app.py pr-eval.
+# before allowing cxas push, push.sh, or manage_ces_app.py push|pr-eval.
 # Exits 2 with a stderr message when blocked (harness-neutral for Claude Code and Gemini CLI).
 
 set -euo pipefail
@@ -61,7 +61,7 @@ E = r"(?![A-Za-z0-9_.-])"
 patterns = (
     B + r"cxas(?:-eval)?\s+push" + E,
     B + r"push\.sh" + E,
-    B + r"manage_ces_app\.py" + E + r".*?" + B + r"pr-eval" + E,
+    B + r"manage_ces_app\.py" + E + r".*?" + B + r"(?:push|pr-eval)" + E,
 )
 if not any(re.search(p, cmd, flags=re.DOTALL) for p in patterns):
     sys.exit(0)
@@ -72,8 +72,13 @@ if not config_path:
 cfg = json.loads(pathlib.Path(config_path).read_text(encoding="utf-8"))
 expected_prefix = f"projects/{cfg['gcp_project_id']}/locations/{cfg['location']}/apps/"
 
-for m in re.finditer(r"--to(?:=|\s+)['\"]?([^\s'\";|&)]+)", cmd):
-    target = m.group(1)
+candidate_targets = [
+    m.group(1) for m in re.finditer(r"--to(?:=|\s+)['\"]?([^\s'\";|&)]+)", cmd)
+] + re.findall(
+    r"projects/[^\s'\";|&)/]+/locations/[^\s'\";|&)/]+/apps/[^\s'\";|&)]+", cmd
+)
+
+for target in candidate_targets:
     if target.startswith("projects/") and not target.startswith(expected_prefix):
         sys.stderr.write(
             f"PUSH BLOCKED: Target '{target}' does not match configured prefix "

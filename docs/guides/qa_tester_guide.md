@@ -16,10 +16,10 @@
 
 | Customer Selector | Current Account | Savings Pot & Goal | Mortgage / Home-Buying Position | Unusual November Charge |
 | :--- | :--- | :--- | :--- | :--- |
-| **Chloe · Homeowner** | `£2,840.50` | **Home Emergency Pot:** `£4,850.00` of `£10,000.00` (`4.50% AER`, `£200.00/mo`) | `£214,500.00` balance at `4.20%` (`£1,399.71/mo`, `£21,450.00` fee-free overpayment room) | **Netflix** `£45.00` on 21 Nov (up from `£17.99`) |
-| **David · Remortgager** | `£4,120.80` | **Family Holiday Fund:** `£10,800.00` of `£18,000.00` (`4.75% AER`, `£400.00/mo`) | `£158,200.00` balance at `3.95%` (`£1,493.42/mo`, `£13,620.00` fee-free overpayment room) | **PureGym Family** `£62.00` on 22 Nov (up from `£38.00`) |
-| **Tom · First-Time Buyer** | `£1,650.25` | **First Home Deposit:** `£14,200.00` of `£35,000.00` (`4.65% AER`, `£350.00/mo`) | Rents (`£42,000.00` annual income; `£189,000.00` indicative borrowing) | **Adobe Creative Cloud** `£199.00` on 22 Nov (up from `£54.99`) |
-| **Sarah · Pre-Retirement** | `£6,490.10` | **Retirement Bridge Pot:** `£21,500.00` of `£25,000.00` (`4.40% AER`, `£350.00/mo`) | `£96,500.00` balance at `3.85%` (`£1,245.10/mo`, `£3,650.00` fee-free overpayment room left) | **Aviva Home Insurance** `£96.00` on 23 Nov (up from `£48.00`) |
+| **Chloe · Homeowner** | `£4,250.75` | **Home Emergency Pot:** `£4,850.00` of `£10,000.00` (`4.50% AER`, `£200.00/mo`) | `£214,500.00` balance at `4.20%` (`£1,399.71/mo`, `£21,450.00` fee-free overpayment room) | **Netflix** `£45.00` on 21 Nov (up from `£17.99`) |
+| **David · Remortgager** | `£6,820.40` | **Family Reserve Pot:** `£12,400.00` of `£18,000.00` (`4.25% AER`, `£300.00/mo`) | `£148,200.00` balance at `3.90%` (`£1,493.42/mo`, `£13,620.00` fee-free overpayment room) | **PureGym Family** `£62.00` on 22 Nov (up from `£38.00`) |
+| **Tom · First-Time Buyer** | `£1,840.50` | **First Home Deposit:** `£14,200.00` of `£35,000.00` (`4.75% AER`, `£350.00/mo`) | Rents (`£42,000.00` annual income; `£189,000.00` indicative borrowing) | **Adobe Creative Cloud** `£199.00` on 22 Nov (up from `£54.99`) |
+| **Sarah · Pre-Retirement** | `£9,340.15` | **Retirement Emergency Reserve:** `£21,500.00` of `£25,000.00` (`4.50% AER`, `£400.00/mo`) | `£96,500.00` balance at `4.05%` (`£1,245.10/mo`, `£3,650.00` fee-free overpayment room left) | **Aviva Home Insurance** `£96.00` on 23 Nov (up from `£48.00`) |
 
 ---
 

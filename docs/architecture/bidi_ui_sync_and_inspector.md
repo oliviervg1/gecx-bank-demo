@@ -52,7 +52,7 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 | **8** | React 18 `StrictMode` double-mount | Deferred macrotask teardown reuses the single initial socket without duplicate handshakes. |
 | **9** | Microphone permission blocked (`NotAllowedError`) | Keeps the open WebSocket alive, displays calm microphone-permission guidance in `ConciergePanel` with live text input active, and retries mic capture cleanly on the next hold. |
 | **10** | Keyboard Spacebar repeat / window blur | Ignores `event.repeat` keydowns and dispatches `PTT_RELEASE` on `window` `blur` or `visibilitychange`. |
-| **11** | `PERSONA_SWITCH` or text-bar `CLIENT_TEXT_SUBMIT` | `PERSONA_SWITCH` closes the active socket, resets UI/turns/`lastAppliedUiSeq`, and opens a new session for the selected customer; `CLIENT_TEXT_SUBMIT` barges in cleanly or connects-then-sends if disconnected/paused/ended. |
+| **11** | `PERSONA_SWITCH` or text-bar `CLIENT_TEXT_SUBMIT` | `PERSONA_SWITCH` closes the active socket, resets UI/turns/`seenUiSeqKey`, and opens a new session for the selected customer; `CLIENT_TEXT_SUBMIT` barges in cleanly or connects-then-sends if disconnected/paused/ended. |
 
 > **Note on `bargeInAwareness: true`:** When a caller interrupts speech mid-sentence, CES tells the model on the next turn that its prior response was interrupted so it can adapt naturally; the `(Interrupted)` label in `ConciergePanel` marks the turn boundary rather than the exact millisecond syllable cut-off.
 
@@ -63,7 +63,7 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 `WorkbenchLayout.tsx` pairs the 5-tab banking app on the left with `ConciergePanel.tsx` on the right on a warm stone canvas (`#f7f6f2`), unified `#ffffff` surfaces, and `1px #e5e3dc` hairlines (zero drop-shadows and zero technical telemetry on screen):
 
 - **Plain-English Domain Pill:** Maps active specialist state to at most one subtle header pill (`Everyday Banking`, `Savings`, or `Mortgages`) — never exposing internal `snake_case` agent IDs, tool names, model IDs, or sequence numbers.
-- **Stream Sanitizer (`streamSanitizer.ts`):** Strips inline Composite v2 audio tags (`<warm>`, `<reassuring>`, etc.), platform XML envelopes, and `[Diagnosis context: ...]` notes while accumulating both cumulative and per-segment `ServerText` frames across multi-agent turns.
+- **Stream Sanitizer (`streamSanitizer.ts`):** `sanitizeAgentProse` strips inline Composite v2 audio tags (`<warm>`, `<reassuring>`, etc.), platform XML envelopes, and `[Diagnosis context: ...]` notes while `appendOrUpdateAssistantText` in `sessionMachine.ts` accumulates both cumulative and per-segment `ServerText` frames across multi-agent turns.
 - **Sandboxed Google Search Chips:** Renders `SessionOutput.google_search_suggestions` HTML inside `<iframe sandbox="allow-popups allow-popups-to-escape-sandbox">` (scripts disabled) alongside `http(s)`-validated citation links.
 
 ---
@@ -73,6 +73,6 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 Because offline unit tests exercise simulated gRPC/WebSocket streams, run the following empirical checks when validating against a live CX Agent Studio app in `locations/eu`:
 
 1. **Tier 1 `partial=True` arrival timing (`A1`):** Verify in browser network frames whether Tier 1 `Part.from_json` arrives ahead of the first TTS audio chunk on `gemini-composite-v2` in `locations/eu`, and confirm zero duplicate spoken synthesis; if any platform quirk appears, set `_ENABLE_TIER1_PARTIAL_UI = False` in the callbacks so Tier 2 and Tier 3 carry `ui_view_state` seamlessly.
-2. **Live `SessionOutput.text` framing (`W-2`):** Confirm whether `gemini-composite-v2` emits cumulative or per-segment `SessionOutput.text` frames across post-transfer turns and pacing-phrase turns (`appendSanitizedAssistantSegment` handles both modes).
+2. **Live `SessionOutput.text` framing (`W-2`):** Confirm whether `gemini-composite-v2` emits cumulative or per-segment `SessionOutput.text` frames across post-transfer turns and pacing-phrase turns (`appendOrUpdateAssistantText` handles both modes).
 3. **Farewell TTS drain on live CES (`Row 4`):** Confirm the full spoken farewell plays to completion before `ended` is reached when `Part.from_end_session` is appended by `release_line`.
 4. **Endpointer reaction latency (`A4`):** Confirm post-release turn latency with the immediate worklet tail flush + `≤ 2.5 s` silence cap across `44.1 kHz` and `48 kHz` microphones.

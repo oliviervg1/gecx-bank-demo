@@ -89,7 +89,7 @@ def assist_everyday_banking(
 
 - [`_normalize_snapshot`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L195-L232) & [`_parse_demo_date` / formatting / `_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L235-L277): Coerce `protobuf.Struct` numbers to `int`, resolve `demo_date` calendar month names, format pounds/AER, and increment `ui_view_state.seq`.
 - [`_normalize_vendor_forms` .. `_match_vendor_rows`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L280-L339): Exact and whole-token vendor matching across customer transactions.
-- [`_handle_switch_intent` / `_stage_spoke_pivot` / `_handle_redirect_offer_reply`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L342-L428): Local `Home`/`Profile`/`Capabilities`/`Farewell` handling, cross-spoke loop guard (`S2-5`), and `handoff_context` staging.
+- [`_handle_switch_intent` / `_stage_spoke_pivot` / `_handle_redirect_offer_reply`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L342-L428): Local `NAVIGATE_HOME` / `NAVIGATE_PROFILE` / `CAPABILITIES` / `FAREWELL` handling, cross-spoke `pass_count > 4` loop guard (`S2-5`), and `handoff_context` staging.
 - [`_handle_balance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L431-L449) & [`_handle_overview`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L452-L562): Current account balance and monthly spend totals, month-on-month delta, and unconfirmed anomaly prompt.
 - [`_handle_anomaly_followup`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L565-L653) & [`_handle_cancel_subscription` / `_lookup_cancellation_guidance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L656-L788): Marks recognised vs `"Marked as not recognised"` charges and wraps `tools.search_help` with resilient fallback when empty or unavailable.
 - [`_handle_category`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L791-L839), [`_handle_vendor`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L842-L901), [`_handle_trend`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L904-L925), [`_handle_subscriptions`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L928-L975), and [`_handle_empty_or_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/assist_everyday_banking/python_function/python_code.py#L978-L1015): Per-view aggregations and pending-question / 2-strike unclear handling.
@@ -98,10 +98,11 @@ def assist_everyday_banking(
 
 | Variable | Direction | Purpose |
 | :--- | :--- | :--- |
-| `customer_snapshot` | Read | Reads `current_account`, `savings` (for balance context), and `transactions`. |
+| `customer_snapshot` | Read | Reads `accounts.current` (`current`), `accounts.savings` (`savings`), and `transactions`. |
 | `demo_date` / `first_name` | Read | Anchors calendar month names and personalises farewells. |
-| `handoff_context` | Read / Write | Cleared on entry; populated with `{from_agent, vendor, freed_monthly_pence}` when pivoting to `SAVINGS` or `MORTGAGES`. |
-| `everyday_state` | Read / Write | Private state tracking `pending_anomaly_vendor`, `anomaly_status`, `pending_redirect_offer`, `last_discussed_subscription`, `pivot_hop_turn`, and `pivot_hop_count`. |
+| `pass_count` | Read | Bounds cross-spoke pivots (`int(pass_count) > 4` stops ping-pong loops). |
+| `handoff_context` | Write | Populated with `{from_agent, vendor, freed_monthly_pence}` when pivoting to `SAVINGS` or `MORTGAGES` (consumed and cleared on entry by `assist_savings` / `assist_mortgages`). |
+| `everyday_state` | Read / Write | Private state tracking `pending_anomaly_vendor`, `anomaly_status`, `pending_redirect_offer`, and `last_discussed_subscription`. |
 | `ui_view_state` | Read / Write | Emits `home`, `profile`, or `spending` (`overview`, `category`, `vendor`, `trend`, `subscriptions`) with `highlight_vendor` and `anomaly_status`. |
 | `target_agent` | Write | Stages `savings_agent` or `mortgage_agent` on cross-spoke pivots. |
 | `unclear_count` | Read / Write | Resets to `"0"` on valid queries; runs 2-strike ladder on unusable calls. |

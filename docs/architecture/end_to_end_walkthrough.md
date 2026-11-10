@@ -22,7 +22,7 @@ This document traces three concrete multi-turn conversations across the 4-agent 
 
 ## 2. ERC Allowance Cap Walkthrough — Sarah (`Pre-Retirement`, 2 Turns)
 
-Sarah has a `£96,500.00` balance at `3.85%` (`90` months remaining) and has already used `£6,000.00` of her `£9,650.00` annual 10% allowance, leaving `£3,650.00` ERC-free this year.
+Sarah has a `£96,500.00` balance at `4.05%` (`90` months remaining) and has already used `£6,000.00` of her `£9,650.00` annual 10% allowance, leaving `£3,650.00` ERC-free this year.
 
 | Turn | Caller Utterance | Active Agent(s) | Python Controller Call(s) & Key Math | `ui_view_state` (`seq`) | Concierge Response Summary |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -33,9 +33,9 @@ Sarah has a `£96,500.00` balance at `3.85%` (`90` months remaining) and has alr
 
 ## 3. First-Time Buyer Readiness Walkthrough — Tom (`Renter`, 2 Turns)
 
-Tom rents (`mortgage: null`), earns `£42,000.00` per year, and holds `£14,200.00` toward his `£35,000.00` `First Home Deposit` savings goal (`4.65% AER`).
+Tom rents (`accounts.mortgage` is omitted in `tom.json` and normalised to `None` in Python), earns `£42,000.00` per year, and holds `£14,200.00` toward his `£35,000.00` `First Home Deposit` savings goal (`4.75% AER`, `4.65%` gross).
 
 | Turn | Caller Utterance | Active Agent(s) | Python Controller Call(s) & Key Math | `ui_view_state` (`seq`) | Concierge Response Summary |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **1** | *"How much could I borrow for my first home, and how close is my deposit?"* | `root_agent` → `mortgage_agent` | `route_banking_intent(intent="MORTGAGES")` → `assist_mortgages(query_type="summary")` (`mortgage is None` → `_handle_renter_guidance`; sets `pending_savings_pivot=True`). | `seq: 1` `{page: "mortgage"}` (renders First-Time Buyer Readiness screen) | Explains Tom has no active mortgage yet, estimates `4.5×` income borrowing at `£189,000.00` (`£224,000.00` combined with his `£35,000.00` deposit target), notes his `First Home Deposit` pot stands at `£14,200.00` (`40.57%`, `£20,800.00` to go), includes the indicative-illustration note, and offers to project his deposit timeline in Savings. |
-| **2** | *"Yes, show me when I'll hit my £35,000 deposit goal."* | `mortgage_agent` → `savings_agent` | `assist_mortgages(switch_intent="SAVINGS")` → `assist_savings(query_type="projection")` (`extra_monthly_pence = 0`). | `seq: 2` `{page: "savings", extra_monthly_pence: 0}` | Opens **Savings** and reports that at `£350.00` a month (`4.65% AER`), Tom reaches `£35,000.00` in `47 months` (`October 2030`) with `£4,385.75` in total compound interest. |
+| **1** | *"How much could I borrow for my first home, and how close is my deposit?"* | `root_agent` → `mortgage_agent` | `route_banking_intent(intent="MORTGAGES")` → `assist_mortgages(query_type="summary")` (`snapshot["mortgage"] is None` → `_handle_renter_guidance`; sets `pending_savings_pivot=True`). | `seq: 1` `{page: "mortgage", subview: "overview"}` (renders First-Time Buyer Readiness screen) | Explains Tom has no active mortgage yet, estimates `4.5×` income borrowing at `£189,000.00` (`£224,000.00` combined with his `£35,000.00` deposit target), notes his `First Home Deposit` pot stands at `£14,200.00` (`40.57%`, `£20,800.00` to go), includes the indicative-illustration note, and offers to project his deposit timeline in Savings. |
+| **2** | *"Yes, show me when I'll hit my £35,000 deposit goal."* | `mortgage_agent` → `savings_agent` | `assist_mortgages(switch_intent="SAVINGS")` → `assist_savings(query_type="projection")` (`extra_monthly_pence = 0`). | `seq: 2` `{page: "savings", extra_monthly_pence: 0}` | Opens **Savings** and reports that at `£350.00` a month (`4.75% AER`, compounded monthly at `4.65%` gross), Tom reaches `£35,000.00` in `47 months` (`October 2030`) with `£4,385.75` in total compound interest. |
