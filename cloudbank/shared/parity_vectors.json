@@ -438,6 +438,24 @@
       }
     },
     {
+      "id": "edge_payoff_within_year_one_pins_min12",
+      "persona": "sarah",
+      "monthly_overpayment_pence": 50000,
+      "lump_sum_overpayment_pence": 9000000,
+      "expected": {
+        "baseline_months": 90,
+        "projected_months": 4,
+        "months_saved": 86,
+        "baseline_interest_pence": 1555817,
+        "projected_interest_pence": 5278,
+        "interest_saved_pence": 1550539,
+        "remaining_allowance_pence": 365000,
+        "first_year_overpayment_pence": 9200000,
+        "exceeds_allowance": true,
+        "excess_over_allowance_pence": 8835000
+      }
+    },
+    {
       "id": "edge_lump_sum_clears_entire_balance",
       "persona": "sarah",
       "monthly_overpayment_pence": 0,

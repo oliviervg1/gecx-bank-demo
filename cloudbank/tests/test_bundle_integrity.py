@@ -384,10 +384,12 @@ def test_fixtures_schema_unique_ids_single_anomaly_and_struct_floats(
 
 def test_goldens_and_simulations_integrity(
     raw_fixtures: dict[str, dict[str, Any]],
+    struct_fixtures: dict[str, dict[str, Any]],
 ) -> None:
-    """Verify one persona per golden YAML, deep-equal customer_snapshot, and step order."""
+    """Verify verbatim fixture parity in goldens & simulations, step order, and real speech match."""
     app_cfg = json.loads((BUNDLE_DIR / "app.json").read_text(encoding="utf-8"))
     declared_vars = {v["name"] for v in app_cfg["variableDeclarations"]}
+    diag_re = re.compile(r"\s*\[Diagnosis context:.*?\]\s*", re.DOTALL)
 
     golden_files = sorted(GOLDENS_DIR.glob("*.yaml"))
     assert len(golden_files) >= 4, "Expected at least one golden YAML per persona"
@@ -413,11 +415,46 @@ def test_goldens_and_simulations_integrity(
             f"customer_snapshot in {gf.name} drifted from {pid}.json"
         )
 
-        # Confirm per-conversation overrides never mix personas within a file
+        # Replay each golden conversation against real controllers to prevent silent text drift
         for conv in data["conversations"]:
             sp = conv.get("session_parameters") or {}
             assert "persona_id" not in sp or sp["persona_id"] == pid
             assert "customer_snapshot" not in sp
+
+            replay_state = make_seeded_state(
+                pid,
+                struct_fixtures,
+                demo_date=common["demo_date"],
+                time_of_day=common["time_of_day"],
+            )
+            ctrls = {
+                name: load_controller_namespace(name, replay_state)[name]
+                for name in CONTROLLER_NAMES
+            }
+            for turn_idx, turn in enumerate(conv["turns"], start=1):
+                last_action_text = ""
+                last_query_type = ""
+                for tc in turn.get("tool_calls", []):
+                    action = tc["action"]
+                    if action == "transfer_to_agent":
+                        replay_state["target_agent"] = ""
+                        continue
+                    call_kwargs = {
+                        k: ("" if isinstance(v, dict) and "$matchType" in v else v)
+                        for k, v in (tc.get("args") or {}).items()
+                    }
+                    last_query_type = str(call_kwargs.get("query_type") or "")
+                    out = ctrls[action](**call_kwargs)
+                    last_action_text = diag_re.sub(" ", out["agent_action"]).strip()
+
+                agent_field = turn["agent"]
+                expected_spoken = (
+                    agent_field[-1] if isinstance(agent_field, list) else agent_field
+                )
+                if last_query_type != "cancel_subscription":
+                    assert expected_spoken == last_action_text, (
+                        f"Golden text drift in {gf.name}:{conv['conversation']} turn {turn_idx}"
+                    )
 
         # Compile through run_golden_evals.build_ordered_turn_steps offline
         compiled = eval_utils.load_golden_evals_from_yaml(str(gf))
@@ -444,8 +481,17 @@ def test_goldens_and_simulations_integrity(
         sdata = yaml.safe_load(sf.read_text(encoding="utf-8"))
         assert sdata.get("evals"), f"Empty evals in {sf.name}"
         for item in sdata["evals"]:
-            assert item.get("tags"), f"Missing tags in {sf.name}:{item.get('name')}"
-            assert item.get("steps"), f"Missing steps in {sf.name}:{item.get('name')}"
-            assert item.get("expectations"), (
-                f"Missing expectations in {sf.name}:{item.get('name')}"
+            name = item.get("name")
+            assert item.get("tags"), f"Missing tags in {sf.name}:{name}"
+            assert item.get("steps"), f"Missing steps in {sf.name}:{name}"
+            assert item.get("expectations"), f"Missing expectations in {sf.name}:{name}"
+            sim_sp = item.get("session_parameters") or {}
+            assert set(sim_sp.keys()) <= declared_vars, (
+                f"Undeclared session_parameters in {sf.name}:{name}"
+            )
+            sim_pid = sim_sp.get("persona_id")
+            assert sim_pid in PERSONA_IDS, f"Missing/unknown persona_id in {sf.name}:{name}"
+            assert sim_sp.get("demo_date") == "2026-11-24"
+            assert sim_sp.get("customer_snapshot") == raw_fixtures[sim_pid], (
+                f"Simulation customer_snapshot in {sf.name}:{name} drifted from {sim_pid}.json"
             )
