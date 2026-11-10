@@ -505,6 +505,19 @@
         "ending_balance_pence": 73643342,
         "paid_off": false
       }
+    },
+    {
+      "id": "edge_exact_payment_equality_payoff",
+      "balance_pence": 120000,
+      "interest_rate_bps": 0,
+      "monthly_payment_pence": 60000,
+      "max_months": 600,
+      "expected": {
+        "months": 2,
+        "total_interest_pence": 0,
+        "ending_balance_pence": 0,
+        "paid_off": true
+      }
     }
   ],
   "mortgage_renewals": {

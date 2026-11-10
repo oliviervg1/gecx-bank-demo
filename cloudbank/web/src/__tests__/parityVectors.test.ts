@@ -12,6 +12,7 @@ import {
   projectSavingsGoal,
 } from '../util/savingsMath'
 import {
+  MAX_MORTGAGE_MONTHS,
   compareRenewalOptions,
   computeRenterReadiness,
   formatMonthsDuration,
@@ -199,6 +200,26 @@ describe('parity_vectors.json — mortgage_overpayments & simulation_edges', () 
       row.max_months,
     )
     expect(res).toEqual(row.expected)
+  })
+
+  it('pins default MAX_MORTGAGE_MONTHS === 600 when maxMonths is omitted', () => {
+    expect(MAX_MORTGAGE_MONTHS).toBe(600)
+    // Non-amortising loan with default maxMonths must run all 600 months (not 599 or 601).
+    const nonAmort = simulateMortgage(10_000_000, 400, 1)
+    expect(nonAmort).toEqual({
+      months: 600,
+      total_interest_pence: 63643942,
+      ending_balance_pence: 73643342,
+      paid_off: false,
+    })
+    // Loan paying off on the exact 600th month with default maxMonths must succeed.
+    expect(simulateMortgage(600_000, 0, 1_000)).toEqual({
+      months: 600,
+      total_interest_pence: 0,
+      ending_balance_pence: 0,
+      paid_off: true,
+    })
+    expect(simulateMortgage(600_001, 0, 1_000).paid_off).toBe(false)
   })
 
   it('handles zero or negative opening mortgage balance cleanly', () => {

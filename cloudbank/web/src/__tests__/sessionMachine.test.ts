@@ -110,7 +110,8 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
   })
 
   // Row 3: Zero-audio turn thinking -> ready + 15s thinking watchdog.
-  it('Row 3: zero-audio turn_complete and 15s THINKING_WATCHDOG_FIRED both recover thinking -> ready', () => {
+  it('Row 3: zero-audio turn_complete and 15,000ms THINKING_WATCHDOG_FIRED both recover thinking -> ready', () => {
+    expect(THINKING_WATCHDOG_MS).toBe(15_000)
     const ready = connectedReadyState()
     const released = step(ready, { type: 'PTT_PRESS' }, { type: 'PTT_RELEASE' })
     expect(released.state.phase).toBe('thinking')
@@ -118,7 +119,7 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(released.effects).toContainEqual({
       type: 'START_THINKING_WATCHDOG',
       epoch: 1,
-      timeoutMs: THINKING_WATCHDOG_MS,
+      timeoutMs: 15_000,
     })
 
     // Zero-audio turn_complete -> ready.
@@ -241,6 +242,17 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
       persona: 'chloe',
       sessionId: 'sess-keep',
     })
+
+    // GoAway mid-capturing re-arms mic capture automatically once resumed socket is ready!
+    const capturing = reduceSessionMachine(ready, { type: 'PTT_PRESS' }).state
+    expect(capturing.phase).toBe('capturing')
+    const goAwayMidHold = step(
+      capturing,
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'go_away', sessionId: 'sess-keep' } },
+      { type: 'SERVER_MESSAGE', epoch: 2, msg: { type: 'ready', sessionId: 'sess-keep' } },
+    )
+    expect(goAwayMidHold.state.phase).toBe('capturing')
+    expect(goAwayMidHold.effects).toContainEqual({ type: 'START_MIC_CAPTURE' })
   })
 
   // Row 7: Connection epochs ignore stale socket events.
@@ -402,13 +414,30 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     })
     expect(stale.effects.some((e) => e.type === 'APPLY_UI_STATE')).toBe(false)
 
-    // New ready frame resets maxSeq to 0 so seq=1 is accepted again!
-    const reReady = reduceSessionMachine(u1.state, {
+    // New ready frame resets maxSeq to 0 EVEN IF sessionId is identical ('sess-a'), as well as for 'sess-b'!
+    const reReadySameId = reduceSessionMachine(u1.state, {
+      type: 'SERVER_MESSAGE',
+      epoch: 1,
+      msg: { type: 'ready', sessionId: 'sess-a' },
+    }).state
+    expect(reReadySameId.seenUiSeqKey).toEqual({ sessionId: 'sess-a', maxSeq: 0 })
+    const seq1SameId = reduceSessionMachine(reReadySameId, {
+      type: 'SERVER_MESSAGE',
+      epoch: 1,
+      msg: { type: 'ui_state', tier: 1, state: { seq: 1, page: 'mortgage' } },
+    })
+    expect(seq1SameId.effects).toContainEqual({
+      type: 'APPLY_UI_STATE',
+      state: { seq: 1, page: 'mortgage' },
+      tier: 1,
+    })
+
+    const reReadyNewId = reduceSessionMachine(seq1SameId.state, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
       msg: { type: 'ready', sessionId: 'sess-b' },
     }).state
-    const freshSeq1 = reduceSessionMachine(reReady, {
+    const freshSeq1 = reduceSessionMachine(reReadyNewId, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
       msg: { type: 'ui_state', tier: 1, state: { seq: 1, page: 'savings' } },
@@ -421,14 +450,59 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
   })
 })
 
-describe('sanitizeAgentProse', () => {
-  it('strips [Diagnosis context: ...], Composite v2 audio tags, and platform envelopes', () => {
+describe('Assistant text accumulation (W-2) & sanitizeAgentProse (W-3)', () => {
+  it('W-2: supports BOTH cumulative prefix snapshots and per-segment chunks, finalizing on turn_complete', () => {
+    const ready = connectedReadyState()
+
+    // 1. Cumulative streaming (new text starts with old text -> replaces cleanly)
+    const cum = step(
+      ready,
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'text', text: 'In November', partial: true } },
+      {
+        type: 'SERVER_MESSAGE',
+        epoch: 1,
+        msg: { type: 'text', text: 'In November you spent £2,018.64.', partial: false },
+      },
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'turn_complete', turnIndex: 1 } },
+    ).state
+    expect(cum.turns).toHaveLength(1)
+    expect(cum.turns[0].text).toBe('In November you spent £2,018.64.')
+    expect(cum.turns[0].partial).toBe(false)
+
+    // 2. Per-segment streaming on Turn 2 (pacing phrase, then post-tool answer -> appends without losing pacing phrase!)
+    const seg = step(
+      cum,
+      {
+        type: 'SERVER_MESSAGE',
+        epoch: 1,
+        msg: { type: 'text', text: 'One moment while I check Netflix.', partial: true },
+      },
+      {
+        type: 'SERVER_MESSAGE',
+        epoch: 1,
+        msg: {
+          type: 'text',
+          text: 'Sign in to Account settings and select Cancel Membership.',
+          partial: true,
+        },
+      },
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'turn_complete', turnIndex: 2 } },
+    ).state
+    expect(seg.turns).toHaveLength(2)
+    expect(seg.turns[1].text).toBe(
+      'One moment while I check Netflix. Sign in to Account settings and select Cancel Membership.',
+    )
+    expect(seg.turns[1].partial).toBe(false)
+  })
+
+  it('W-3: strips arbitrary <word> and <multi word> audio tags generically while preserving < £50 prose', () => {
     const raw =
-      '<warm> In November you spent £2,018.64. <short pause> Do you recognise Netflix? ' +
+      '<neutral> <reassuring> In November you spent £2,018.64, with coffee < £50. ' +
+      '<excited> <gentle reassuring tone> Do you recognise Netflix? </neutral> ' +
       '[Diagnosis context: November total £2,018.64; flagged subscription Netflix £45.00.] ' +
       '{@AGENT: savings_agent} <state_update>{"x":1}</state_update>'
     expect(sanitizeAgentProse(raw)).toBe(
-      'In November you spent £2,018.64. Do you recognise Netflix?',
+      'In November you spent £2,018.64, with coffee < £50. Do you recognise Netflix?',
     )
   })
 })
