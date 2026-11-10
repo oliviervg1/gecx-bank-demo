@@ -27,10 +27,10 @@
 - [x] Pass `uv run --locked --all-extras pytest` and `ruff check .`
 
 ## Stage 5: Audio Worklet, `sessionMachine.ts`, 5-Tab App & Split-Screen Workbench (`cloudbank/web/`)
-- [ ] Author `demoClock.ts`, `savingsMath.ts`, `mortgageMath.ts`, updated `spendingSummary.ts` & `spendingViews.ts`, and `parityVectors.test.ts`
-- [ ] Author cross-rate `16/44.1/48 kHz -> 16 kHz` `100ms` `audio-worklet.js`, post-release trailing silence (`<= 2.5s`), and 11-row `sessionMachine.ts`
-- [ ] Build 5-tab Cloudbank app (`Home`, `Spending`, `SavingsPage.tsx`, `MortgagePage.tsx`, `ProfilePage.tsx`) + Flat Editorial Split-Screen Workbench (`WorkbenchLayout.tsx`, `GecxInspectorPane.tsx`)
-- [ ] Pass `npm test`, `npm run typecheck`, `npm run lint` (`--max-warnings 0`), `npm run build`, and capture `1440x900` + `390x844` headless Chrome screenshots
+- [x] Author `demoClock.ts`, `savingsMath.ts`, `mortgageMath.ts`, updated `spendingSummary.ts` & `spendingViews.ts`, and `parityVectors.test.ts`
+- [x] Author cross-rate `16/44.1/48 kHz -> 16 kHz` `100ms` `audio-worklet.js`, post-release trailing silence (`<= 2.5s`), and 11-row `sessionMachine.ts`
+- [x] Build 5-tab Cloudbank app (`Home`, `Spending`, `SavingsPage.tsx`, `MortgagePage.tsx`, `ProfilePage.tsx`) + Flat Editorial Split-Screen Workbench (`WorkbenchLayout.tsx`, `GecxInspectorPane.tsx`)
+- [x] Pass `npm test`, `npm run typecheck`, `npm run lint` (`--max-warnings 0`), `npm run build`, and capture `1440x900` + `390x844` headless Chrome screenshots
 
 ## Stage 6: CI/CD, `push.sh` & Full Documentation Suite
 - [ ] Update `.github/workflows/ci.yml` and `cloudbank/push.sh`

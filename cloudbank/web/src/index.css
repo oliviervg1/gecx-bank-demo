@@ -3,11 +3,17 @@
 @tailwind components;
 @tailwind utilities;
 
-html, body, #root { height: 100%; }
+html,
+body,
+#root {
+  height: 100%;
+}
+
 body {
   margin: 0;
-  background: theme('colors.brand.bg');
-  color: theme('colors.brand.text');
+  background: #f7f6f2;
+  color: #141413;
   font-family: theme('fontFamily.sans');
+  font-variant-numeric: tabular-nums;
   -webkit-font-smoothing: antialiased;
 }

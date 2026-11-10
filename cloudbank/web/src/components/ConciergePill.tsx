@@ -1,76 +1,105 @@
-import { Sparkles, MicOff, RefreshCw, AudioLines, Mic } from 'lucide-react'
-import { useAgent } from '../agent/AgentProvider'
+import type { ReactNode } from 'react'
+import { Sparkles, MicOff, RefreshCw, AudioLines, Mic, PauseCircle } from 'lucide-react'
+import { useAgent, type ConnState, type MicState } from '../agent/AgentProvider'
+import type { SessionPhase } from '../agent/sessionMachine'
 import { useHoldToTalk } from '../agent/useHoldToTalk'
 
-type Visual = {
+interface Visual {
   label: string
-  icon: React.ReactNode
+  icon: ReactNode
   className: string
   onClick: (() => void) | null
 }
 
+function resolvePhase(
+  phase: SessionPhase | undefined,
+  connState: ConnState,
+  micState: MicState,
+): SessionPhase {
+  if (phase) return phase
+  if (connState === 'connecting') return 'connecting'
+  if (connState === 'error') return 'error'
+  if (micState === 'muted') return 'error'
+  if (micState === 'held' || micState === 'listening') return 'capturing'
+  if (micState === 'speaking') return 'agentSpeaking'
+  if (connState === 'idle') return 'disconnected'
+  return 'ready'
+}
+
 function visualFor(
-  connState: ReturnType<typeof useAgent>['connState'],
-  micState: ReturnType<typeof useAgent>['micState'],
+  phase: SessionPhase,
+  micState: MicState,
+  micDenied: boolean,
   pushToTalk: boolean,
   actions: { startMic: () => void; stopMic: () => void; reconnect: () => void },
 ): Visual {
-  if (connState === 'connecting') {
+  if (phase === 'connecting') {
     return {
       label: 'Connecting…',
-      icon: <Sparkles size={18} className="animate-pulse" />,
-      className: 'bg-brand-green text-white opacity-70',
+      icon: <Sparkles size={16} className="animate-pulse" />,
+      className: 'bg-brand-green text-white opacity-75',
       onClick: null,
     }
   }
-  if (connState === 'error') {
+  if (phase === 'paused') {
+    return {
+      label: 'Session paused — hold to talk',
+      icon: <PauseCircle size={16} className="text-brand-gold" />,
+      className: 'bg-white border border-brand-divider text-brand-text',
+      onClick: pushToTalk ? null : actions.reconnect,
+    }
+  }
+  if (micDenied || micState === 'muted') {
+    return {
+      label: 'Mic blocked',
+      icon: <MicOff size={16} />,
+      className: 'bg-white border border-brand-divider text-brand-muted',
+      onClick: pushToTalk ? null : actions.startMic,
+    }
+  }
+  if (phase === 'error') {
     return {
       label: 'Retry',
-      icon: <RefreshCw size={18} />,
+      icon: <RefreshCw size={16} />,
       className: 'bg-white border border-brand-danger text-brand-danger',
       onClick: actions.reconnect,
     }
   }
-  if (micState === 'muted') {
-    return {
-      label: 'Mic blocked',
-      icon: <MicOff size={18} />,
-      className: 'bg-brand-divider text-brand-muted',
-      onClick: actions.startMic,
+  if (phase === 'capturing') {
+    if (pushToTalk) {
+      return {
+        label: 'Release to send',
+        icon: <Mic size={16} className="animate-pulse" />,
+        className: 'bg-brand-gold text-brand-text',
+        onClick: null,
+      }
     }
-  }
-  // Push-to-talk: transmitting. Gold and scaled so it is unmistakable from the
-  // back of a room that the mic is live.
-  if (micState === 'held') {
-    return {
-      label: 'Release to send',
-      icon: <Mic size={18} className="animate-pulse" />,
-      className: 'bg-brand-gold text-brand-text scale-105',
-      onClick: null,
-    }
-  }
-  if (micState === 'listening') {
     return {
       label: 'Listening',
-      icon: <AudioLines size={18} className="animate-pulse" />,
+      icon: <AudioLines size={16} className="animate-pulse" />,
       className: 'bg-brand-green text-white',
       onClick: actions.stopMic,
     }
   }
-  if (micState === 'speaking') {
+  if (phase === 'thinking') {
+    return {
+      label: 'Thinking…',
+      icon: <Sparkles size={16} className="text-brand-gold animate-pulse" />,
+      className: 'bg-brand-green text-white',
+      onClick: null,
+    }
+  }
+  if (phase === 'agentSpeaking' || phase === 'drainingFarewell') {
     return {
       label: 'Speaking',
-      icon: <span className="inline-block w-2 h-2 rounded-full bg-white animate-pulse" />,
+      icon: <span className="inline-block w-2 h-2 rounded-full bg-brand-gold animate-pulse" />,
       className: 'bg-brand-green text-white',
-      // In push-to-talk the mic is already silent while the agent speaks, so
-      // there is nothing to stop; the button is inert rather than misleading.
       onClick: pushToTalk ? null : actions.stopMic,
     }
   }
-  // ready + idle
   return {
     label: pushToTalk ? 'Hold to talk' : 'Talk to concierge',
-    icon: <Sparkles size={18} className="text-brand-gold" />,
+    icon: <Sparkles size={16} className="text-brand-gold" />,
     className: 'bg-brand-green text-white',
     onClick: pushToTalk ? null : actions.startMic,
   }
@@ -78,15 +107,19 @@ function visualFor(
 
 export function ConciergePill() {
   const agent = useAgent()
-  const holdable = agent.pushToTalk && agent.connState === 'ready' && agent.micState !== 'muted'
+  const phase = resolvePhase(agent.phase, agent.connState, agent.micState)
+  const holdable = agent.pushToTalk && phase !== 'connecting'
+
   const hold = useHoldToTalk({
     enabled: holdable,
     onBegin: agent.beginTalking,
     onEnd: agent.endTalking,
   })
 
-  const v = visualFor(agent.connState, agent.micState, agent.pushToTalk, {
-    startMic: () => { void agent.startMic() },
+  const v = visualFor(phase, agent.micState, Boolean(agent.micDenied), agent.pushToTalk, {
+    startMic: () => {
+      void agent.startMic()
+    },
     stopMic: agent.stopMic,
     reconnect: agent.reconnect,
   })
@@ -98,14 +131,18 @@ export function ConciergePill() {
       type="button"
       onClick={v.onClick ?? undefined}
       disabled={v.onClick === null && !holdable}
-      // touch-action:none stops a drag off the pill turning into a page scroll
-      // and swallowing the pointerup.
       style={holdable ? { touchAction: 'none' } : undefined}
-      title={agent.pushToTalk ? 'Hold the pill or the spacebar to talk' : undefined}
+      title={
+        agent.errorMessage
+          ? agent.errorMessage
+          : agent.pushToTalk
+            ? 'Hold the pill or Spacebar to talk'
+            : undefined
+      }
       {...holdProps}
       className={
         'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ' +
-        'text-[13px] font-semibold leading-none transition-transform ' +
+        'text-[13px] font-semibold leading-none transition-colors select-none ' +
         v.className
       }
     >

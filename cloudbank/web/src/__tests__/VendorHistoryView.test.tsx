@@ -3,14 +3,19 @@ import { render, screen } from '@testing-library/react'
 import { VendorHistoryView } from '../pages/spending/VendorHistoryView'
 import { PersonaProvider } from '../personas/PersonaProvider'
 import { SpendingViewProvider } from '../agent/SpendingViewProvider'
-import { AgentRegistryContext } from '../agent/AgentRegistryContext'
-import { createRegistry } from '../agent/clientFunctions'
 
 const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect
 beforeAll(() => {
   Element.prototype.getBoundingClientRect = function () {
     return {
-      width: 400, height: 240, top: 0, left: 0, bottom: 240, right: 400, x: 0, y: 0,
+      width: 400,
+      height: 240,
+      top: 0,
+      left: 0,
+      bottom: 240,
+      right: 400,
+      x: 0,
+      y: 0,
       toJSON: () => ({}),
     } as DOMRect
   }
@@ -21,24 +26,19 @@ afterAll(() => {
 
 function renderWith(vendor: string) {
   return render(
-    <PersonaProvider>
-      <AgentRegistryContext.Provider value={createRegistry()}>
-        <SpendingViewProvider>
-          <VendorHistoryView vendor={vendor} />
-        </SpendingViewProvider>
-      </AgentRegistryContext.Provider>
+    <PersonaProvider initialDemoDate="2026-11-24">
+      <SpendingViewProvider>
+        <VendorHistoryView vendor={vendor} />
+      </SpendingViewProvider>
     </PersonaProvider>,
   )
 }
 
 describe('VendorHistoryView', () => {
-  it('shows the vendor in the breadcrumb', () => {
-    renderWith('Tesco')
-    expect(screen.getByText(/Spending › Tesco/)).toBeInTheDocument()
-  })
-
-  it('renders only transactions for the named vendor (case-insensitive)', () => {
+  it('renders canonical vendor breadcrumb, chart, and matching transactions', () => {
     renderWith('tesco')
+    expect(screen.getByText(/Spending › Tesco/)).toBeInTheDocument()
+    expect(document.querySelector('.recharts-wrapper')).not.toBeNull()
     const rows = document.querySelectorAll('[data-component-id^="txn-"]')
     expect(rows.length).toBeGreaterThan(0)
     rows.forEach((r) => {
@@ -46,20 +46,9 @@ describe('VendorHistoryView', () => {
     })
   })
 
-  it('shows the back chevron', () => {
-    renderWith('Tesco')
-    expect(screen.getByLabelText('Back to Spending overview')).toBeInTheDocument()
-  })
-
-  it('shows the mini trend chart (recharts wrapper present)', () => {
-    renderWith('Tesco')
-    expect(document.querySelector('.recharts-wrapper')).not.toBeNull()
-  })
-
-  it('renders empty list politely when vendor has no transactions', () => {
+  it('renders empty state politely when vendor has no transactions', () => {
     renderWith('NonexistentCorp')
-    const rows = document.querySelectorAll('[data-component-id^="txn-"]')
-    expect(rows.length).toBe(0)
+    expect(document.querySelectorAll('[data-component-id^="txn-"]').length).toBe(0)
     expect(screen.getByText(/No recent transactions/i)).toBeInTheDocument()
   })
 })

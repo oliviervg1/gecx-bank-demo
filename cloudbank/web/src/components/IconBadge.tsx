@@ -4,19 +4,26 @@ import type { LucideProps } from 'lucide-react'
 export type IconTone = 'green' | 'gold' | 'muted'
 
 const TONE_STYLES: Record<IconTone, { background: string; color: string }> = {
-  green: { background: 'rgba(10, 77, 53, 0.1)',   color: 'rgb(10, 77, 53)' },
-  gold:  { background: 'rgba(200, 155, 60, 0.12)', color: 'rgb(200, 155, 60)' },
-  muted: { background: 'rgba(107, 114, 128, 0.12)', color: 'rgb(107, 114, 128)' },
+  green: { background: 'rgba(10, 77, 53, 0.08)', color: '#0a4d35' },
+  gold: { background: 'rgba(184, 137, 46, 0.12)', color: '#b8892e' },
+  muted: { background: 'rgba(99, 97, 91, 0.10)', color: '#63615b' },
 }
 
 interface Props extends Omit<HTMLAttributes<HTMLDivElement>, 'children'> {
   icon: ComponentType<LucideProps>
   tone: IconTone
-  size?: number   // outer diameter in px
-  iconSize?: number  // icon stroke box in px
+  size?: number
+  iconSize?: number
 }
 
-export function IconBadge({ icon: Icon, tone, size = 44, iconSize = 20, style, ...rest }: Props) {
+export function IconBadge({
+  icon: Icon,
+  tone,
+  size = 40,
+  iconSize = 18,
+  style,
+  ...rest
+}: Props) {
   const tones = TONE_STYLES[tone]
   return (
     <div
