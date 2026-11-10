@@ -68,10 +68,12 @@ def test_resolve_session_id_validates_strict_uuid() -> None:
 def test_rejects_missing_or_empty_origin() -> None:
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/agent") as ws:
+            ws.send_text("probe")
             ws.receive_text()
 
     with pytest.raises(WebSocketDisconnect):
         with client.websocket_connect("/ws/agent", headers={"origin": ""}) as ws:
+            ws.send_text("probe")
             ws.receive_text()
 
 
@@ -100,6 +102,7 @@ def test_rejects_disallowed_and_wildcard_suffix_origins(
         with client.websocket_connect(
             "/ws/agent", headers={"origin": bad_origin}
         ) as ws:
+            ws.send_text("probe")
             ws.receive_text()
 
 
@@ -128,6 +131,7 @@ def test_proxy_allowed_origins_override_has_zero_fallthrough(
             with client.websocket_connect(
                 "/ws/agent", headers={"origin": rejected}
             ) as ws:
+                ws.send_text("probe")
                 ws.receive_text()
 
 
@@ -261,22 +265,28 @@ def test_customer_snapshot_accepts_all_four_real_fixtures_and_rejects_adversaria
         _mut(lambda s: s["accounts"]["mortgage"].update({"fixed_until": "2027-09-30\n"})),
         _mut(lambda s: s["transactions"][0].update({"id": "txn-1\n"})),
         _mut(lambda s: s["transactions"][0].update({"vendor": "Tesco<script>"})),
-        _mut(
-            lambda s: s["transactions"].extend(
-                [
-                    {
-                        "id": f"txn-pad-{i}",
-                        "month_offset": 0,
-                        "day": 1,
-                        "vendor": "Padding Merchant Name For 32KB Cap Check",
-                        "category": "shopping",
-                        "amount_pence": 100,
-                    }
-                    for i in range(400)
-                ]
-            )
-        ),
     ]
+
+    # Schema-valid (>32 KiB) oversize snapshot: 245 rows (<= maxItems 250) with 115-char vendor (<= maxLength 120)
+    schema_valid_oversize = _mut(
+        lambda s: s.__setitem__(
+            "transactions",
+            [
+                {
+                    "id": f"txn-oversize-{i:03d}",
+                    "month_offset": 0,
+                    "day": 1,
+                    "vendor": "M" * 115,
+                    "category": "shopping",
+                    "amount_pence": 100,
+                }
+                for i in range(245)
+            ],
+        )
+    )
+    assert main._snapshot_validator().is_valid(schema_valid_oversize)
+    assert len(json.dumps(schema_valid_oversize, separators=(",", ":"))) > main.MAX_SNAPSHOT_BYTES
+    adversarial_cases.append(schema_valid_oversize)
 
     for idx, bad_snap in enumerate(adversarial_cases):
         seed = make_seed_variables(persona_snapshots, "chloe")
@@ -311,6 +321,101 @@ def test_inbound_frame_errors_and_session_cap(monkeypatch: pytest.MonkeyPatch) -
     monkeypatch.setattr(main, "_active_sessions", main._MAX_CONCURRENT_SESSIONS)
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         assert "too many active sessions" in _recv_error_payload(ws)["message"]
+
+
+def test_start_frame_timeout_releases_session_slot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PROXY_START_TIMEOUT_SECONDS", raising=False)
+    assert main.DEFAULT_START_TIMEOUT_SECONDS == 10.0
+    assert main._start_timeout_seconds() == 10.0
+
+    monkeypatch.setenv("PROXY_START_TIMEOUT_SECONDS", "0.05")
+    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+        err = _recv_error_payload(ws)
+    assert "timed out waiting for start frame" in err["message"]
+    assert main._active_sessions == 0
+
+
+def test_ws_session_sanitizes_session_id_and_uses_configured_eu_location(
+    monkeypatch: pytest.MonkeyPatch,
+    persona_snapshots: dict[str, dict[str, Any]],
+) -> None:
+    # Real gecx-config.json resolves to locations/eu
+    real_resource, real_loc = main._load_app_resource()
+    assert real_loc == "eu"
+    assert "/locations/eu/apps/" in real_resource
+
+    captured_urls: list[str] = []
+    captured_upstream_frames: list[dict[str, Any]] = []
+
+    class CapturingUpstream:
+        async def __aenter__(self) -> CapturingUpstream:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def send(self, raw: str) -> None:
+            captured_upstream_frames.append(json.loads(raw))
+
+        def __aiter__(self) -> CapturingUpstream:
+            return self
+
+        async def __anext__(self) -> str:
+            raise StopAsyncIteration
+
+        async def close(self) -> None:
+            pass
+
+    def fake_connect(url: str, **_kwargs: Any) -> CapturingUpstream:
+        captured_urls.append(url)
+        return CapturingUpstream()
+
+    async def ok_token() -> str:
+        return "tok-eu"
+
+    monkeypatch.setattr(main._tokens, "get_token", ok_token)
+    monkeypatch.setattr(main.websockets, "connect", fake_connect)
+
+    # 1. Hostile sessionId on WS start is replaced with a canonical UUID on the upstream config path
+    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "start",
+                    "persona": "chloe",
+                    "variables": make_seed_variables(persona_snapshots, "chloe"),
+                    "sessionId": "../../apps/victim/sessions/steal",
+                }
+            )
+        )
+        ready = json.loads(ws.receive_text())
+
+    assert captured_urls[-1].endswith("/BidiRunSession/locations/eu")
+    session_path = captured_upstream_frames[0]["config"]["session"]
+    assert "victim" not in session_path and ".." not in session_path
+    tail_uuid = session_path.rsplit("/", 1)[-1]
+    assert str(uuid.UUID(tail_uuid)) == tail_uuid
+    assert ready == {"type": "ready", "sessionId": tail_uuid}
+
+    # 2. Valid UUID sessionId (GoAway reconnect) is preserved on the upstream config path
+    captured_upstream_frames.clear()
+    valid_resume = "3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13"
+    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "start",
+                    "persona": "chloe",
+                    "variables": make_seed_variables(persona_snapshots, "chloe"),
+                    "sessionId": valid_resume,
+                }
+            )
+        )
+        ready2 = json.loads(ws.receive_text())
+    assert captured_upstream_frames[0]["config"]["session"].endswith(f"/sessions/{valid_resume}")
+    assert ready2 == {"type": "ready", "sessionId": valid_resume}
 
 
 def test_config_auth_and_upstream_errors_reported_safely(
@@ -376,3 +481,44 @@ def test_config_auth_and_upstream_errors_reported_safely(
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text(valid_start)
         assert "upstream closed" in _recv_error_payload(ws)["message"]
+
+    # Full-stack F4-1 check: held ServerEnd still arrives over /ws/agent when upstream
+    # drops with ConnectionClosedError after farewell audio + endSession before turnCompleted.
+    class FarewellDroppingUpstream:
+        def __init__(self) -> None:
+            self._frames = [
+                json.dumps({"sessionOutput": {"audio": "AAAA"}}),
+                json.dumps({"endSession": {}}),
+            ]
+
+        async def __aenter__(self) -> FarewellDroppingUpstream:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def send(self, _raw: str) -> None:
+            pass
+
+        def __aiter__(self) -> FarewellDroppingUpstream:
+            return self
+
+        async def __anext__(self) -> str:
+            if self._frames:
+                return self._frames.pop(0)
+            raise websockets.exceptions.ConnectionClosedError(None, None)
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(
+        main.websockets, "connect", lambda *_a, **_kw: FarewellDroppingUpstream()
+    )
+    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+        ws.send_text(valid_start)
+        received = [
+            json.loads(ws.receive_text())["type"],
+            json.loads(ws.receive_text())["type"],
+            json.loads(ws.receive_text())["type"],
+        ]
+    assert received == ["ready", "audio", "end"]

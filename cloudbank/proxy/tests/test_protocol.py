@@ -61,6 +61,16 @@ def test_rejects_unknown_or_malformed_client_frames() -> None:
         parse_client_msg('{"type":"start","persona":"unknown","variables":{}}')
     with pytest.raises(ValueError):
         parse_client_msg('{"type":"stop","unexpected":1}')
+    with pytest.raises(ValueError):
+        parse_client_msg(
+            '{"type":"start","persona":"chloe","variables":{},"extraTopKey":1}'
+        )
+    with pytest.raises(ValueError):
+        parse_client_msg('{"type":"text","text":"hi","extraTopKey":1}')
+    with pytest.raises(ValueError, match="base64"):
+        parse_client_msg('{"type":"audio","data":"!!!not-base64!!!"}')
+    with pytest.raises(ValueError):
+        parse_client_msg('{"type":"audio","data":""}')
 
 
 def test_serializes_all_server_message_variants() -> None:

@@ -92,10 +92,17 @@ async def test_relays_config_variables_ready_audio_text_and_transcript(
         await browser.push(ClientText(type="text", text="Hello").model_dump_json())
         assert (await fake_upstream.recv_from_proxy())["realtimeInput"]["text"] == "Hello"
 
-        # Oversized and malformed mid-session frames are dropped without killing the session
+        # Oversized, malformed, invalid-base64, and duplicate mid-session start frames are dropped safely
         await browser.push("x" * (MAX_CLIENT_FRAME_BYTES + 1))
         await browser.push("{not json")
+        await browser.push('{"type":"audio","data":"!!!not-base64!!!"}')
         await browser.push('{"type":"tool_response","id":"1","response":{}}')
+        await browser.push(
+            '{"type":"start","persona":"david","variables":{"injected":"bad"}}'
+        )
+        await browser.push(AudioFrame(data="BBBB").model_dump_json())
+        next_upstream = await fake_upstream.recv_from_proxy()
+        assert next_upstream == {"realtimeInput": {"audio": "BBBB"}}
 
         await fake_upstream.inject(
             {"recognitionResult": {"transcript": "Hello there", "isFinal": True}}
@@ -381,6 +388,9 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
             }
         )
 
+        chunk1 = base64.b64encode(b"farewell-pcm-1").decode("ascii")
+        chunk2 = base64.b64encode(b"farewell-pcm-2").decode("ascii")
+
         # Farewell turn where endSession arrives alongside text BEFORE trailing TTS audio chunks!
         await fake_upstream.inject(
             {
@@ -390,11 +400,11 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
                 }
             }
         )
-        await fake_upstream.inject({"sessionOutput": {"audio": "FAREWELL_CHUNK_1"}})
+        await fake_upstream.inject({"sessionOutput": {"audio": chunk1}})
         await fake_upstream.inject(
             {
                 "sessionOutput": {
-                    "audio": "FAREWELL_CHUNK_2",
+                    "audio": chunk2,
                     "turnCompleted": True,
                     "endSession": {},
                 }
@@ -422,7 +432,7 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
         audio_indices = [
             i
             for i, m in enumerate(msgs)
-            if m["type"] == "audio" and m["data"].startswith("FAREWELL_CHUNK_")
+            if m["type"] == "audio" and m["data"] in (chunk1, chunk2)
         ]
         assert len(audio_indices) == 2
         assert all(a_idx < end_idx for a_idx in audio_indices)
@@ -431,3 +441,49 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
         await browser.close()
         await fake_upstream.close()
         await task
+
+
+@pytest.mark.asyncio
+async def test_f4_1_held_end_session_flushed_even_when_upstream_drops_with_connection_closed() -> None:
+    """Regression F4-1: held ServerEnd must still be delivered if upstream drops abnormally before turnCompleted."""
+    import websockets.exceptions
+
+    chunk = base64.b64encode(b"farewell-pcm").decode("ascii")
+
+    class DroppingUpstream:
+        def __init__(self) -> None:
+            self.sent: list[str] = []
+            self._frames = [
+                json.dumps({"sessionOutput": {"audio": chunk}}),
+                json.dumps({"endSession": {}}),
+            ]
+
+        async def send(self, raw: str) -> None:
+            self.sent.append(raw)
+
+        def __aiter__(self) -> DroppingUpstream:
+            return self
+
+        async def __anext__(self) -> str:
+            if self._frames:
+                return self._frames.pop(0)
+            raise websockets.exceptions.ConnectionClosedError(None, None)
+
+        async def close(self) -> None:
+            pass
+
+    browser = FakeBrowser()
+    upstream = DroppingUpstream()
+    relay = Relay(
+        browser=browser,
+        upstream=upstream,
+        app_resource="apps/x",
+        session_id="sess-f4-1",
+    )
+    with pytest.raises(websockets.exceptions.ConnectionClosedError):
+        await relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+
+    assert relay.ended_cleanly is True
+    msgs = browser.parsed_messages()
+    types = [m["type"] for m in msgs]
+    assert types == ["ready", "audio", "end"]

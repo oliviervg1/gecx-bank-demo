@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import contextlib
 import functools
 import json
 import logging
@@ -284,23 +285,30 @@ class Relay:
             await self.upstream.close()
 
     async def _pump_upstream_to_browser(self) -> None:
-        async for raw in self.upstream:
-            try:
-                frame: dict[str, Any] = json.loads(raw)
-            except json.JSONDecodeError:
-                log.warning("dropping non-JSON upstream frame")
-                continue
+        try:
+            async for raw in self.upstream:
+                try:
+                    frame: dict[str, Any] = json.loads(raw)
+                except json.JSONDecodeError:
+                    log.warning("dropping non-JSON upstream frame")
+                    continue
 
-            if "sessionOutput" in frame or "session_output" in frame or "recognitionResult" in frame or "recognition_result" in frame:
-                self._last_activity_monotonic = time.monotonic()
+                if (
+                    "sessionOutput" in frame
+                    or "session_output" in frame
+                    or "recognitionResult" in frame
+                    or "recognition_result" in frame
+                ):
+                    self._last_activity_monotonic = time.monotonic()
 
-            for out_msg in self._translate_upstream(frame):
-                await self.browser.send_text(serialize_server_msg(out_msg))
-
-        if self._pending_end_session and not self._end_emitted:
-            self._pending_end_session = False
-            self._end_emitted = True
-            await self.browser.send_text(serialize_server_msg(ServerEnd()))
+                for out_msg in self._translate_upstream(frame):
+                    await self.browser.send_text(serialize_server_msg(out_msg))
+        finally:
+            if self._pending_end_session and not self._end_emitted:
+                self._pending_end_session = False
+                self._end_emitted = True
+                with contextlib.suppress(Exception):
+                    await self.browser.send_text(serialize_server_msg(ServerEnd()))
 
     def _maybe_emit_ui_state(
         self, raw_state: Any, tier: Literal[1, 2, 3]
@@ -336,8 +344,13 @@ class Relay:
 
             audio_b64 = so.get("audio")
             if isinstance(audio_b64, str) and audio_b64:
-                self._turn_in_progress = True
-                yield AudioFrame(type="audio", data=audio_b64)
+                try:
+                    audio_msg = AudioFrame(type="audio", data=audio_b64)
+                except ValueError:
+                    log.warning("dropping invalid base64 upstream audio frame")
+                else:
+                    self._turn_in_progress = True
+                    yield audio_msg
 
             text_val = so.get("text")
             if isinstance(text_val, str) and text_val:
