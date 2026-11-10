@@ -179,23 +179,27 @@ describe('Shared JSON Schema validation (customer_snapshot.schema.json)', () => 
 })
 
 describe.each(fixtures)('Domain invariants for fixture: %s', (_persona, f: Fixture) => {
-  it('uses reserved example.com email addresses and valid savings rates', () => {
+  it('uses reserved example.com email addresses, unallocated test sort code, and valid savings rates', () => {
     if (f.user.email) {
       expect(f.user.email).toMatch(/@example\.com$/)
     }
+    expect(f.accounts.current.sort_code).toBe('00-00-99')
     expect(f.accounts.savings.aer_bps).toBeGreaterThanOrEqual(f.accounts.savings.gross_rate_bps)
     expect(f.accounts.savings.goal_target_pence).toBeGreaterThan(f.accounts.savings.balance_pence)
   })
 
-  it('has unique txn- IDs, exactly one income row, and one current-month anomaly', () => {
+  it('has unique txn- IDs, one income row per statement month (0, 1, 2), and one current-month anomaly', () => {
     const ids = f.transactions.map((t) => t.id)
     expect(new Set(ids).size).toBe(ids.length)
     for (const id of ids) expect(id).toMatch(/^txn-/)
 
     const negative = f.transactions.filter((t) => t.amount_pence < 0)
-    expect(negative).toHaveLength(1)
-    expect(negative[0].category).toBe('income')
-    expect(f.transactions.filter((t) => t.category === 'income')).toHaveLength(1)
+    expect(negative).toHaveLength(3)
+    for (const row of negative) {
+      expect(row.category).toBe('income')
+    }
+    expect(new Set(negative.map((t) => t.month_offset))).toEqual(new Set([0, 1, 2]))
+    expect(f.transactions.filter((t) => t.category === 'income')).toHaveLength(3)
 
     const anomalies = f.transactions.filter((t) => t.is_anomaly)
     expect(anomalies).toHaveLength(1)

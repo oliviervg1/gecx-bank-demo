@@ -127,39 +127,48 @@ def build_ordered_turn_steps(
             0, num_segments - len(raw_agents)
         )
 
-    for seg_idx in range(num_segments):
-        for tool_call in segment_tools[seg_idx]:
-            action = tool_call.action
-            tool_call_id = f"adk-{uuid.uuid4()}"
-            tool_resource = eval_utils.tool_map.get(action, action)
-            if action not in eval_utils.tool_map and not tool_resource.startswith(
-                "projects/"
-            ):
-                tool_resource = f"{eval_utils.app_name}/tools/{action}"
+    def _append_tool_expectation(tool_call) -> None:
+        action = tool_call.action
+        tool_call_id = f"adk-{uuid.uuid4()}"
+        tool_resource = eval_utils.tool_map.get(action, action)
+        if action not in eval_utils.tool_map and not tool_resource.startswith(
+            "projects/"
+        ):
+            tool_resource = f"{eval_utils.app_name}/tools/{action}"
 
+        steps.append(
+            {
+                "expectation": {
+                    "toolCall": {
+                        "id": tool_call_id,
+                        "tool": tool_resource,
+                        "args": tool_call.args,
+                    }
+                }
+            }
+        )
+        if tool_call.output is not None:
             steps.append(
                 {
                     "expectation": {
-                        "toolCall": {
+                        "toolResponse": {
                             "id": tool_call_id,
                             "tool": tool_resource,
-                            "args": tool_call.args,
+                            "response": tool_call.output,
                         }
                     }
                 }
             )
-            if tool_call.output is not None:
-                steps.append(
-                    {
-                        "expectation": {
-                            "toolResponse": {
-                                "id": tool_call_id,
-                                "tool": tool_resource,
-                                "response": tool_call.output,
-                            }
-                        }
-                    }
-                )
+
+    for seg_idx in range(num_segments):
+        pre_response_tools = [
+            tc for tc in segment_tools[seg_idx] if tc.action != "end_session"
+        ]
+        post_response_tools = [
+            tc for tc in segment_tools[seg_idx] if tc.action == "end_session"
+        ]
+        for tool_call in pre_response_tools:
+            _append_tool_expectation(tool_call)
 
         agent_text = (
             segment_agents[seg_idx] if seg_idx < len(segment_agents) else ""
@@ -175,6 +184,9 @@ def build_ordered_turn_steps(
                     }
                 }
             )
+
+        for tool_call in post_response_tools:
+            _append_tool_expectation(tool_call)
 
         if seg_idx < len(transfers):
             target_name = transfers[seg_idx]

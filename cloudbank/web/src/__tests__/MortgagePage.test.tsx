@@ -44,12 +44,18 @@ describe('MortgagePage', () => {
     expect(screen.getByTestId('overpay-allowance-status')).toHaveTextContent('£1,150.00')
   })
 
-  it('renders exact integer-bisection fixed-rate renewal options', () => {
+  it('renders exact integer-bisection fixed-rate renewal options and custom lump-sum input', () => {
     renderMortgage('chloe')
+    fireEvent.click(screen.getByRole('tab', { name: 'Overpay' }))
+    const lumpInput = screen.getByLabelText('Custom lump sum (£):')
+    fireEvent.change(lumpInput, { target: { value: '5000' } })
+    expect(screen.getAllByText('£5,000.00').length).toBeGreaterThan(0)
+
     fireEvent.click(screen.getByRole('tab', { name: 'Fixed Rates' }))
     expect(screen.getByText('£1,365.17/mo')).toBeInTheDocument()
     expect(screen.getByText('£1,348.63/mo')).toBeInTheDocument()
-    expect(screen.getByText('-£34.54/mo vs current')).toBeInTheDocument()
+    expect(screen.getByText('−£34.54/mo less than today')).toBeInTheDocument()
+    expect(screen.getByText(/exclude product arrangement fees/i)).toBeInTheDocument()
   })
 
   it('renders First-Home Borrowing Readiness (£189,000 max borrowing) for renter Tom', () => {

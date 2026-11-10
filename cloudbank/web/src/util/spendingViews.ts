@@ -39,6 +39,9 @@ function normalizeVendorForms(name: string): { raw: string; stem: string } {
 
 function containsTokenSequence(txTokens: string[], needleTokens: string[]): boolean {
   if (needleTokens.length === 0 || needleTokens.length > txTokens.length) return false
+  if (needleTokens.length === 1 && needleTokens[0].length < 2 && txTokens.length > 1) {
+    return false
+  }
   const span = needleTokens.length
   for (let idx = 0; idx <= txTokens.length - span; idx++) {
     let allMatch = true

@@ -338,7 +338,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(switched.state.persona).toBe('tom')
     expect(switched.state.phase).toBe('connecting')
     expect(switched.state.turns).toEqual([])
-    expect(switched.state.diagnostics).toEqual([])
     expect(switched.state.seenUiSeqKey).toEqual({ sessionId: '', maxSeq: 0 })
     expect(switched.effects).toContainEqual({ type: 'RESET_UI_FOR_PERSONA', persona: 'tom' })
     expect(switched.effects).toContainEqual({

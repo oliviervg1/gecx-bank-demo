@@ -19,7 +19,7 @@ common_session_parameters:
     accounts:
       current:
         name: "Cloudbank Everyday Account"
-        sort_code: "04-00-75"
+        sort_code: "00-00-99"
         account_number_last4: "1954"
         balance_pence: 184050
         currency: "GBP"
@@ -51,6 +51,7 @@ common_session_parameters:
       - { id: "txn-lunch-0-3", month_offset: 0, day: 18, vendor: "Franco Manca", category: "eating_out", amount_pence: 1450 }
       - { id: "txn-muji", month_offset: 0, day: 20, vendor: "Muji", category: "shopping", amount_pence: 4600 }
       - { id: "txn-adobe", month_offset: 0, day: 22, vendor: "Adobe Creative Cloud", category: "subscriptions", amount_pence: 19900, is_subscription: true, is_anomaly: true }
+      - { id: "txn-invoice-2", month_offset: 1, day: 1, vendor: "Client Invoice", category: "income", amount_pence: -265000 }
       - { id: "txn-rent-2", month_offset: 1, day: 1, vendor: "Hamilton Lettings", category: "bills", amount_pence: 145000, is_subscription: true }
       - { id: "txn-coffee-1-0", month_offset: 1, day: 2, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 360 }
       - { id: "txn-tfl-2", month_offset: 1, day: 5, vendor: "TfL", category: "transport", amount_pence: 3870 }
@@ -66,6 +67,7 @@ common_session_parameters:
       - { id: "txn-adobe-2", month_offset: 1, day: 22, vendor: "Adobe Creative Cloud", category: "subscriptions", amount_pence: 5499, is_subscription: true }
       - { id: "txn-lunch-1-1", month_offset: 1, day: 24, vendor: "Franco Manca", category: "eating_out", amount_pence: 1450 }
       - { id: "txn-gig-2", month_offset: 1, day: 26, vendor: "Barbican", category: "entertainment", amount_pence: 3500 }
+      - { id: "txn-invoice-3", month_offset: 2, day: 1, vendor: "Client Invoice", category: "income", amount_pence: -310000 }
       - { id: "txn-rent-3", month_offset: 2, day: 1, vendor: "Hamilton Lettings", category: "bills", amount_pence: 145000, is_subscription: true }
       - { id: "txn-coffee-2-0", month_offset: 2, day: 3, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 360 }
       - { id: "txn-tfl-3", month_offset: 2, day: 5, vendor: "TfL", category: "transport", amount_pence: 4510 }
@@ -101,7 +103,7 @@ conversations:
               query_type: "summary"
         agent:
           - "# silent"
-          - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000.00 suggests borrowing up to £189,000.00 — or a property budget around £224,000.00 once your £35,000.00 First Home Deposit is complete (£20,800.00 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
+          - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000 suggests borrowing up to £189,000 — or a property budget around £224,000 once your £35,000 First Home Deposit is complete (£20,800 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
 
       - user: "Yes, check my First Home Deposit savings summary."
         tool_calls:
@@ -116,11 +118,15 @@ conversations:
               query_type: "summary"
         agent:
           - "# silent"
-          - "As of November, your First Home Deposit in Cloudbank First Home Saver holds £14,200.00 toward your £35,000.00 target at 4.75% AER, with £350.00 going in each month — putting you on track to reach your goal in 47 months (October 2030)."
+          - "As of November, your First Home Deposit in Cloudbank First Home Saver holds £14,200 toward your £35,000 target at 4.75% AER, with £350 going in each month — putting you on track to reach your goal in 47 months (October 2030)."
 
       - user: "Cheers, that's all — goodbye."
         tool_calls:
           - action: assist_savings
             args:
               switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
         agent: "You are very welcome, Tom. Have a great rest of your day, and goodbye."

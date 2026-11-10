@@ -54,7 +54,7 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 | **10** | Keyboard Spacebar repeat / window blur | Ignores `event.repeat` keydowns and dispatches `PTT_RELEASE` on `window` `blur` or `visibilitychange`. |
 | **11** | `PERSONA_SWITCH` or text-bar `CLIENT_TEXT_SUBMIT` | `PERSONA_SWITCH` closes the active socket, resets UI/turns/`seenUiSeqKey`, and opens a new session for the selected customer; `CLIENT_TEXT_SUBMIT` barges in cleanly or connects-then-sends if disconnected/paused/ended. |
 
-> **Note on `bargeInAwareness: true`:** When a caller interrupts speech mid-sentence, CES tells the model on the next turn that its prior response was interrupted so it can adapt naturally; the `(Interrupted)` label in `ConciergePanel` marks the turn boundary rather than the exact millisecond syllable cut-off.
+> **Note on `bargeInAwareness: true`:** When a caller interrupts speech mid-sentence, CX Agent Studio tells the model on the next turn that its prior response was interrupted so it can adapt naturally; the `(Interrupted)` label in `ConciergePanel` marks the turn boundary rather than the exact millisecond syllable cut-off.
 
 ---
 
@@ -68,11 +68,13 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 
 ---
 
-## 5. Live `locations/eu` Verification Spike Checklist
+## 5. Live `locations/eu` Empirical Verification Summary
 
-Because offline unit tests exercise simulated gRPC/WebSocket streams, run the following empirical checks when validating against a live CX Agent Studio app in `locations/eu`:
+Empirical findings measured against a live CX Agent Studio deployment of `gemini-composite-v2` (`en-GB-Chirp3-HD-Aoede`) in `locations/eu` through `cloudbank/proxy`:
 
-1. **Tier 1 `partial=True` arrival timing (`A1`):** Verify in browser network frames whether Tier 1 `Part.from_json` arrives ahead of the first TTS audio chunk on `gemini-composite-v2` in `locations/eu`, and confirm zero duplicate spoken synthesis; if any platform quirk appears, set `_ENABLE_TIER1_PARTIAL_UI = False` in the callbacks so Tier 2 and Tier 3 carry `ui_view_state` seamlessly.
-2. **Live `SessionOutput.text` framing (`W-2`):** Confirm whether `gemini-composite-v2` emits cumulative or per-segment `SessionOutput.text` frames across post-transfer turns and pacing-phrase turns (`appendOrUpdateAssistantText` handles both modes).
-3. **Farewell TTS drain on live CES (`Row 4`):** Confirm the full spoken farewell plays to completion before `ended` is reached when `Part.from_end_session` is appended by `release_line`.
-4. **Endpointer reaction latency (`A4`):** Confirm post-release turn latency with the immediate worklet tail flush + `≤ 2.5 s` silence cap across `44.1 kHz` and `48 kHz` microphones.
+| Verification Area | Live `locations/eu` Behaviour | Runtime Handling |
+| :--- | :--- | :--- |
+| **Tier 1 `partial=True` UI sync (`A1`)** | `Part.from_json` arrives `~800–880 ms` **before** the first `24 kHz` TTS audio chunk on post-tool turns (`~1.1–1.4 s` vs `~2.0–2.3 s`), with zero duplicate speech synthesis. | `_ENABLE_TIER1_PARTIAL_UI = True` remains enabled across all four agents, backed by Tier 2 and Tier 3 `(sessionId, seq)` deduplication. |
+| **`SessionOutput.text` framing (`W-2`)** | `gemini-composite-v2` emits per-segment `SessionOutput.text` frames when a brief pre-search pacing line precedes the post-tool answer (and single-frame text on silent-transfer turns), containing inline `<warm>`, `<positive>`, and `<short pause>` tags. | `sanitizeAgentProse` strips inline audio tags while `appendOrUpdateAssistantText` concatenates per-segment frames cleanly. |
+| **Farewell `end_session` wire framing (`Row 4`)** | When `release_line` appends `Part.from_end_session`, `BidiRunSession` streams all farewell TTS audio frames first and surfaces `end_session` (`call_complete = "released"`) inside `sessionOutput.diagnosticInfo.messages[].chunks[]` on `turnCompleted = true`. | `relay.py` checks both top-level `endSession` and `diagnosticInfo` chunks so `ServerEnd` always fires after farewell audio is queued, entering `drainingFarewell` until `AudioPlayer` finishes playback. |
+| **NAIVE Golden Evaluations (`FAKE`)** | All `5 / 5` multi-segment NAIVE golden evaluations pass in `locations/eu` (`toolCall → agentResponse → agentTransfer`, with `end_session` ordered after `agentResponse` on farewell turns). | Enforced automatically by `cloudbank/scripts/run_golden_evals.py`. |

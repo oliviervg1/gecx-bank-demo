@@ -14,11 +14,13 @@
 #   5. Multi-segment NAIVE golden evaluation sync via
 #      `scripts/run_golden_evals.py sync` (never `cxas push-eval`, which
 #      mis-orders `agentResponse` before `agentTransfer` on multi-agent turns)
+#   6. Optional immutable CXAS version snapshot (`--create-version [v-name]`)
+#      created AFTER golden evaluations are synced.
 #
 # Usage:
 #   ./cloudbank/push.sh                                # deploy to prod app in gecx-config.json
 #   ./cloudbank/push.sh dev                            # deploy to dev/branch target
-#   ./cloudbank/push.sh --create-version [v-name]      # deploy + snapshot immutable CES version
+#   ./cloudbank/push.sh --create-version [v-name]      # deploy + sync goldens + snapshot CXAS version
 set -euo pipefail
 
 cd "$(dirname "$0")"
@@ -39,10 +41,33 @@ if [ -z "$PROJECT" ] || [ "$PROJECT" = "null" ] || \
   exit 1
 fi
 
+export GOOGLE_CLOUD_QUOTA_PROJECT="${GOOGLE_CLOUD_QUOTA_PROJECT:-$PROJECT}"
+
 TARGET="prod"
-if [ $# -gt 0 ] && [[ "$1" != -* ]]; then
-  TARGET="$1"
-fi
+CREATE_VERSION="false"
+VERSION_NAME=""
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --create-version)
+      CREATE_VERSION="true"
+      shift
+      if [ $# -gt 0 ] && [[ "$1" != -* ]] && [ "$TARGET" = "prod" ] && [ -z "$VERSION_NAME" ]; then
+        VERSION_NAME="$1"
+        shift
+      fi
+      ;;
+    --create-version=*)
+      CREATE_VERSION="true"
+      VERSION_NAME="${1#*=}"
+      shift
+      ;;
+    *)
+      TARGET="$1"
+      shift
+      ;;
+  esac
+done
 
 echo "==> [1/5] Running CXAS structural & evaluation lint..."
 uv run --locked cxas lint
@@ -54,9 +79,17 @@ echo "==> [3/5] Running offline Python agent test suite..."
 uv run --locked pytest -v
 
 echo "==> [4/5] Performing OVERWRITE import & tool declaration check (projects/${PROJECT}/locations/${LOCATION})..."
-uv run --locked python scripts/manage_ces_app.py --config gecx-config.json push "$@"
+uv run --locked python scripts/manage_ces_app.py --config gecx-config.json push "${TARGET}"
 
 echo "==> [5/5] Syncing multi-segment NAIVE golden evaluations to target '${TARGET}'..."
 uv run --locked python scripts/run_golden_evals.py --config gecx-config.json sync "${TARGET}"
+
+if [ "$CREATE_VERSION" = "true" ]; then
+  if [ -z "$VERSION_NAME" ]; then
+    VERSION_NAME="v-$(date -u +%Y%m%d-%H%M%S)"
+  fi
+  echo "==> [6/6] Creating immutable CXAS version '${VERSION_NAME}' on '${TARGET}'..."
+  uv run --locked python scripts/manage_ces_app.py --config gecx-config.json create-version "${VERSION_NAME}" "" "${TARGET}"
+fi
 
 echo "==> Deployment and golden evaluation sync complete."

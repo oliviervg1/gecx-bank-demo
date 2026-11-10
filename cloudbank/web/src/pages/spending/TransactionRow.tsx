@@ -48,7 +48,9 @@ export function TransactionRow({
     : 'transition-colors'
 
   const dateLabel = `${day} ${shortMonthForOffset(demoDate, month_offset)}`
-  const subtitleParts = [category.replace(/_/g, ' '), dateLabel]
+  const rawCategory = category.replace(/_/g, ' ')
+  const categoryLabel = rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1)
+  const subtitleParts = [categoryLabel, dateLabel]
   if (is_subscription) subtitleParts.push('recurring')
   if (is_anomaly) subtitleParts.push('flagged')
 

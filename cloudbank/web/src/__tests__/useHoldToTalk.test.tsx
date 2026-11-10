@@ -12,7 +12,7 @@ function Probe({ enabled = true, onBegin, onEnd }: {
   enabled?: boolean; onBegin: () => void; onEnd: () => void
 }) {
   const hold = useHoldToTalk({ enabled, onBegin, onEnd })
-  return <button data-testid="pill" {...hold}>hold</button>
+  return <button data-testid="pill" data-concierge-pill="true" {...hold}>hold</button>
 }
 
 let onBegin: Mock<() => void>
@@ -91,6 +91,30 @@ describe('spacebar', () => {
     field.focus()
     fireEvent.keyDown(field, { code: 'Space', key: ' ', bubbles: true })
     expect(onBegin).not.toHaveBeenCalled()
+  })
+
+  it('ignores space on focused buttons or tabs other than the concierge pill', () => {
+    render(
+      <>
+        <button type="button" data-testid="other-btn">Other</button>
+        <div role="tab" tabIndex={0} data-testid="other-tab">Tab</div>
+        <Probe onBegin={onBegin} onEnd={onEnd} />
+      </>,
+    )
+    const otherBtn = screen.getByTestId('other-btn')
+    otherBtn.focus()
+    fireEvent.keyDown(otherBtn, { code: 'Space', key: ' ', bubbles: true })
+    expect(onBegin).not.toHaveBeenCalled()
+
+    const otherTab = screen.getByTestId('other-tab')
+    otherTab.focus()
+    fireEvent.keyDown(otherTab, { code: 'Space', key: ' ', bubbles: true })
+    expect(onBegin).not.toHaveBeenCalled()
+
+    // Focusing the concierge pill itself still allows Spacebar hold-to-talk.
+    pill().focus()
+    fireEvent.keyDown(pill(), { code: 'Space', key: ' ', bubbles: true })
+    expect(onBegin).toHaveBeenCalledTimes(1)
   })
 
   it('ignores other keys', () => {

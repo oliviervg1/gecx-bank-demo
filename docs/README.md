@@ -11,7 +11,7 @@ docs/
 │   ├── banking_flows.md                             # Multi-product journey requirements and colour-coded flowcharts
 │   ├── end_to_end_walkthrough.md                    # Turn-by-turn tables across Chloe, Sarah, and Tom journeys
 │   ├── tool_first_architecture_guide.md             # Why Python controllers own state, integer math, and silent routing
-│   └── bidi_ui_sync_and_inspector.md                # 3-Tier ui_view_state sync, AudioWorklet, sessionMachine, ConciergePanel, eu spike
+│   └── bidi_ui_sync_and_session_runtime.md          # 3-Tier ui_view_state sync, AudioWorklet, sessionMachine, ConciergePanel, eu verification
 ├── tools/
 │   ├── README.md                                    # Controller progression diagram and line-linked specification index
 │   ├── route_banking_intent.md                      # Root concierge classifier, navigation, and 2-strike unclear spec
@@ -34,7 +34,7 @@ docs/
 ### 2. Software & Agent Engineers
 1. [Cloudbank Engineering Blueprint](../cloudbank/README.md) — Topology, callback execution order, `context.state` table, and cross-runtime schemas.
 2. [Tool-First Architecture Guide](architecture/tool_first_architecture_guide.md) — Silent `target_agent` transfers, zero-prompt-token `customer_snapshot`, integer `half_up` math, and `search_help` wrapping.
-3. [Bidi UI Sync & Session Runtime](architecture/bidi_ui_sync_and_inspector.md) — Three-tier `ui_view_state` delivery, cross-rate `16 kHz` `AudioWorklet`, 11-row `sessionMachine.ts`, executive `ConciergePanel`, and the `locations/eu` live verification spike checklist.
+3. [Bidi UI Sync & Session Runtime](architecture/bidi_ui_sync_and_session_runtime.md) — Three-tier `ui_view_state` delivery, cross-rate `16 kHz` `AudioWorklet`, 11-row `sessionMachine.ts`, executive `ConciergePanel`, and the `locations/eu` live verification results.
 4. [Python Controller Specifications](tools/README.md) — Deep-dive flowcharts, parameter schemas, and `#L<start>-L<end>` code links for every tool.
 5. [Developer Workflow & CI/CD Guide](guides/developer_workflow_and_cicd_guide.md) — Running the four local gates, sandbox/branch apps, `./push.sh`, and GitHub Actions.
 
@@ -54,7 +54,7 @@ docs/
 | :--- | :--- |
 | **ADC** | **Application Default Credentials** — Local `gcloud` credentials used by the localhost FastAPI proxy to authenticate upstream gRPC streams to Google Cloud. |
 | **AER** | **Annual Equivalent Rate** — The UK headline savings interest rate illustrating what a saver would earn over a full year including compounding, spoken aloud and shown on the Savings screen (`aer_bps`). |
-| **BidiRunSession** | The bi-directional streaming RPC in the [CES v1 API](https://docs.cloud.google.com/gemini-enterprise-cx/cx-agent-studio/reference/rpc/google.cloud.ces.v1) that exchanges live microphone audio, text, session variables, and synthesised speech over a single stream. |
+| **BidiRunSession** | The bi-directional streaming RPC in the [CX Agent Studio v1 API](https://docs.cloud.google.com/gemini-enterprise-cx/cx-agent-studio/reference/rpc/google.cloud.ces.v1) that exchanges live microphone audio, text, session variables, and synthesised speech over a single stream. |
 | **BPS (Basis Points)** | One hundredth of a percentage point (`100 bps = 1.00%`, `465 bps = 4.65%`). Cloudbank stores all interest rates as integers in basis points to avoid floating-point rounding errors. |
 | **CSWSH** | **Cross-Site WebSocket Hijacking** — A browser attack where an untrusted website opens a WebSocket to `localhost`; blocked by strict `Origin` header validation in `cloudbank/proxy`. |
 | **ERC** | **Early Repayment Charge** — A fee charged by UK mortgage lenders when a borrower overpays more than their annual fee-free overpayment allowance (typically 10% of the opening balance per year during a fixed-rate period). |

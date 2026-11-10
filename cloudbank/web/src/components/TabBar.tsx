@@ -27,6 +27,7 @@ export function TabBar() {
           <button
             key={id}
             type="button"
+            aria-current={active ? 'page' : undefined}
             data-active={active}
             onClick={() => navigateTo(id)}
             className="flex-1 flex flex-col items-center gap-1 pt-2.5 pb-2.5 relative transition-colors"

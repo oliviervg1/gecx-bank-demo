@@ -54,4 +54,38 @@ describe('composeHomeInsight', () => {
     expect(renter).toContain('£845.20')
     expect(renter).not.toContain('mortgage payment')
   })
+
+  it('leads with specific subscription anomaly jump when current month has an anomaly', () => {
+    const withAnomaly = composeHomeInsight({
+      spending_summary: baseSummary,
+      mortgage,
+      currentBalancePence: 342050,
+      demoDate: '2026-11-24',
+      transactions: [
+        {
+          id: 'tx_1',
+          vendor: 'Netflix',
+          category: 'subscriptions',
+          amount_pence: 4500,
+          month_offset: 0,
+          day: 21,
+          is_subscription: true,
+          is_anomaly: true,
+        },
+        {
+          id: 'tx_2',
+          vendor: 'Netflix',
+          category: 'subscriptions',
+          amount_pence: 1799,
+          month_offset: 1,
+          day: 21,
+          is_subscription: true,
+        },
+      ],
+    })
+    expect(withAnomaly).toContain(
+      'Netflix charged £45.00 on 21 November, up from £17.99 last month',
+    )
+    expect(withAnomaly).toContain('ask your concierge to check or cancel it')
+  })
 })

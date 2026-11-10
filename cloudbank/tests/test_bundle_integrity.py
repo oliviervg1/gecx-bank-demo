@@ -104,6 +104,8 @@ def test_app_json_schema_and_variable_invariants() -> None:
     assert app_cfg["audioProcessingConfig"]["bargeInConfig"]["bargeInAwareness"] is True
     tts_cfg = app_cfg["audioProcessingConfig"]["synthesizeSpeechConfigs"]["en-GB"]
     assert tts_cfg["voice"] == "en-GB-Chirp3-HD-Aoede"
+    assert app_cfg["loggingSettings"]["redactionConfig"]["enableRedaction"] is True
+    assert app_cfg["loggingSettings"]["cloudLoggingSettings"]["enableCloudLogging"] is True
 
     thresholds = app_cfg["evaluationMetricsThresholds"]["goldenEvaluationMetricsThresholds"]
     assert thresholds["turnLevelMetricsThresholds"]["semanticSimilaritySuccessThreshold"] >= 3
@@ -438,6 +440,12 @@ def test_goldens_and_simulations_integrity(
                     action = tc["action"]
                     if action == "transfer_to_agent":
                         replay_state["target_agent"] = ""
+                        continue
+                    if action == "end_session":
+                        assert replay_state.get("call_complete") == "true", (
+                            f"end_session declared without call_complete=true in {gf.name}"
+                        )
+                        replay_state["call_complete"] = "released"
                         continue
                     call_kwargs = {
                         k: ("" if isinstance(v, dict) and "$matchType" in v else v)

@@ -333,6 +333,7 @@ export function MortgagePage() {
                   <button
                     key={pence}
                     type="button"
+                    aria-pressed={active}
                     data-active={active}
                     onClick={() => setMonthlyOverpaymentPence(pence)}
                     className={
@@ -383,6 +384,7 @@ export function MortgagePage() {
                     <button
                       key={pence}
                       type="button"
+                      aria-pressed={active}
                       data-active={active}
                       onClick={() => setLumpSumOverpaymentPence(pence)}
                       className={
@@ -396,6 +398,22 @@ export function MortgagePage() {
                     </button>
                   )
                 })}
+              </div>
+
+              <div className="mt-2.5 flex items-center gap-2">
+                <label htmlFor="mortgage-lump-input" className="text-[12px] text-brand-muted">
+                  Custom lump sum (£):
+                </label>
+                <input
+                  id="mortgage-lump-input"
+                  type="number"
+                  min="0"
+                  step="100"
+                  value={lumpSumOverpaymentPence > 0 ? lumpSumOverpaymentPence / 100 : ''}
+                  placeholder="0"
+                  onChange={(e) => setLumpSumOverpaymentPence(parsePoundsInput(e.target.value))}
+                  className="w-28 px-2.5 py-1 rounded-lg border border-brand-divider bg-white text-[13px] text-brand-text tabular-nums focus:outline-none focus:border-brand-green"
+                />
               </div>
             </div>
           </div>
@@ -475,12 +493,12 @@ export function MortgagePage() {
 
           <div className="mt-3 divide-y divide-brand-divider border-b border-brand-divider tabular-nums">
             {renewalItems.map((item) => {
-              const deltaLabel =
+              const deltaSummary =
                 item.delta_pence < 0
-                  ? `${formatGBPFromPence(item.delta_pence)}/mo`
+                  ? `−${formatGBPFromPence(Math.abs(item.delta_pence))}/mo less than today`
                   : item.delta_pence > 0
-                    ? `+${formatGBPFromPence(item.delta_pence)}/mo`
-                    : '£0.00/mo'
+                    ? `+${formatGBPFromPence(item.delta_pence)}/mo vs today`
+                    : '£0.00/mo vs today'
               return (
                 <div key={item.id} className="py-3.5 flex items-center justify-between">
                   <div>
@@ -501,7 +519,7 @@ export function MortgagePage() {
                         (item.delta_pence <= 0 ? 'text-brand-green' : 'text-brand-gold')
                       }
                     >
-                      {deltaLabel} vs current
+                      {deltaSummary}
                     </div>
                   </div>
                 </div>
@@ -510,7 +528,7 @@ export function MortgagePage() {
           </div>
 
           <p className="mt-4 text-[12px] text-brand-muted leading-relaxed">
-            {ILLUSTRATION_NOTE}
+            {ILLUSTRATION_NOTE} Illustrative rates exclude product arrangement fees.
           </p>
         </div>
       )}

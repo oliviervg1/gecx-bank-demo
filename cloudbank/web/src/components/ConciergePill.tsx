@@ -36,7 +36,7 @@ function visualFor(
   if (phase === 'connecting') {
     return {
       label: 'Connecting…',
-      icon: <Sparkles size={16} className="animate-pulse" />,
+      icon: <Sparkles size={16} aria-hidden="true" className="animate-pulse" />,
       className: 'bg-brand-green text-white opacity-75',
       onClick: null,
     }
@@ -44,15 +44,15 @@ function visualFor(
   if (phase === 'paused') {
     return {
       label: 'Session paused — hold to talk',
-      icon: <PauseCircle size={16} className="text-brand-gold" />,
+      icon: <PauseCircle size={16} aria-hidden="true" className="text-brand-gold" />,
       className: 'bg-white border border-brand-divider text-brand-text',
       onClick: pushToTalk ? null : actions.reconnect,
     }
   }
   if (micDenied || micState === 'muted') {
     return {
-      label: 'Mic blocked',
-      icon: <MicOff size={16} />,
+      label: 'Microphone off',
+      icon: <MicOff size={16} aria-hidden="true" />,
       className: 'bg-white border border-brand-divider text-brand-muted',
       onClick: pushToTalk ? null : actions.startMic,
     }
@@ -60,7 +60,7 @@ function visualFor(
   if (phase === 'error') {
     return {
       label: 'Reconnect',
-      icon: <RefreshCw size={16} />,
+      icon: <RefreshCw size={16} aria-hidden="true" />,
       className: 'bg-white border border-brand-divider text-brand-text hover:border-brand-green',
       onClick: actions.reconnect,
     }
@@ -69,14 +69,14 @@ function visualFor(
     if (pushToTalk) {
       return {
         label: 'Release to send',
-        icon: <Mic size={16} className="animate-pulse" />,
+        icon: <Mic size={16} aria-hidden="true" className="animate-pulse" />,
         className: 'bg-brand-gold text-brand-text',
         onClick: null,
       }
     }
     return {
       label: 'Listening',
-      icon: <AudioLines size={16} className="animate-pulse" />,
+      icon: <AudioLines size={16} aria-hidden="true" className="animate-pulse" />,
       className: 'bg-brand-green text-white',
       onClick: actions.stopMic,
     }
@@ -84,7 +84,7 @@ function visualFor(
   if (phase === 'thinking') {
     return {
       label: 'Thinking…',
-      icon: <Sparkles size={16} className="text-brand-gold animate-pulse" />,
+      icon: <Sparkles size={16} aria-hidden="true" className="text-brand-gold animate-pulse" />,
       className: 'bg-brand-green text-white',
       onClick: null,
     }
@@ -92,14 +92,14 @@ function visualFor(
   if (phase === 'agentSpeaking' || phase === 'drainingFarewell') {
     return {
       label: 'Speaking',
-      icon: <span className="inline-block w-2 h-2 rounded-full bg-brand-gold animate-pulse" />,
+      icon: <span aria-hidden="true" className="inline-block w-2 h-2 rounded-full bg-brand-gold animate-pulse" />,
       className: 'bg-brand-green text-white',
       onClick: pushToTalk ? null : actions.stopMic,
     }
   }
   return {
     label: pushToTalk ? 'Hold to talk' : 'Talk to concierge',
-    icon: <Sparkles size={16} className="text-brand-gold" />,
+    icon: <Sparkles size={16} aria-hidden="true" className="text-brand-gold" />,
     className: 'bg-brand-green text-white',
     onClick: pushToTalk ? null : actions.startMic,
   }
@@ -121,11 +121,11 @@ function tooltipFor(
   }
   if (phase === 'paused') {
     return pushToTalk
-      ? 'Hold the pill or Spacebar to resume'
+      ? 'Hold this button or the Spacebar to resume'
       : 'Select to resume your concierge session'
   }
   if (pushToTalk) {
-    return 'Hold the pill or Spacebar to talk'
+    return 'Hold this button or the Spacebar to talk'
   }
   return undefined
 }
@@ -133,7 +133,9 @@ function tooltipFor(
 export function ConciergePill() {
   const agent = useAgent()
   const phase = resolvePhase(agent.phase, agent.connState, agent.micState)
-  const holdable = agent.pushToTalk && phase !== 'connecting'
+  const micDenied = Boolean(agent.micDenied) || agent.micState === 'muted'
+  const holdable =
+    agent.pushToTalk && phase !== 'connecting' && !(phase === 'error' && !micDenied)
 
   const hold = useHoldToTalk({
     enabled: holdable,
@@ -141,7 +143,6 @@ export function ConciergePill() {
     onEnd: agent.endTalking,
   })
 
-  const micDenied = Boolean(agent.micDenied)
   const v = visualFor(phase, agent.micState, micDenied, agent.pushToTalk, {
     startMic: () => {
       void agent.startMic()
@@ -155,6 +156,7 @@ export function ConciergePill() {
   return (
     <button
       type="button"
+      data-concierge-pill="true"
       onClick={v.onClick ?? undefined}
       disabled={v.onClick === null && !holdable}
       style={holdable ? { touchAction: 'none' } : undefined}
@@ -167,7 +169,7 @@ export function ConciergePill() {
       }
     >
       {v.icon}
-      <span>{v.label}</span>
+      <span aria-live="polite">{v.label}</span>
     </button>
   )
 }

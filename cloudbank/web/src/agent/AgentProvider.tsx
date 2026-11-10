@@ -13,7 +13,6 @@ import {
   serializeClientMsg,
   type PersonaId,
   type ServerMsg,
-  type ServerTurnDiagnosticsMsg,
   type UiViewStatePayload,
 } from './protocol'
 import {
@@ -46,7 +45,6 @@ export interface AgentContextValue {
   micState: MicState
   sessionId: string | null
   turns: ConversationTurn[]
-  diagnostics: ServerTurnDiagnosticsMsg[]
   activeAgentName: string
   latestUiState: UiViewStatePayload | null
   latestUiTier: 1 | 2 | 3 | null
@@ -89,7 +87,6 @@ interface SessionRuntime {
   ) => void
   dispatch: (event: SessionEvent) => void
   awaitPendingCapture: () => Promise<void>
-  stopMicOnly: () => void
 }
 
 function createSessionRuntime(
@@ -436,15 +433,6 @@ function createSessionRuntime(
     awaitPendingCapture() {
       return pendingCaptureStart
     },
-    stopMicOnly() {
-      capture?.stop()
-      capture = null
-      captureInitPromise = null
-      if (state.phase === 'capturing') {
-        state = { ...state, phase: 'ready', userHasFloor: false }
-        notify()
-      }
-    },
   }
 }
 
@@ -519,7 +507,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   }, [runtime])
 
   const stopMic = useCallback(() => {
-    runtime.stopMicOnly()
+    runtime.dispatch({ type: 'STOP_MIC_ONLY' })
   }, [runtime])
 
   const submitText = useCallback(
@@ -547,7 +535,6 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       micState,
       sessionId: machineState.sessionId,
       turns: machineState.turns,
-      diagnostics: machineState.diagnostics,
       activeAgentName: machineState.activeAgentName,
       latestUiState: machineState.latestUiState,
       latestUiTier: machineState.latestUiTier,

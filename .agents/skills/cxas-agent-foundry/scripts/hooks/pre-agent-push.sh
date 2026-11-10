@@ -35,8 +35,10 @@ fi
 set +e
 python3 - "$payload_file" "$config_file" <<'PY'
 import json
+import os
 import pathlib
 import re
+import shlex
 import sys
 
 raw = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").strip()
@@ -56,14 +58,105 @@ if isinstance(data, dict):
     elif isinstance(args, dict) and isinstance(args.get("command"), str):
         cmd = args["command"]
 
-B = r"(?<![A-Za-z0-9_.-])"
-E = r"(?![A-Za-z0-9_.-])"
-patterns = (
-    B + r"cxas(?:-eval)?\s+push" + E,
-    B + r"push\.sh" + E,
-    B + r"manage_ces_app\.py" + E + r".*?" + B + r"(?:push|pr-eval)" + E,
-)
-if not any(re.search(p, cmd, flags=re.DOTALL) for p in patterns):
+
+def _is_env_assignment(tok: str) -> bool:
+    return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok))
+
+
+def _segment_invokes_push(tokens: list[str]) -> bool:
+    idx = 0
+    n = len(tokens)
+    while idx < n:
+        tok = tokens[idx]
+        if _is_env_assignment(tok):
+            idx += 1
+            continue
+        base = os.path.basename(tok)
+        if base in ("env", "time", "nohup", "command"):
+            idx += 1
+            while idx < n and (tokens[idx].startswith("-") or _is_env_assignment(tokens[idx])):
+                idx += 1
+            continue
+        if base in ("bash", "sh"):
+            # `bash -n push.sh` is a syntax check, not an execution.
+            if idx + 1 < n and tokens[idx + 1] == "-n":
+                return False
+            idx += 1
+            while idx < n and tokens[idx].startswith("-"):
+                if tokens[idx] == "-c" and idx + 1 < n:
+                    return _command_invokes_push(tokens[idx + 1])
+                idx += 1
+            continue
+        if base == "uv":
+            idx += 1
+            if idx < n and tokens[idx] == "run":
+                idx += 1
+                while idx < n and tokens[idx].startswith("-"):
+                    flag = tokens[idx]
+                    idx += 1
+                    if flag in ("--directory", "--project", "--python", "--with") and idx < n:
+                        idx += 1
+                continue
+            return False
+        if base in ("python", "python3") or re.match(r"^python3\.\d+$", base):
+            idx += 1
+            while idx < n and tokens[idx].startswith("-"):
+                if tokens[idx] in ("-c", "-m"):
+                    return False
+                idx += 1
+            continue
+        break
+
+    if idx >= n:
+        return False
+
+    head_base = os.path.basename(tokens[idx])
+    rest = tokens[idx + 1 :]
+    if head_base == "push.sh":
+        return True
+    if head_base in ("cxas", "cxas-eval"):
+        return any(t in ("push", "push-eval") for t in rest)
+    if head_base == "manage_ces_app.py":
+        return any(t in ("push", "pr-eval") for t in rest)
+    return False
+
+
+def _fallback_regex_match(command: str) -> bool:
+    B = r"(?<![A-Za-z0-9_.-])"
+    E = r"(?![A-Za-z0-9_.-])"
+    patterns = (
+        B + r"cxas(?:-eval)?\s+push(?:-eval)?" + E,
+        B + r"push\.sh" + E,
+        B + r"manage_ces_app\.py" + E + r".*?" + B + r"(?:push|pr-eval)" + E,
+    )
+    return any(re.search(p, command, flags=re.DOTALL) for p in patterns)
+
+
+def _command_invokes_push(command: str) -> bool:
+    try:
+        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
+        lexer.whitespace_split = True
+        raw_tokens = list(lexer)
+    except ValueError:
+        return _fallback_regex_match(command)
+
+    separators = {";", "&", "&&", "|", "||", "(", ")"}
+    segment: list[str] = []
+    for tok in raw_tokens:
+        if set(tok) <= set(";&|()"):
+            if segment and _segment_invokes_push(segment):
+                return True
+            segment = []
+        elif tok in separators:
+            if segment and _segment_invokes_push(segment):
+                return True
+            segment = []
+        else:
+            segment.append(tok)
+    return bool(segment and _segment_invokes_push(segment))
+
+
+if not _command_invokes_push(cmd):
     sys.exit(0)
 
 if not config_path:

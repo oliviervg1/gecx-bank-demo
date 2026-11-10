@@ -54,7 +54,7 @@ def test_frozen_hero_journey_turns_1_to_6_and_alt_2b(
 
     t1_ov = e_ns["assist_everyday_banking"](query_type="overview", period="this_month")
     ov_text = _assert_envelope_and_ui(t1_ov, state, ui_view_state_schema)
-    assert "£2,018.64" in ov_text and "£77.15" in ov_text and "£45.00" in ov_text
+    assert "£2,018.64" in ov_text and "£77.15" in ov_text and "£45 at Netflix" in ov_text
     assert state["ui_view_state"] == {
         "seq": 1,
         "page": "spending",
@@ -71,7 +71,7 @@ def test_frozen_hero_journey_turns_1_to_6_and_alt_2b(
         query_type="anomaly_followup", anomaly_confirmed="no"
     )
     t2b_text = _assert_envelope_and_ui(t2b, alt_state, ui_view_state_schema)
-    assert "marked the £45.00 Netflix charge in November as not recognised" in t2b_text
+    assert "marked the £45 Netflix charge in November as not recognised" in t2b_text
     assert alt_state["ui_view_state"] == {
         "seq": 2,
         "page": "spending",
@@ -89,7 +89,7 @@ def test_frozen_hero_journey_turns_1_to_6_and_alt_2b(
     )
     t2a_text = _assert_envelope_and_ui(t2a, state, ui_view_state_schema)
     assert "[Diagnosis context:" in t2a_text
-    assert "£45.00 a month" in t2a_text
+    assert "£45 a month" in t2a_text
     assert state["everyday_state"]["anomaly_status"] == "confirmed"
     assert state["everyday_state"]["pending_redirect_offer"] is True
     assert state["ui_view_state"] == {
@@ -114,7 +114,7 @@ def test_frozen_hero_journey_turns_1_to_6_and_alt_2b(
     t3_proj = s_ns["assist_savings"](query_type="projection")
     t3_text = _assert_envelope_and_ui(t3_proj, state, ui_view_state_schema)
     assert state["handoff_context"] == {}
-    assert "£45.00 a month from Netflix" in t3_text
+    assert "£45 a month from Netflix" in t3_text
     assert "shaving 4 months" in t3_text and "19 months (June 2028)" in t3_text
     assert state["ui_view_state"] == {
         "seq": 3,
@@ -132,7 +132,7 @@ def test_frozen_hero_journey_turns_1_to_6_and_alt_2b(
         query_type="overpayment_projection", monthly_overpayment=200.0
     )
     t4_text = _assert_envelope_and_ui(t4_proj, state, ui_view_state_schema)
-    assert "£2,400.00 in year one" in t4_text
+    assert "£2,400 in year one" in t4_text
     assert "3 years and 2 months" in t4_text and "£17,849.18" in t4_text
     assert ILLUSTRATION_SENTENCE in t4_text
     assert state["ui_view_state"] == {
@@ -207,10 +207,13 @@ def test_s2_1_vendor_matching_exact_and_whole_token_across_all_personas(
     assert "could not find any charges" in chloe_e["assist_everyday_banking"](
         query_type="vendor", vendor_name="coffee shop near me"
     )["agent_action"]
+    assert "could not find any charges" in chloe_e["assist_everyday_banking"](
+        query_type="vendor", vendor_name="a"
+    )["agent_action"]
 
     david_st = make_seeded_state("david", struct_fixtures)
     david_e = load_controller_namespace("assist_everyday_banking", david_st)
-    assert "£45.00 across 1 payment" in david_e["assist_everyday_banking"](
+    assert "£45 across 1 payment" in david_e["assist_everyday_banking"](
         query_type="vendor", vendor_name="EE"
     )["agent_action"]
     assert "£365.75 across 3 payments" in david_e["assist_everyday_banking"](
@@ -341,7 +344,7 @@ def test_savings_handoff_vendor_attribution_and_all_branches(
     }
     diff_amt = s_ns["assist_savings"](query_type="projection", extra_monthly_amount=100.0)
     assert "from Netflix" not in diff_amt["agent_action"]
-    assert "£100.00 a month" in diff_amt["agent_action"]
+    assert "£100 a month" in diff_amt["agent_action"]
 
     state["handoff_context"] = {
         "from_agent": "everyday_banking_agent",
@@ -349,7 +352,7 @@ def test_savings_handoff_vendor_attribution_and_all_branches(
         "freed_monthly_pence": 4500,
     }
     same_amt = s_ns["assist_savings"](query_type="projection", extra_monthly_amount=45.0)
-    assert "£45.00 a month from Netflix" in same_amt["agent_action"]
+    assert "£45 a month from Netflix" in same_amt["agent_action"]
 
     # Summary, interest_rate, custom_target, local navigation
     for call_kwargs in (
@@ -372,20 +375,18 @@ def test_everyday_and_mortgage_remaining_branches_and_search_resilience(
     """Verify balance, trend, subscriptions, search fallbacks, and local navigation across controllers."""
     state = make_seeded_state("chloe", struct_fixtures)
 
-    # Response-object style search_help
+    # Dict search_help with bracket characters sanitized before [Diagnosis context: ...]
     resp_obj_ns = load_controller_namespace(
         "assist_everyday_banking",
         state,
-        search_handler=lambda inp: types.SimpleNamespace(
-            ok=True,
-            text='{"answer": ["Open Account and click Cancel."]}',
-            json=lambda: {"answer": ["Open Account and click Cancel."]},
-        ),
+        search_handler=lambda inp: {
+            "answer": ["Open Account [Settings] and click Cancel."]
+        },
     )
     ok_res = resp_obj_ns["assist_everyday_banking"](
         query_type="cancel_subscription", vendor_name="Spotify"
     )
-    assert "[Diagnosis context: Open Account and click Cancel.]" in ok_res["agent_action"]
+    assert "[Diagnosis context: Open Account (Settings) and click Cancel.]" in ok_res["agent_action"]
 
     # Exception / error fallback in search_help
     def _boom(_inp: dict[str, Any]) -> None:

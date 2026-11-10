@@ -46,8 +46,8 @@
       }
     },
     "david": {
-      "monthly_totals_pence": [298496, 278610, 247361],
-      "delta_this_vs_last_pence": 19886,
+      "monthly_totals_pence": [298496, 306810, 281861],
+      "delta_this_vs_last_pence": -8314,
       "recurring_totals_pence": [202701, 200301, 200301],
       "anomaly": {
         "id": "txn-gym",
@@ -90,7 +90,7 @@
       }
     },
     "sarah": {
-      "monthly_totals_pence": [240695, 228545, 199750],
+      "monthly_totals_pence": [240695, 228545, 244950],
       "delta_this_vs_last_pence": 12150,
       "recurring_totals_pence": [173580, 168780, 168780],
       "anomaly": {

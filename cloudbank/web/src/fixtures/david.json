@@ -15,7 +15,7 @@
   "accounts": {
     "current": {
       "name": "Cloudbank Everyday Account",
-      "sort_code": "04-00-75",
+      "sort_code": "00-00-99",
       "account_number_last4": "7309",
       "balance_pence": 682040,
       "currency": "GBP"
@@ -80,6 +80,7 @@
     { "id": "txn-sainsburys-3", "month_offset": 0, "day": 21, "vendor": "Sainsbury's", "category": "groceries", "amount_pence": 14120 },
     { "id": "txn-gym", "month_offset": 0, "day": 22, "vendor": "PureGym Family", "category": "subscriptions", "amount_pence": 6200, "is_subscription": true, "is_anomaly": true },
 
+    { "id": "txn-salary-2", "month_offset": 1, "day": 1, "vendor": "Salary", "category": "income", "amount_pence": -540000 },
     { "id": "txn-mortgage-dd-2", "month_offset": 1, "day": 1, "vendor": "Cloudbank Mortgage", "category": "bills", "amount_pence": 149342, "is_subscription": true },
     { "id": "txn-council-tax-2", "month_offset": 1, "day": 3, "vendor": "Leeds City Council", "category": "bills", "amount_pence": 19800, "is_subscription": true },
     { "id": "txn-rail-2", "month_offset": 1, "day": 4, "vendor": "Northern Rail", "category": "transport", "amount_pence": 9200 },
@@ -97,7 +98,10 @@
     { "id": "txn-coop-2", "month_offset": 1, "day": 24, "vendor": "Co-op", "category": "groceries", "amount_pence": 3115 },
     { "id": "txn-curry-2", "month_offset": 1, "day": 25, "vendor": "Akbar's", "category": "eating_out", "amount_pence": 7110 },
     { "id": "txn-decathlon", "month_offset": 1, "day": 26, "vendor": "Decathlon", "category": "shopping", "amount_pence": 11250 },
+    { "id": "txn-kwikfit-2", "month_offset": 1, "day": 27, "vendor": "Kwik Fit", "category": "transport", "amount_pence": 21800 },
+    { "id": "txn-york-museum-2", "month_offset": 1, "day": 28, "vendor": "National Railway Museum", "category": "entertainment", "amount_pence": 6400 },
 
+    { "id": "txn-salary-3", "month_offset": 2, "day": 1, "vendor": "Salary", "category": "income", "amount_pence": -540000 },
     { "id": "txn-mortgage-dd-3", "month_offset": 2, "day": 1, "vendor": "Cloudbank Mortgage", "category": "bills", "amount_pence": 149342, "is_subscription": true },
     { "id": "txn-council-tax-3", "month_offset": 2, "day": 3, "vendor": "Leeds City Council", "category": "bills", "amount_pence": 19800, "is_subscription": true },
     { "id": "txn-rail-3", "month_offset": 2, "day": 4, "vendor": "Northern Rail", "category": "transport", "amount_pence": 9200 },
@@ -111,6 +115,9 @@
     { "id": "txn-cinema-d2", "month_offset": 2, "day": 19, "vendor": "Everyman Leeds", "category": "entertainment", "amount_pence": 3800 },
     { "id": "txn-sainsburys-7", "month_offset": 2, "day": 21, "vendor": "Sainsbury's", "category": "groceries", "amount_pence": 11005 },
     { "id": "txn-gym-3", "month_offset": 2, "day": 22, "vendor": "PureGym Family", "category": "subscriptions", "amount_pence": 3800, "is_subscription": true },
-    { "id": "txn-coop-3", "month_offset": 2, "day": 25, "vendor": "Co-op", "category": "groceries", "amount_pence": 2840 }
+    { "id": "txn-clarks-3", "month_offset": 2, "day": 23, "vendor": "Clarks", "category": "shopping", "amount_pence": 14500 },
+    { "id": "txn-coop-3", "month_offset": 2, "day": 25, "vendor": "Co-op", "category": "groceries", "amount_pence": 2840 },
+    { "id": "txn-pizza-3", "month_offset": 2, "day": 26, "vendor": "Pizza Express", "category": "eating_out", "amount_pence": 7650 },
+    { "id": "txn-sainsburys-8", "month_offset": 2, "day": 27, "vendor": "Sainsbury's", "category": "groceries", "amount_pence": 12350 }
   ]
 }

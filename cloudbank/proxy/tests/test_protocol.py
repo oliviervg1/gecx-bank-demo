@@ -92,17 +92,11 @@ def test_serializes_all_server_message_variants() -> None:
             ServerTurnDiagnostics(
                 turnIndex=1,
                 agentTransfers=[{"targetAgent": "savings_agent"}],
-                toolCalls=[{"displayName": "assist_savings"}],
-                toolResponses=[{"displayName": "assist_savings"}],
-                updatedVariables={"ui_emitted_seq": "1"},
             ),
             {
                 "type": "turn_diagnostics",
                 "turnIndex": 1,
                 "agentTransfers": [{"targetAgent": "savings_agent"}],
-                "toolCalls": [{"displayName": "assist_savings"}],
-                "toolResponses": [{"displayName": "assist_savings"}],
-                "updatedVariables": {"ui_emitted_seq": "1"},
             },
         ),
         (

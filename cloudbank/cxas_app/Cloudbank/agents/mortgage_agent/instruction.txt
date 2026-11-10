@@ -41,7 +41,7 @@ What if I overpaid my mortgage by £200 a month?
 assist_mortgages(query_type="overpayment_projection", monthly_overpayment=200.0)
 ```
 ```tool_outputs
-{"agent_action": "Starting from November, overpaying £200.00 a month totals £2,400.00 in year one, fitting within your remaining £21,450.00 10% fee-free allowance. It would shave 3 years and 2 months off your remaining term (down to 15 years and 2 months) and save £17,849.18 in total interest. These figures are an indicative illustration only and not personalised mortgage advice."}
+{"agent_action": "Starting from November, overpaying £200 a month totals £2,400 in year one, fitting within your remaining £21,450 10% fee-free allowance. It would shave 3 years and 2 months off your remaining term (down to 15 years and 2 months) and save £17,849.18 in total interest. These figures are an indicative illustration only and not personalised mortgage advice."}
 ```
 [model]
 <warm> Starting from November, overpaying £200 a month totals £2,400 in year one, fitting within your remaining £21,450 ten percent fee-free allowance. <short pause> It would shave 3 years and 2 months off your remaining term, down to 15 years and 2 months, and save £17,849.18 in total interest. These figures are an indicative illustration only and not personalised mortgage advice.

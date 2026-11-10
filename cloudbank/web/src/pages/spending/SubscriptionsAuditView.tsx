@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from 'react'
-import { Tv } from 'lucide-react'
 import { useFixture } from '../../data/useFixture'
 import { usePersona } from '../../personas/PersonaProvider'
 import { useSpendingView } from '../../agent/SpendingViewProvider'
 import { SpendingHeader } from './SpendingHeader'
 import { ListRow } from '../../components/ListRow'
 import { IconBadge } from '../../components/IconBadge'
+import { iconForCategory, type SpendingCategory } from '../../components/iconForCategory'
 import type { Transaction } from '../../data/fixture'
 import { formatGBPFromPence } from '../../util/currency'
 import { shortMonthForOffset } from '../../util/demoClock'
@@ -31,17 +31,19 @@ function SubscriptionRow({
     }
   }, [highlighted])
 
-  const tone = highlighted ? 'gold' : 'green'
+  const styled = iconForCategory(transaction.category as SpendingCategory)
+  const tone = highlighted ? 'gold' : styled.tone
   const wrapperClass = highlighted
     ? 'px-3 -mx-3 rounded-lg bg-[#fcf9f2] border border-brand-gold/50 transition-colors'
     : 'transition-colors'
 
+  const kind = transaction.category === 'bills' ? 'Direct Debit' : 'Subscription'
   const dateStr = `${transaction.day} ${shortMonthForOffset(demoDate, transaction.month_offset)}`
   const subtitle = statusLabel
-    ? `Subscription · ${dateStr} · ${statusLabel}`
+    ? `${kind} · ${dateStr} · ${statusLabel}`
     : transaction.is_anomaly
-      ? `Subscription · ${dateStr} · flagged`
-      : `Subscription · ${dateStr}`
+      ? `${kind} · ${dateStr} · flagged`
+      : `${kind} · ${dateStr}`
 
   return (
     <div
@@ -51,7 +53,7 @@ function SubscriptionRow({
       className={wrapperClass}
     >
       <ListRow
-        icon={<IconBadge icon={Tv} tone={tone} />}
+        icon={<IconBadge icon={styled.icon} tone={tone} />}
         title={transaction.vendor}
         subtitle={subtitle}
         right={

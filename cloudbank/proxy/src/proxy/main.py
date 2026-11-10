@@ -309,7 +309,13 @@ def _keepalive_seconds() -> float:
         return DEFAULT_KEEPALIVE_SECONDS
 
 
-async def _fail(ws: WebSocket, message: str, *, field: str | None = None) -> None:
+async def _fail(
+    ws: WebSocket,
+    message: str,
+    *,
+    field: str | None = None,
+    code: int = 1008,
+) -> None:
     """Send a structured ServerError envelope and close the WebSocket."""
     try:
         await ws.send_text(
@@ -318,7 +324,7 @@ async def _fail(ws: WebSocket, message: str, *, field: str | None = None) -> Non
     except (WebSocketDisconnect, RuntimeError):
         pass
     try:
-        await ws.close(code=1008)
+        await ws.close(code=code)
     except RuntimeError:
         pass
 
@@ -392,14 +398,14 @@ async def _run_session(ws: WebSocket) -> None:
         app_resource, location = _load_app_resource()
     except (FileNotFoundError, KeyError, json.JSONDecodeError):
         log.exception("could not load gecx-config.json")
-        await _fail(ws, "server configuration error")
+        await _fail(ws, "server configuration error", code=1011)
         return
 
     try:
         token = await _tokens.get_token()
     except Exception:
         log.exception("could not obtain ADC token")
-        await _fail(ws, "server authentication error")
+        await _fail(ws, "server authentication error", code=1011)
         return
 
     upstream_url = (
@@ -408,13 +414,18 @@ async def _run_session(ws: WebSocket) -> None:
         f"locations/{location}"
     )
 
+    project_id = app_resource.split("/")[1] if app_resource.startswith("projects/") else ""
+    upstream_headers = {"Authorization": f"Bearer {token}"}
+    if project_id:
+        upstream_headers["x-goog-user-project"] = project_id
+
     resolved_session_id = _resolve_session_id(start.sessionId)
     relay: Relay | None = None
     log.info("opening upstream WS for app=%s session=%s", app_resource, resolved_session_id)
     try:
         async with websockets.connect(
             upstream_url,
-            additional_headers={"Authorization": f"Bearer {token}"},
+            additional_headers=upstream_headers,
             max_size=_MAX_UPSTREAM_FRAME_BYTES,
         ) as upstream:
             relay = Relay(
@@ -430,7 +441,7 @@ async def _run_session(ws: WebSocket) -> None:
     except websockets.exceptions.InvalidStatus as exc:
         status_code = getattr(exc.response, "status_code", "?")
         log.exception("upstream rejected connection (status=%s)", status_code)
-        await _fail(ws, f"upstream {status_code}")
+        await _fail(ws, f"upstream {status_code}", code=1011)
     except websockets.exceptions.ConnectionClosedError as exc:
         if relay is not None and relay.ended_cleanly:
             with contextlib.suppress(RuntimeError):
@@ -445,12 +456,13 @@ async def _run_session(ws: WebSocket) -> None:
         await _fail(
             ws,
             f"upstream closed ({code}): {reason}" if reason else f"upstream closed ({code})",
+            code=1011,
         )
     except WebSocketDisconnect:
         pass
     except (OSError, websockets.exceptions.InvalidURI, TimeoutError):
         log.exception("could not reach upstream")
-        await _fail(ws, "could not reach upstream")
+        await _fail(ws, "could not reach upstream", code=1011)
 
 
 class _FastApiBrowserAdapter:

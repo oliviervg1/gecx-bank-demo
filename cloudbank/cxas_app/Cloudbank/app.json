@@ -27,6 +27,12 @@
     }
   },
   "loggingSettings": {
+    "redactionConfig": {
+      "enableRedaction": true
+    },
+    "cloudLoggingSettings": {
+      "enableCloudLogging": true
+    },
     "conversationLoggingSettings": {}
   },
   "toolExecutionMode": "SEQUENTIAL",

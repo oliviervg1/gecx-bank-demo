@@ -80,5 +80,5 @@ docs/                               # Architecture specs, per-tool line-linked d
 
 - **All Readers:** [Documentation Hub & Domain Glossary](docs/README.md) · [Release Changelog](CHANGELOG.md)
 - **Beginners & Stakeholders:** [GECX for Beginners](docs/guides/gecx_for_beginners.md) · [Retail Banking Flows](docs/architecture/banking_flows.md)
-- **Software Engineers:** [Cloudbank Engineering Blueprint](cloudbank/README.md) · [Tool-First Architecture](docs/architecture/tool_first_architecture_guide.md) · [Bidi UI Sync & Session Runtime](docs/architecture/bidi_ui_sync_and_inspector.md) · [Python Controller Specs](docs/tools/README.md) · [Developer & CI/CD Guide](docs/guides/developer_workflow_and_cicd_guide.md)
+- **Software Engineers:** [Cloudbank Engineering Blueprint](cloudbank/README.md) · [Tool-First Architecture](docs/architecture/tool_first_architecture_guide.md) · [Bidi UI Sync & Session Runtime](docs/architecture/bidi_ui_sync_and_session_runtime.md) · [Python Controller Specs](docs/tools/README.md) · [Developer & CI/CD Guide](docs/guides/developer_workflow_and_cicd_guide.md)
 - **QA Testers:** [External QA Tester Script](docs/guides/qa_tester_guide.md)

@@ -15,17 +15,21 @@ function renderSavings(persona: 'chloe' | 'tom' = 'chloe') {
 }
 
 describe('SavingsPage', () => {
-  it('renders Chloe’s Home Emergency Pot balance, AER, and baseline October 2028 target', () => {
+  it('renders Chloe’s Home Emergency Pot balance, AER, gross p.a. rate, and baseline October 2028 target', () => {
     renderSavings('chloe')
     expect(screen.getByText('Home Emergency Pot')).toBeInTheDocument()
     expect(screen.getByText('£4,850.00')).toBeInTheDocument()
     expect(screen.getByText('4.50% AER')).toBeInTheDocument()
+    expect(screen.getByText('4.41% gross p.a. (variable)')).toBeInTheDocument()
+    expect(screen.getByText('Regular monthly deposit')).toBeInTheDocument()
     expect(screen.getByText(/October 2028 \(23 months\)/)).toBeInTheDocument()
   })
 
   it('updates projected completion to June 2028 (4 months sooner) when +£45/mo is selected', () => {
     renderSavings('chloe')
-    fireEvent.click(screen.getByRole('button', { name: '+£45/mo' }))
+    const chip = screen.getByRole('button', { name: '+£45/mo' })
+    fireEvent.click(chip)
+    expect(chip).toHaveAttribute('aria-pressed', 'true')
     expect(screen.getByText(/June 2028 \(19 months\)/)).toBeInTheDocument()
     expect(screen.getByText(/4 months sooner/)).toBeInTheDocument()
   })

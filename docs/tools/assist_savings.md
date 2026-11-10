@@ -1,7 +1,7 @@
 # `assist_savings` Specification
 
 - **Owning Agent:** `savings_agent`
-- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L1-L478) (entrypoint at [`#L26-L123`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L26-L123))
+- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L1-L461) (entrypoint & thin dispatcher at [`#L26-L115`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L26-L115))
 - **Manifest:** [assist_savings.json](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/assist_savings.json)
 
 ## 1. Overview & Architectural Principles
@@ -58,11 +58,11 @@ def assist_savings(
 
 ### Helper Index
 
-- [`_half_up` / `_to_pence`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L126-L137): Exact integer half-up division and clamped model-float-to-pence conversion (`[0, £10,000,000]`).
-- [`_project_savings_goal` / `_annual_interest_on_balance` / `_target_month_label`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L140-L195): 600-month compound goal simulator, 12-step annual interest on current balance, and calendar completion month formatter.
-- [`_normalize_snapshot` .. `_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L198-L255): Snapshot integer coercion, `demo_date` parser, currency/rate formatters, and monotonic `ui_view_state` writer.
-- [`_handle_summary`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L258-L300), [`_handle_interest_rate`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L303-L317), and [`_handle_projection`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L320-L399): Savings pot balance/AER summary, rate details, and goal completion timeline delta.
-- [`_handle_switch_intent`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L402-L459) & [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L462-L478): Spoke-local navigation, guarded cross-spoke pivots, and 2-strike unclear recovery.
+- [`_half_up` / `_to_pence`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L118-L129): Exact integer half-up division and clamped model-float-to-pence conversion (`[0, £10,000,000]`).
+- [`_project_savings_goal` / `_annual_interest_on_balance` / `_target_month_label`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L132-L187): 600-month compound goal simulator, 12-step annual interest on current balance, and calendar completion month formatter.
+- [`_normalize_snapshot` .. `_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L190-L248): Snapshot integer coercion, `demo_date` parser, currency/rate formatters, and monotonic `ui_view_state` writer.
+- [`_handle_summary`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L251-L293), [`_handle_interest_rate`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L296-L310), and [`_handle_projection`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L313-L392): Savings pot balance/AER summary, rate details, and goal completion timeline delta.
+- [`_handle_switch_intent`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L395-L442) & [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L445-L461): Spoke-local navigation, guarded cross-spoke pivots, and 2-strike unclear recovery.
 
 ### Session State Reads & Writes
 

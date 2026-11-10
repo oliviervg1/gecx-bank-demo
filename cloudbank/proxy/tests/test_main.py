@@ -309,6 +309,9 @@ def test_inbound_frame_errors_and_session_cap(monkeypatch: pytest.MonkeyPatch) -
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text('{"type":"nonsense"}')
         assert "malformed" in _recv_error_payload(ws)["message"]
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1008
 
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text(json.dumps({"type": "audio", "data": "AAAA"}))
@@ -437,6 +440,9 @@ def test_config_auth_and_upstream_errors_reported_safely(
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text(valid_start)
         msg = _recv_error_payload(ws)["message"]
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1011
     assert msg == "server configuration error"
     assert "secret" not in msg
 
@@ -470,6 +476,9 @@ def test_config_auth_and_upstream_errors_reported_safely(
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text(valid_start)
         assert "403" in _recv_error_payload(ws)["message"]
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1011
 
     monkeypatch.setattr(
         main.websockets,

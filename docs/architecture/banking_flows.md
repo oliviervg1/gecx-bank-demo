@@ -91,7 +91,7 @@ flowchart TD
     Mtg --> HasMtg{"Customer has active<br/>mortgage in snapshot?"}
     HasMtg -->|"No (Tom — Renter)"| Rent["Compute 4.5x income max borrowing + First Home Deposit gap<br/>Emit ui_view_state(page=mortgage, subview=overview) + offer Savings pivot"]:::state
     Rent -->|"Accepts deposit projection"| ToSav["Stage target_agent = savings_agent"]:::route
-    HasMtg -->|"Yes — summary / next_payment / allowance"| Summary["Emit ui_view_state(page=mortgage, subview=summary)<br/>Report balance, rate, next payment, or remaining 10% ERC-free cap"]:::state
+    HasMtg -->|"Yes — summary / next_payment / allowance"| Summary["Emit ui_view_state(page=mortgage, subview=overview)<br/>Report balance, rate, next payment, or remaining 10% ERC-free cap"]:::state
     HasMtg -->|"Yes — overpayment_projection"| Overpay["Amortise baseline vs overpaid (min(12, months) year-1 ERC check)<br/>Emit subview=overpay + indicative illustration note"]:::state
     HasMtg -->|"Yes — rate_options"| Rates["Integer bisection for 2yr & 5yr Fixed monthly payments<br/>Emit subview=rates + deltas vs current payment"]:::state
 ```

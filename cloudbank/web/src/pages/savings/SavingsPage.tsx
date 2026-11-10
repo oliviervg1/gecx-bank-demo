@@ -3,7 +3,6 @@ import { useFixture } from '../../data/useFixture'
 import { usePersona } from '../../personas/PersonaProvider'
 import { useSpendingView } from '../../agent/SpendingViewProvider'
 import { formatBps, formatGBPFromPence } from '../../util/currency'
-import { monthNameForOffset } from '../../util/demoClock'
 import { computeSavingsComparison, halfUp } from '../../util/savingsMath'
 import { formatMonthsDuration } from '../../util/mortgageMath'
 
@@ -27,7 +26,6 @@ export function SavingsPage() {
   } = useSpendingView()
 
   const savings = fixture.accounts.savings
-  const statementMonth = monthNameForOffset(demoDate, 0)
 
   const comparison = useMemo(
     () =>
@@ -62,7 +60,7 @@ export function SavingsPage() {
     <div className="pb-6">
       <div className="pt-4 pb-4 border-b border-brand-divider">
         <div className="text-[11px] uppercase tracking-[0.08em] text-brand-muted font-medium">
-          {savings.name} · {statementMonth} Statement
+          {savings.name}
         </div>
         <h1 className="text-[22px] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-tight">
           {savings.goal_name}
@@ -85,7 +83,7 @@ export function SavingsPage() {
               {formatBps(savings.aer_bps)} AER
             </div>
             <div className="text-[12px] text-brand-muted">
-              {formatBps(savings.gross_rate_bps)} gross monthly
+              {formatBps(savings.gross_rate_bps)} gross p.a. (variable)
             </div>
           </div>
         </div>
@@ -114,7 +112,7 @@ export function SavingsPage() {
         <div className="mt-3 grid grid-cols-2 gap-3 pt-3 border-t border-brand-divider text-[13px] tabular-nums">
           <div>
             <div className="text-[11px] uppercase tracking-[0.06em] text-brand-muted">
-              Standing Deposit
+              Regular monthly deposit
             </div>
             <div className="font-semibold text-brand-text mt-0.5">
               {formatGBPFromPence(savings.monthly_contribution_pence)}/mo
@@ -155,6 +153,7 @@ export function SavingsPage() {
               <button
                 key={pence}
                 type="button"
+                aria-pressed={active}
                 data-active={active}
                 onClick={() => setExtraMonthlyPence(pence)}
                 className={
@@ -192,9 +191,9 @@ export function SavingsPage() {
         {/* Custom Goal Target Selector */}
         <div className="mt-4 pt-3 border-t border-brand-divider">
           <div className="text-[11px] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-2">
-            Goal Target Scenario
+            Try a different goal
           </div>
-          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Goal target scenario">
+          <div className="flex flex-wrap gap-1.5" role="group" aria-label="Try a different goal">
             {targetPresets.map((pence) => {
               const active = customTargetPence === pence
               const label =
@@ -205,6 +204,7 @@ export function SavingsPage() {
                 <button
                   key={pence}
                   type="button"
+                  aria-pressed={active}
                   data-active={active}
                   onClick={() => setCustomTargetPence(pence)}
                   className={
@@ -257,7 +257,7 @@ export function SavingsPage() {
             </div>
             {extraMonthlyPence > 0 && (
               <div className="flex items-center justify-between py-2.5">
-                <span className="text-[13px] text-brand-muted">Time shaved off goal</span>
+                <span className="text-[13px] text-brand-muted">Goal reached</span>
                 <span className="text-[14px] font-semibold text-brand-gold">
                   {comparison.months_saved}{' '}
                   {comparison.months_saved === 1 ? 'month' : 'months'} sooner

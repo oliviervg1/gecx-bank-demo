@@ -31,7 +31,7 @@ All notable changes to the Cloudbank Multi-Product Retail Banking Reference Appl
   - Implemented monotonic `ui_view_state.seq` updates across Tier 1 (`capture_utterance` `partial=True` `Part.from_json`), Tier 2 (`release_line` persisted `Part.from_json`), and Tier 3 (`relay.py` fallback from `diagnostic_info` `updated_variables`), deduplicated by `(sessionId, Math.trunc(Number(seq)))`.
   - Hardened `cloudbank/proxy` with strict `Origin` matching (no wildcard suffix fallthrough), an explicit 5-key `CLIENT_SEEDABLE_VARIABLES` allowlist validated against `customer_snapshot.schema.json`, a 10-second `16 kHz` `LINEAR16` silence keepalive, `PROXY_MAX_IDLE_SECONDS = 900` (`ServerSessionExpired`), `ServerSearchSuggestions` forwarding, and farewell audio drain before `ServerEnd`.
 - **Test:** 53 `pytest` tests in `cloudbank/proxy/tests/` and zero-warning `ruff check .` with PyPI-only `uv.lock`.
-- **Docs:** Documented in `cloudbank/proxy/README.md` and `docs/architecture/bidi_ui_sync_and_inspector.md`.
+- **Docs:** Documented in `cloudbank/proxy/README.md` and `docs/architecture/bidi_ui_sync_and_session_runtime.md`.
 
 ### Cross-Rate `AudioWorklet`, 11-Row Session Machine & Executive Split-Screen UI
 
@@ -41,4 +41,4 @@ All notable changes to the Cloudbank Multi-Product Retail Banking Reference Appl
   - Built a pure 11-row `sessionMachine.ts` handling barge-in playback epochs, farewell TTS drain, 15-second thinking watchdog, `ServerGoAway` session continuation, StrictMode idempotency, microphone-permission guidance with live text fallback, and instant persona switching.
   - Built the 5-tab Cloudbank app (`HomePage`, `SpendingPage`, `SavingsPage`, `MortgagePage`, `ProfilePage`) paired with the Flat Editorial Split-Screen `WorkbenchLayout.tsx` and executive `ConciergePanel.tsx` (starter prompts, plain-English specialist pills, sanitized prose stream, and sandboxed Google Search suggestion chips).
 - **Test:** 44 Vitest test files (254 tests), `tsc -b`, `eslint --max-warnings 0`, and `vite build`.
-- **Docs:** Documented in `README.md`, `docs/architecture/bidi_ui_sync_and_inspector.md`, `docs/guides/developer_workflow_and_cicd_guide.md`, and `docs/guides/qa_tester_guide.md`.
+- **Docs:** Documented in `README.md`, `docs/architecture/bidi_ui_sync_and_session_runtime.md`, `docs/guides/developer_workflow_and_cicd_guide.md`, and `docs/guides/qa_tester_guide.md`.

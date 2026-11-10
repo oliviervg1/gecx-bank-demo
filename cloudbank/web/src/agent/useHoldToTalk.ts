@@ -36,6 +36,16 @@ function isTypingTarget(target: EventTarget | null): boolean {
   )
 }
 
+function shouldIgnoreSpacebarTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (isTypingTarget(target)) return true
+  const interactive = target.closest(
+    'button, a[href], summary, [role="button"], [role="tab"], [role="link"], [role="menuitem"]',
+  )
+  if (!interactive) return false
+  return interactive.getAttribute('data-concierge-pill') !== 'true'
+}
+
 export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandlers {
   const holdingRef = useRef(false)
   const watchdogRef = useRef<number | null>(null)
@@ -84,14 +94,14 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
 
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.code !== 'Space' && e.key !== ' ') return
-      if (e.repeat) return                 // auto-repeat, not a new press
-      if (isTypingTarget(e.target)) return // someone is typing a space
-      e.preventDefault()                   // otherwise the page scrolls
+      if (e.repeat) return                            // auto-repeat, not a new press
+      if (shouldIgnoreSpacebarTarget(e.target)) return // typing or focused button/tab/link
+      e.preventDefault()                              // otherwise the page scrolls
       press()
     }
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code !== 'Space' && e.key !== ' ') return
-      if (isTypingTarget(e.target)) return
+      if (!holdingRef.current && shouldIgnoreSpacebarTarget(e.target)) return
       e.preventDefault()
       release()
     }

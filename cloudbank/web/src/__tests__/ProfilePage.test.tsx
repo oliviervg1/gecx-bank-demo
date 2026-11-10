@@ -12,7 +12,6 @@ function makeAgent() {
     micState: 'idle' as const,
     sessionId: 'sess-1',
     turns: [],
-    diagnostics: [],
     activeAgentName: 'root_agent',
     latestUiState: null,
     latestUiTier: null,

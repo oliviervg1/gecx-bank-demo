@@ -5,6 +5,7 @@ logger = logging.getLogger(__name__)
 
 _PLATFORM_CURRENT_DATE_KEY = "current_date"
 _DEFAULT_DEMO_DATE = "2026-11-24"
+_MAX_DIAGNOSIS_CHARS = 600
 _MONTH_NAMES = (
     "January",
     "February",
@@ -19,17 +20,8 @@ _MONTH_NAMES = (
     "November",
     "December",
 )
-_PERIOD_OFFSETS = {
-    "": 0,
-    "this_month": 0,
-    "last_month": 1,
-    "two_months_ago": 2,
-}
-_OFFSET_PERIOD_KEYS = {
-    0: "this_month",
-    1: "last_month",
-    2: "two_months_ago",
-}
+_PERIOD_OFFSETS = {"": 0, "this_month": 0, "last_month": 1, "two_months_ago": 2}
+_OFFSET_PERIOD_KEYS = {0: "this_month", 1: "last_month", 2: "two_months_ago"}
 _CATEGORY_LABELS = {
     "groceries": "groceries",
     "coffee_shops": "coffee shops",
@@ -82,20 +74,17 @@ def assist_everyday_banking(
 
     Pass only the arguments spoken by the caller on this turn. When the caller
     accepts an offer to see what freed subscription money does in savings with a
-    bare "yes", pass ``switch_intent="SAVINGS"``.
-
-    Do not speak a conversational pacing phrase before calling this tool, except
-    when ``query_type`` is ``"cancel_subscription"``, where you may speak one
-    brief natural sentence (such as "Let me check how to cancel that for you.")
-    before calling the tool.
+    bare "yes", pass ``switch_intent="SAVINGS"``. Do not speak a pacing phrase
+    before calling this tool, except when ``query_type`` is ``"cancel_subscription"``,
+    where you may speak one brief sentence before calling the tool.
 
     Args:
         query_type: Specific everyday banking request ("balance", "overview",
             "category", "vendor", "trend", "subscriptions", "anomaly_followup",
             or "cancel_subscription").
-        category: Spending category spoken by the caller when drilling into a
-            category ("groceries", "coffee_shops", "eating_out", "subscriptions",
-            "transport", "shopping", "bills", or "entertainment").
+        category: Spending category spoken by the caller ("groceries",
+            "coffee_shops", "eating_out", "subscriptions", "transport",
+            "shopping", "bills", or "entertainment").
         vendor_name: Merchant or subscription provider name spoken by the caller.
         period: Statement period requested ("this_month", "last_month", or
             "two_months_ago").
@@ -109,82 +98,23 @@ def assist_everyday_banking(
         A single-key dict with ``agent_action`` carrying the spoken reply.
     """
     try:
-        clean_switch = (switch_intent or "").strip()
-        clean_query = (query_type or "").strip()
-        clean_cat = (category or "").strip()
-        clean_vendor = (vendor_name or "").strip()
-        clean_period = (period or "").strip()
-        clean_confirm = (anomaly_confirmed or "").strip()
-
         everyday = dict(context.state.get("everyday_state") or {})
-
-        if clean_switch:
-            return _handle_switch_intent(clean_switch, everyday)
-
+        if switch_intent.strip():
+            return _handle_switch_intent(switch_intent.strip(), everyday)
         snapshot = _normalize_snapshot(context.state.get("customer_snapshot") or {})
         if not snapshot:
             return {
                 "agent_action": "I could not load your account snapshot right now. Please try your question again in a moment."
             }
-
-        anchor_year, anchor_month, _ = _parse_demo_date()
-
-        # If a savings redirect offer is pending and the caller replies "yes" or "no"
-        # (even if the model mapped bare "yes" into anomaly_confirmed), honour it cleanly.
-        if (
-            everyday.get("pending_redirect_offer")
-            and clean_confirm in ("yes", "no")
-            and clean_query in ("", "anomaly_followup")
-            and not clean_cat
-            and not clean_vendor
-        ):
-            return _handle_redirect_offer_reply(clean_confirm, everyday)
-
-        if clean_query == "cancel_subscription":
-            context.state["unclear_count"] = "0"
-            return _handle_cancel_subscription(
-                snapshot, everyday, clean_vendor, clean_period, clean_confirm, anchor_year, anchor_month
-            )
-
-        if clean_query == "anomaly_followup" or (
-            not clean_query
-            and clean_confirm in ("yes", "no")
-            and bool(everyday.get("pending_anomaly_vendor"))
-        ):
-            context.state["unclear_count"] = "0"
-            return _handle_anomaly_followup(
-                snapshot, everyday, clean_vendor, clean_confirm, anchor_year, anchor_month
-            )
-
-        if clean_query == "balance":
-            context.state["unclear_count"] = "0"
-            return _handle_balance(snapshot, anchor_year, anchor_month)
-
-        if clean_query == "overview":
-            context.state["unclear_count"] = "0"
-            return _handle_overview(snapshot, everyday, clean_period, anchor_year, anchor_month)
-
-        if clean_query == "category" or (not clean_query and clean_cat):
-            context.state["unclear_count"] = "0"
-            return _handle_category(snapshot, clean_cat, clean_period, anchor_year, anchor_month)
-
-        if clean_query == "vendor" or (not clean_query and clean_vendor):
-            context.state["unclear_count"] = "0"
-            return _handle_vendor(
-                snapshot, everyday, clean_vendor, clean_period, anchor_year, anchor_month
-            )
-
-        if clean_query == "trend":
-            context.state["unclear_count"] = "0"
-            return _handle_trend(snapshot, anchor_year, anchor_month)
-
-        if clean_query == "subscriptions":
-            context.state["unclear_count"] = "0"
-            return _handle_subscriptions(
-                snapshot, everyday, clean_period, anchor_year, anchor_month
-            )
-
-        return _handle_empty_or_unclear(snapshot, everyday)
+        return _dispatch_everyday(
+            snapshot,
+            everyday,
+            query_type.strip(),
+            category.strip(),
+            vendor_name.strip(),
+            period.strip(),
+            anomaly_confirmed.strip(),
+        )
     except Exception:
         logger.exception("assist_everyday_banking failed")
         return {
@@ -192,41 +122,92 @@ def assist_everyday_banking(
         }
 
 
+def _dispatch_everyday(
+    snapshot: dict,
+    everyday: dict,
+    query: str,
+    category: str,
+    vendor_name: str,
+    period: str,
+    confirmed: str,
+) -> dict:
+    """Resolve slot defaults and dispatch an everyday banking query."""
+    anchor_year, anchor_month, _ = _parse_demo_date()
+    if (
+        everyday.get("pending_redirect_offer")
+        and confirmed in ("yes", "no")
+        and query in ("", "anomaly_followup")
+        and not category
+        and not vendor_name
+    ):
+        return _handle_redirect_offer_reply(confirmed, everyday)
+
+    effective = query
+    if not effective:
+        if confirmed in ("yes", "no") and everyday.get("pending_anomaly_vendor"):
+            effective = "anomaly_followup"
+        elif category:
+            effective = "category"
+        elif vendor_name:
+            effective = "vendor"
+
+    handlers = {
+        "balance": lambda: _handle_balance(snapshot, anchor_year, anchor_month),
+        "overview": lambda: _handle_overview(snapshot, everyday, period, anchor_year, anchor_month),
+        "anomaly_followup": lambda: _handle_anomaly_followup(
+            snapshot, everyday, vendor_name, confirmed, anchor_year, anchor_month
+        ),
+        "cancel_subscription": lambda: _handle_cancel_subscription(
+            snapshot, everyday, vendor_name, period, confirmed, anchor_year, anchor_month
+        ),
+        "category": lambda: _handle_category(snapshot, category, period, anchor_year, anchor_month),
+        "vendor": lambda: _handle_vendor(
+            snapshot, everyday, vendor_name, period, anchor_year, anchor_month
+        ),
+        "trend": lambda: _handle_trend(snapshot, anchor_year, anchor_month),
+        "subscriptions": lambda: _handle_subscriptions(
+            snapshot, everyday, period, anchor_year, anchor_month
+        ),
+    }
+    handler = handlers.get(effective)
+    if handler is None:
+        return _handle_empty_or_unclear(snapshot, everyday)
+    context.state["unclear_count"] = "0"
+    return handler()
+
+
 def _normalize_snapshot(raw: dict) -> dict:
     """Coerce protobuf Struct floats into exact Python ints once at entry."""
     if not isinstance(raw, dict) or "accounts" not in raw or "transactions" not in raw:
         return {}
-    accounts_raw = dict(raw.get("accounts") or {})
-    cur_raw = dict(accounts_raw.get("current") or {})
-    sav_raw = dict(accounts_raw.get("savings") or {})
-
-    txns = []
-    for item in raw.get("transactions") or []:
-        txns.append(
-            {
-                "id": str(item.get("id") or ""),
-                "month_offset": int(item.get("month_offset") or 0),
-                "day": int(item.get("day") or 1),
-                "vendor": str(item.get("vendor") or ""),
-                "category": str(item.get("category") or ""),
-                "amount_pence": int(item.get("amount_pence") or 0),
-                "is_subscription": bool(item.get("is_subscription")),
-                "is_anomaly": bool(item.get("is_anomaly")),
-            }
-        )
-
+    accounts_raw = raw["accounts"]
+    cur_raw = accounts_raw["current"]
+    sav_raw = accounts_raw["savings"]
+    txns = [
+        {
+            "id": str(item["id"]),
+            "month_offset": int(item["month_offset"]),
+            "day": int(item["day"]),
+            "vendor": str(item["vendor"]),
+            "category": str(item["category"]),
+            "amount_pence": int(item["amount_pence"]),
+            "is_subscription": bool(item.get("is_subscription")),
+            "is_anomaly": bool(item.get("is_anomaly")),
+        }
+        for item in raw["transactions"]
+    ]
     return {
         "current": {
-            "name": str(cur_raw.get("name") or "Cloudbank Everyday Account"),
-            "sort_code": str(cur_raw.get("sort_code") or ""),
-            "account_number_last4": str(cur_raw.get("account_number_last4") or ""),
-            "balance_pence": int(cur_raw.get("balance_pence") or 0),
+            "name": str(cur_raw["name"]),
+            "sort_code": str(cur_raw["sort_code"]),
+            "account_number_last4": str(cur_raw["account_number_last4"]),
+            "balance_pence": int(cur_raw["balance_pence"]),
         },
         "savings": {
-            "name": str(sav_raw.get("name") or "Cloudbank Saver"),
-            "balance_pence": int(sav_raw.get("balance_pence") or 0),
-            "aer_bps": int(sav_raw.get("aer_bps") or 0),
-            "goal_name": str(sav_raw.get("goal_name") or "savings pot"),
+            "name": str(sav_raw["name"]),
+            "balance_pence": int(sav_raw["balance_pence"]),
+            "aer_bps": int(sav_raw["aer_bps"]),
+            "goal_name": str(sav_raw["goal_name"]),
         },
         "transactions": txns,
     }
@@ -256,9 +237,11 @@ def _month_name_for_offset(anchor_year: int, anchor_month: int, offset: int) -> 
 
 
 def _format_gbp(amount_pence: int) -> str:
-    """Format integer pence as £X,XXX.XX without float division."""
+    """Format integer pence as £X,XXX when whole pounds else £X,XXX.XX."""
     sign = "-" if amount_pence < 0 else ""
     pounds, pence = divmod(abs(amount_pence), 100)
+    if pence == 0:
+        return f"{sign}£{pounds:,}"
     return f"{sign}£{pounds:,}.{pence:02d}"
 
 
@@ -282,17 +265,16 @@ def _normalize_vendor_forms(name: str) -> tuple[str, str]:
     lowered = name.strip().lower()
     raw_clean = "".join(ch for ch in lowered if ch.isalnum() or ch == " ")
     raw_norm = " ".join(raw_clean.split())
-    stem_src = lowered
-    if stem_src.endswith("'s") or stem_src.endswith("’s"):
-        stem_src = stem_src[:-2]
+    stem_src = lowered[:-2] if lowered.endswith(("'s", "’s")) else lowered
     stem_clean = "".join(ch for ch in stem_src if ch.isalnum() or ch == " ")
-    stem_norm = " ".join(stem_clean.split())
-    return raw_norm, stem_norm
+    return raw_norm, " ".join(stem_clean.split())
 
 
 def _contains_token_sequence(tx_tokens: list[str], needle_tokens: list[str]) -> bool:
-    """Return True when needle_tokens appears as a contiguous whole-token slice of tx_tokens."""
+    """Return True when needle_tokens appears as a whole-token slice of tx_tokens."""
     if not needle_tokens or len(needle_tokens) > len(tx_tokens):
+        return False
+    if len(needle_tokens) == 1 and len(needle_tokens[0]) < 2 and len(tx_tokens) > 1:
         return False
     span = len(needle_tokens)
     return any(
@@ -347,39 +329,31 @@ def _handle_switch_intent(switch_intent: str, everyday: dict) -> dict:
         context.state["everyday_state"] = {}
         context.state["escalation_reason"] = "CALL_COMPLETED"
         context.state["call_complete"] = "true"
-        if first_name:
+        suffix = f", {first_name}" if first_name else ""
+        return {
+            "agent_action": f"You are very welcome{suffix}. Have a great rest of your day, and goodbye."
+        }
+
+    if switch_intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES"):
+        context.state["unclear_count"] = "0"
+        if switch_intent == "NAVIGATE_HOME":
+            _emit_ui_view({"page": "home"})
             return {
-                "agent_action": f"You are very welcome, {first_name}. Have a great rest of your day, and goodbye."
+                "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
             }
-        return {
-            "agent_action": "You are very welcome. Have a great rest of your day, and goodbye."
-        }
-
-    if switch_intent == "NAVIGATE_HOME":
-        context.state["unclear_count"] = "0"
-        _emit_ui_view({"page": "home"})
-        return {
-            "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
-        }
-
-    if switch_intent == "NAVIGATE_PROFILE":
-        context.state["unclear_count"] = "0"
-        _emit_ui_view({"page": "profile"})
-        return {
-            "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
-        }
-
-    if switch_intent == "CAPABILITIES":
-        context.state["unclear_count"] = "0"
+        if switch_intent == "NAVIGATE_PROFILE":
+            _emit_ui_view({"page": "profile"})
+            return {
+                "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
+            }
         return {
             "agent_action": "I can help with everyday banking and spending, your savings pot and goal projections, or your mortgage payments, overpayments, and fixed-rate renewal options. Which area would you like to explore?"
         }
 
     if switch_intent in ("SAVINGS", "MORTGAGES"):
-        pass_count = int(context.state.get("pass_count") or "0")
         target = "savings_agent" if switch_intent == "SAVINGS" else "mortgage_agent"
         label = "savings projections" if switch_intent == "SAVINGS" else "mortgage options"
-        if pass_count > 4:
+        if int(context.state.get("pass_count") or "0") > 4:
             return {
                 "agent_action": f"Sure, tell me what you would like to check on your {label}."
             }
@@ -395,15 +369,15 @@ def _stage_spoke_pivot(target_agent: str, label: str, everyday: dict) -> dict:
     sub_vendor = str(last_sub.get("vendor") or "")
     freed_pence = int(last_sub.get("monthly_pence") or 0)
 
-    if freed_pence > 0:
-        context.state["handoff_context"] = {
+    context.state["handoff_context"] = (
+        {
             "from_agent": "everyday_banking_agent",
             "vendor": sub_vendor,
             "freed_monthly_pence": freed_pence,
         }
-    else:
-        context.state["handoff_context"] = {}
-
+        if freed_pence > 0
+        else {}
+    )
     everyday["pending_anomaly_vendor"] = ""
     everyday["pending_redirect_offer"] = False
     context.state["everyday_state"] = everyday
@@ -449,6 +423,98 @@ def _handle_balance(snapshot: dict, anchor_year: int, anchor_month: int) -> dict
     }
 
 
+def _month_delta_clause(txns: list[dict], offset: int, total_pence: int, anchor_year: int, anchor_month: int) -> str:
+    """Format month-on-month spending comparison clause."""
+    if offset >= 2:
+        return ""
+    prev_name = _month_name_for_offset(anchor_year, anchor_month, offset + 1)
+    prev_total = sum(
+        t["amount_pence"]
+        for t in txns
+        if t["month_offset"] == offset + 1 and t["amount_pence"] > 0
+    )
+    diff = total_pence - prev_total
+    if diff > 0:
+        return f", which is {_format_gbp(diff)} higher than {prev_name}"
+    if diff < 0:
+        return f", which is {_format_gbp(abs(diff))} lower than {prev_name}"
+    return f", matching {prev_name} to the penny"
+
+
+def _overview_with_anomaly(
+    txns: list[dict],
+    anom: dict,
+    everyday: dict,
+    period_key: str,
+    month_name: str,
+    total_pence: int,
+    delta_clause: str,
+    anchor_year: int,
+    anchor_month: int,
+) -> dict:
+    """Build current-month overview when a flagged anomaly row is present."""
+    vendor = anom["vendor"]
+    existing_status = str(everyday.get("anomaly_status") or "")
+    if existing_status in ("confirmed", "unrecognised"):
+        everyday["pending_anomaly_vendor"] = ""
+        context.state["everyday_state"] = everyday
+        _emit_ui_view(
+            {
+                "page": "spending",
+                "view": "overview",
+                "period": period_key,
+                "highlight_vendor": vendor,
+                "anomaly_status": existing_status,
+            }
+        )
+        status_label = (
+            "marked as not recognised" if existing_status == "unrecognised" else "confirmed"
+        )
+        return {
+            "agent_action": (
+                f"In {month_name} you have spent {_format_gbp(total_pence)} so far{delta_clause}, "
+                f"including the {_format_gbp(anom['amount_pence'])} {vendor} charge on "
+                f"{anom['day']} {month_name} that you already {status_label}."
+            )
+        }
+
+    prior_matches = [
+        t["amount_pence"]
+        for t in txns
+        if t["month_offset"] == 1 and t["vendor"].lower() == vendor.lower()
+    ]
+    prior_clause = (
+        f" (up from {_format_gbp(prior_matches[0])} in {_month_name_for_offset(anchor_year, anchor_month, 1)})"
+        if prior_matches
+        else ""
+    )
+    everyday["pending_anomaly_vendor"] = vendor
+    everyday["pending_redirect_offer"] = False
+    everyday["anomaly_status"] = ""
+    if anom["category"] == "subscriptions":
+        everyday["last_discussed_subscription"] = {
+            "vendor": vendor,
+            "monthly_pence": anom["amount_pence"],
+        }
+    context.state["everyday_state"] = everyday
+    _emit_ui_view(
+        {
+            "page": "spending",
+            "view": "overview",
+            "period": period_key,
+            "highlight_vendor": vendor,
+        }
+    )
+    return {
+        "agent_action": (
+            f"In {month_name} you have spent {_format_gbp(total_pence)} so far{delta_clause}. "
+            f"One charge is flagged on your screen: {_format_gbp(anom['amount_pence'])} at "
+            f"{vendor} on {anom['day']} {month_name}{prior_clause}. Do you recognise that charge? "
+            f"[Diagnosis context: {month_name} total {_format_gbp(total_pence)}; flagged subscription {vendor} {_format_gbp(anom['amount_pence'])} on {anom['day']} {month_name}.]"
+        )
+    }
+
+
 def _handle_overview(
     snapshot: dict,
     everyday: dict,
@@ -461,91 +527,23 @@ def _handle_overview(
     period_key = _OFFSET_PERIOD_KEYS[offset]
     month_name = _month_name_for_offset(anchor_year, anchor_month, offset)
     txns = snapshot["transactions"]
-
     month_txns = [t for t in txns if t["month_offset"] == offset and t["amount_pence"] > 0]
     total_pence = sum(t["amount_pence"] for t in month_txns)
-
-    delta_clause = ""
-    if offset < 2:
-        prev_name = _month_name_for_offset(anchor_year, anchor_month, offset + 1)
-        prev_total = sum(
-            t["amount_pence"]
-            for t in txns
-            if t["month_offset"] == offset + 1 and t["amount_pence"] > 0
-        )
-        diff = total_pence - prev_total
-        if diff > 0:
-            delta_clause = f", which is {_format_gbp(diff)} higher than {prev_name}"
-        elif diff < 0:
-            delta_clause = f", which is {_format_gbp(abs(diff))} lower than {prev_name}"
-        else:
-            delta_clause = f", matching {prev_name} to the penny"
+    delta_clause = _month_delta_clause(txns, offset, total_pence, anchor_year, anchor_month)
 
     anomalies = [t for t in month_txns if t["is_anomaly"]]
     if offset == 0 and anomalies:
-        anom = anomalies[0]
-        vendor = anom["vendor"]
-        existing_status = str(everyday.get("anomaly_status") or "")
-        if existing_status in ("confirmed", "unrecognised"):
-            everyday["pending_anomaly_vendor"] = ""
-            context.state["everyday_state"] = everyday
-            _emit_ui_view(
-                {
-                    "page": "spending",
-                    "view": "overview",
-                    "period": period_key,
-                    "highlight_vendor": vendor,
-                    "anomaly_status": existing_status,
-                }
-            )
-            status_label = (
-                "marked as not recognised"
-                if existing_status == "unrecognised"
-                else "confirmed"
-            )
-            return {
-                "agent_action": (
-                    f"In {month_name} you have spent {_format_gbp(total_pence)} so far{delta_clause}, "
-                    f"including the {_format_gbp(anom['amount_pence'])} {vendor} charge on "
-                    f"{anom['day']} {month_name} that you already {status_label}."
-                )
-            }
-
-        prior_matches = [
-            t["amount_pence"]
-            for t in txns
-            if t["month_offset"] == 1 and t["vendor"].lower() == vendor.lower()
-        ]
-        prior_clause = (
-            f" (up from {_format_gbp(prior_matches[0])} in {_month_name_for_offset(anchor_year, anchor_month, 1)})"
-            if prior_matches
-            else ""
+        return _overview_with_anomaly(
+            txns,
+            anomalies[0],
+            everyday,
+            period_key,
+            month_name,
+            total_pence,
+            delta_clause,
+            anchor_year,
+            anchor_month,
         )
-        everyday["pending_anomaly_vendor"] = vendor
-        everyday["pending_redirect_offer"] = False
-        everyday["anomaly_status"] = ""
-        if anom["category"] == "subscriptions":
-            everyday["last_discussed_subscription"] = {
-                "vendor": vendor,
-                "monthly_pence": anom["amount_pence"],
-            }
-        context.state["everyday_state"] = everyday
-        _emit_ui_view(
-            {
-                "page": "spending",
-                "view": "overview",
-                "period": period_key,
-                "highlight_vendor": vendor,
-            }
-        )
-        return {
-            "agent_action": (
-                f"In {month_name} you have spent {_format_gbp(total_pence)} so far{delta_clause}. "
-                f"One charge is flagged on your screen: {_format_gbp(anom['amount_pence'])} at "
-                f"{vendor} on {anom['day']} {month_name}{prior_clause}. Do you recognise that charge? "
-                f"[Diagnosis context: {month_name} total {_format_gbp(total_pence)}; flagged subscription {vendor} {_format_gbp(anom['amount_pence'])} on {anom['day']} {month_name}.]"
-            )
-        }
 
     by_cat: dict[str, int] = {}
     for t in month_txns:
@@ -562,6 +560,33 @@ def _handle_overview(
     }
 
 
+def _mark_anomaly_unrecognised(everyday: dict, resolved_vendor: str, monthly_pence: int, month_name: str) -> dict:
+    """Mark a flagged charge as unrecognised on screen without claiming a filed dispute."""
+    everyday["anomaly_status"] = "unrecognised"
+    everyday["pending_anomaly_vendor"] = ""
+    everyday["pending_redirect_offer"] = False
+    last_sub = dict(everyday.get("last_discussed_subscription") or {})
+    if _vendors_equal(resolved_vendor, str(last_sub.get("vendor") or "")):
+        everyday["last_discussed_subscription"] = {}
+    context.state["everyday_state"] = everyday
+    _emit_ui_view(
+        {
+            "page": "spending",
+            "view": "overview",
+            "period": "this_month",
+            "highlight_vendor": resolved_vendor,
+            "anomaly_status": "unrecognised",
+        }
+    )
+    amt_str = f"{_format_gbp(monthly_pence)} " if monthly_pence > 0 else ""
+    return {
+        "agent_action": (
+            f"I have marked the {amt_str}{resolved_vendor} charge in {month_name} as not recognised on your screen. "
+            "It is worth checking whether anyone in your household upgraded the plan, and you can freeze your card in the Profile tab or contact Cloudbank support if you need to raise a formal card dispute."
+        )
+    }
+
+
 def _handle_anomaly_followup(
     snapshot: dict,
     everyday: dict,
@@ -573,17 +598,13 @@ def _handle_anomaly_followup(
     """Process 'yes' or 'no' recognition for the flagged anomaly charge."""
     txns = snapshot["transactions"]
     anomalies = [t for t in txns if t["month_offset"] == 0 and t["is_anomaly"]]
-    default_anom = anomalies[0] if anomalies else None
-
     vendor = (
         vendor_name
         or str(everyday.get("pending_anomaly_vendor") or "")
-        or (default_anom["vendor"] if default_anom else "")
+        or (anomalies[0]["vendor"] if anomalies else "")
     )
     if not vendor:
-        return {
-            "agent_action": "Which charge on your statement would you like me to check?"
-        }
+        return {"agent_action": "Which charge on your statement would you like me to check?"}
 
     canonical, matched = _match_vendor_rows(txns, vendor)
     resolved_vendor = canonical or vendor
@@ -592,33 +613,10 @@ def _handle_anomaly_followup(
     month_name = _month_name_for_offset(anchor_year, anchor_month, 0)
 
     if confirmed == "no":
-        everyday["anomaly_status"] = "unrecognised"
-        everyday["pending_anomaly_vendor"] = ""
-        everyday["pending_redirect_offer"] = False
-        last_sub = dict(everyday.get("last_discussed_subscription") or {})
-        if _vendors_equal(resolved_vendor, str(last_sub.get("vendor") or "")):
-            everyday["last_discussed_subscription"] = {}
-        context.state["everyday_state"] = everyday
-        _emit_ui_view(
-            {
-                "page": "spending",
-                "view": "overview",
-                "period": "this_month",
-                "highlight_vendor": resolved_vendor,
-                "anomaly_status": "unrecognised",
-            }
-        )
-        amt_str = f"{_format_gbp(monthly_pence)} " if monthly_pence > 0 else ""
-        return {
-            "agent_action": (
-                f"I have marked the {amt_str}{resolved_vendor} charge in {month_name} as not recognised on your screen. "
-                "It is worth checking whether anyone in your household upgraded the plan, and you can freeze your card in the Profile tab or contact Cloudbank support if you need to raise a formal card dispute."
-            )
-        }
+        return _mark_anomaly_unrecognised(everyday, resolved_vendor, monthly_pence, month_name)
 
     if confirmed == "yes":
-        is_sub_cat = any(t["category"] == "subscriptions" for t in matched)
-        offer_pence = monthly_pence if is_sub_cat else 0
+        offer_pence = monthly_pence if any(t["category"] == "subscriptions" for t in matched) else 0
         everyday["anomaly_status"] = "confirmed"
         everyday["pending_anomaly_vendor"] = ""
         everyday["pending_redirect_offer"] = bool(offer_pence > 0)
@@ -653,17 +651,8 @@ def _handle_anomaly_followup(
     }
 
 
-def _handle_cancel_subscription(
-    snapshot: dict,
-    everyday: dict,
-    vendor_name: str,
-    period: str,
-    confirmed: str,
-    anchor_year: int,
-    anchor_month: int,
-) -> dict:
-    """Look up public cancellation guidance via tools.search_help and offer savings redirect."""
-    txns = snapshot["transactions"]
+def _resolve_cancellation_target(txns: list[dict], everyday: dict, vendor_name: str) -> tuple[str, int]:
+    """Resolve canonical subscription vendor name and cancellable monthly pence."""
     last_sub = dict(everyday.get("last_discussed_subscription") or {})
     target_vendor = (
         vendor_name
@@ -671,9 +660,7 @@ def _handle_cancel_subscription(
         or str(last_sub.get("vendor") or "")
     )
     if not target_vendor:
-        return {
-            "agent_action": "Which subscription would you like help cancelling?"
-        }
+        return "", 0
 
     canonical, matched = _match_vendor_rows(txns, target_vendor)
     resolved_vendor = canonical or target_vendor
@@ -688,17 +675,16 @@ def _handle_cancel_subscription(
         if m0_rows
         else (matched[0]["amount_pence"] if matched else fallback_pence)
     )
-    is_subscription_cat = (
-        any(t["category"] == "subscriptions" for t in matched)
-        if matched
-        else (fallback_pence > 0)
+    is_sub = (
+        any(t["category"] == "subscriptions" for t in matched) if matched else (fallback_pence > 0)
     )
-    offer_pence = monthly_pence if is_subscription_cat else 0
+    return resolved_vendor, (monthly_pence if is_sub else 0)
 
-    offset = _PERIOD_OFFSETS.get(period, 0)
-    period_key = _OFFSET_PERIOD_KEYS[offset]
-    month_name = _month_name_for_offset(anchor_year, anchor_month, offset)
 
+def _record_cancellation_state(
+    txns: list[dict], everyday: dict, resolved_vendor: str, confirmed: str, offer_pence: int
+) -> None:
+    """Update everyday_state when the caller asks how to cancel a subscription."""
     pending_vendor = str(everyday.get("pending_anomaly_vendor") or "")
     anomalies = [t for t in txns if t["month_offset"] == 0 and t["is_anomaly"]]
     anom_vendor = anomalies[0]["vendor"] if anomalies else ""
@@ -721,23 +707,43 @@ def _handle_cancel_subscription(
         }
     context.state["everyday_state"] = everyday
 
+
+def _sanitize_diagnosis_text(raw: str) -> str:
+    """Strip square brackets and bound web-derived diagnosis text length."""
+    no_brackets = raw.replace("[", "(").replace("]", ")")
+    collapsed = " ".join(no_brackets.split())
+    return collapsed[:_MAX_DIAGNOSIS_CHARS]
+
+
+def _handle_cancel_subscription(
+    snapshot: dict,
+    everyday: dict,
+    vendor_name: str,
+    period: str,
+    confirmed: str,
+    anchor_year: int,
+    anchor_month: int,
+) -> dict:
+    """Look up public cancellation guidance via tools.search_help and offer savings redirect."""
+    txns = snapshot["transactions"]
+    resolved_vendor, offer_pence = _resolve_cancellation_target(txns, everyday, vendor_name)
+    if not resolved_vendor:
+        return {"agent_action": "Which subscription would you like help cancelling?"}
+
+    offset = _PERIOD_OFFSETS.get(period, 0)
+    month_name = _month_name_for_offset(anchor_year, anchor_month, offset)
+    _record_cancellation_state(txns, everyday, resolved_vendor, confirmed, offer_pence)
     _emit_ui_view(
         {
             "page": "spending",
             "view": "subscriptions",
-            "period": period_key,
+            "period": _OFFSET_PERIOD_KEYS[offset],
             "highlight_vendor": resolved_vendor,
         }
     )
 
     search_answer = _lookup_cancellation_guidance(resolved_vendor)
     goal_name = snapshot["savings"]["goal_name"]
-    redirect_prompt = (
-        f" Would you like to see what putting that {_format_gbp(offer_pence)} a month from {month_name} into your {goal_name} could do?"
-        if offer_pence > 0
-        else ""
-    )
-
     if search_answer:
         first_name = (context.state.get("first_name") or "the customer").strip()
         offer_directive = (
@@ -748,10 +754,15 @@ def _handle_cancel_subscription(
         return {
             "agent_action": (
                 f"Summarise the {resolved_vendor} cancellation steps from the diagnosis context in at most two plain sentences with no web addresses or URLs read aloud{offer_directive} "
-                f"[Diagnosis context: {search_answer}]"
+                f"[Diagnosis context: {_sanitize_diagnosis_text(search_answer)}]"
             )
         }
 
+    redirect_prompt = (
+        f" Would you like to see what putting that {_format_gbp(offer_pence)} a month from {month_name} into your {goal_name} could do?"
+        if offer_pence > 0
+        else ""
+    )
     return {
         "agent_action": (
             f"To cancel {resolved_vendor}, sign in to your account settings in the {resolved_vendor} app or website and select the option to cancel or manage your plan.{redirect_prompt}"
@@ -766,25 +777,13 @@ def _lookup_cancellation_guidance(vendor: str) -> str:
     except Exception:
         logger.exception("search_help invocation failed")
         return ""
-
-    if resp is None:
+    if not isinstance(resp, dict) or resp.get("status") == "error" or resp.get("isError"):
         return ""
-    if isinstance(resp, dict):
-        body = resp
-    else:
-        if not resp.ok or not resp.text:
-            return ""
-        body = resp.json()
-
-    if not isinstance(body, dict) or body.get("status") == "error" or body.get("isError"):
-        return ""
-
-    answers = body.get("answer") or []
+    answers = resp.get("answer") or resp.get("results") or []
     if isinstance(answers, str):
         return answers.strip()
     if isinstance(answers, list):
-        parts = [str(item).strip() for item in answers if str(item).strip()]
-        return " ".join(parts)
+        return " ".join(str(item).strip() for item in answers if str(item).strip())
     return ""
 
 
@@ -813,18 +812,11 @@ def _handle_category(
     ]
     total_pence = sum(t["amount_pence"] for t in rows)
     _emit_ui_view(
-        {
-            "page": "spending",
-            "view": "category",
-            "period": period_key,
-            "category": category,
-        }
+        {"page": "spending", "view": "category", "period": period_key, "category": category}
     )
 
     if not rows:
-        return {
-            "agent_action": f"You had no spending in {label} in {month_name}."
-        }
+        return {"agent_action": f"You had no spending in {label} in {month_name}."}
 
     by_vendor: dict[str, int] = {}
     for t in rows:
@@ -884,12 +876,7 @@ def _handle_vendor(
         context.state["everyday_state"] = everyday
 
     _emit_ui_view(
-        {
-            "page": "spending",
-            "view": "vendor",
-            "period": period_key,
-            "vendor": canonical,
-        }
+        {"page": "spending", "view": "vendor", "period": period_key, "vendor": canonical}
     )
 
     tx_word = "payment" if len(period_rows) == 1 else "payments"
@@ -913,7 +900,11 @@ def _handle_trend(snapshot: dict, anchor_year: int, anchor_month: int) -> dict:
     direction = (
         f"up {_format_gbp(diff)} from {names[1]}"
         if diff > 0
-        else (f"down {_format_gbp(abs(diff))} from {names[1]}" if diff < 0 else f"unchanged from {names[1]}")
+        else (
+            f"down {_format_gbp(abs(diff))} from {names[1]}"
+            if diff < 0
+            else f"unchanged from {names[1]}"
+        )
     )
 
     _emit_ui_view({"page": "spending", "view": "trend", "period": "this_month"})
@@ -986,11 +977,7 @@ def _handle_empty_or_unclear(snapshot: dict, everyday: dict) -> dict:
     if everyday.get("pending_redirect_offer"):
         last_sub = dict(everyday.get("last_discussed_subscription") or {})
         freed_pence = int(last_sub.get("monthly_pence") or 0)
-        goal_name = (
-            snapshot.get("savings", {}).get("goal_name")
-            if snapshot
-            else "savings pot"
-        ) or "savings pot"
+        goal_name = snapshot["savings"]["goal_name"] if snapshot else "savings pot"
         if freed_pence > 0:
             return {
                 "agent_action": f"Would you like to see what putting that {_format_gbp(freed_pence)} a month into your {goal_name} could do?"

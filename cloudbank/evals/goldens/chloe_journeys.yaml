@@ -18,7 +18,7 @@ common_session_parameters:
     accounts:
       current:
         name: "Cloudbank Everyday Account"
-        sort_code: "04-00-75"
+        sort_code: "00-00-99"
         account_number_last4: "4821"
         balance_pence: 425075
         currency: "GBP"
@@ -76,6 +76,7 @@ common_session_parameters:
       - { id: "txn-uber-01", month_offset: 0, day: 22, vendor: "Uber", category: "transport", amount_pence: 820 }
       - { id: "txn-pret-03", month_offset: 0, day: 22, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
       - { id: "txn-tesco-03", month_offset: 0, day: 23, vendor: "Tesco Express", category: "groceries", amount_pence: 1240 }
+      - { id: "txn-salary-2", month_offset: 1, day: 1, vendor: "Salary", category: "income", amount_pence: -320000 }
       - { id: "txn-mortgage-02", month_offset: 1, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 139971, is_subscription: true }
       - { id: "txn-council-02", month_offset: 1, day: 3, vendor: "Manchester City Council", category: "bills", amount_pence: 16500, is_subscription: true }
       - { id: "txn-tesco-04", month_offset: 1, day: 4, vendor: "Tesco", category: "groceries", amount_pence: 2840 }
@@ -96,6 +97,7 @@ common_session_parameters:
       - { id: "txn-tesco-05", month_offset: 1, day: 25, vendor: "Tesco", category: "groceries", amount_pence: 2410 }
       - { id: "txn-uber-02", month_offset: 1, day: 26, vendor: "Uber", category: "transport", amount_pence: 940 }
       - { id: "txn-pret-05", month_offset: 1, day: 27, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
+      - { id: "txn-salary-3", month_offset: 2, day: 1, vendor: "Salary", category: "income", amount_pence: -320000 }
       - { id: "txn-mortgage-03", month_offset: 2, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 139971, is_subscription: true }
       - { id: "txn-council-03", month_offset: 2, day: 3, vendor: "Manchester City Council", category: "bills", amount_pence: 16500, is_subscription: true }
       - { id: "txn-tesco-06", month_offset: 2, day: 5, vendor: "Tesco", category: "groceries", amount_pence: 2630 }
@@ -137,7 +139,7 @@ conversations:
               period: "this_month"
         agent:
           - "# silent"
-          - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45.00 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
+          - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
 
       - user: "Yes, I recognise it — they hiked the plan. How do I cancel Netflix?"
         tool_calls:
@@ -146,7 +148,7 @@ conversations:
               query_type: "cancel_subscription"
               vendor_name: "Netflix"
               anomaly_confirmed: "yes"
-        agent: "To cancel Netflix, sign in to your account page in the Netflix app or website, open Membership and Billing, and select Cancel Membership; your subscription stays active until the end of your current billing period. Would you like to see what redirecting that £45.00 a month from November into your Home Emergency Pot could do?"
+        agent: "To cancel Netflix, sign in to your account page in the Netflix app or website, open Membership and Billing, and select Cancel Membership; your subscription stays active until the end of your current billing period. Would you like to see what redirecting that £45 a month from November into your Home Emergency Pot could do?"
 
       - user: "Yes — show me what putting that £45 a month into savings does."
         tool_calls:
@@ -161,7 +163,7 @@ conversations:
               query_type: "projection"
         agent:
           - "# silent"
-          - "Your Home Emergency Pot currently holds £4,850.00 at 4.50% AER as of November. Adding £45.00 a month from Netflix lifts your monthly saving to £245.00, shaving 4 months off your timeline and reaching your £10,000.00 target in 19 months (June 2028)."
+          - "Your Home Emergency Pot currently holds £4,850 at 4.50% AER as of November. Adding £45 a month from Netflix lifts your monthly saving to £245, shaving 4 months off your timeline and reaching your £10,000 target in 19 months (June 2028)."
 
       - user: "And what if I overpaid my mortgage by £200 a month instead?"
         tool_calls:
@@ -177,7 +179,7 @@ conversations:
               monthly_overpayment: 200.0
         agent:
           - "# silent"
-          - "Starting from November, overpaying £200.00 a month totals £2,400.00 in year one, fitting within your remaining £21,450.00 10% fee-free allowance. It would shave 3 years and 2 months off your remaining term (down to 15 years and 2 months) and save £17,849.18 in total interest. These figures are an indicative illustration only and not personalised mortgage advice."
+          - "Starting from November, overpaying £200 a month totals £2,400 in year one, fitting within your remaining £21,450 10% fee-free allowance. It would shave 3 years and 2 months off your remaining term (down to 15 years and 2 months) and save £17,849.18 in total interest. These figures are an indicative illustration only and not personalised mortgage advice."
 
       - user: "Compare my fixed-rate renewal options."
         tool_calls:
@@ -191,6 +193,10 @@ conversations:
           - action: assist_mortgages
             args:
               switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
         agent: "You are very welcome, Chloe. Have a great rest of your day, and goodbye."
 
   - conversation: "chloe_unrecognised_anomaly_journey"
@@ -215,7 +221,7 @@ conversations:
               period: "this_month"
         agent:
           - "# silent"
-          - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45.00 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
+          - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
 
       - user: "No, I didn't upgrade Netflix — I don't recognise £45."
         tool_calls:
@@ -223,7 +229,7 @@ conversations:
             args:
               query_type: "anomaly_followup"
               anomaly_confirmed: "no"
-        agent: "I have marked the £45.00 Netflix charge in November as not recognised on your screen. It is worth checking whether anyone in your household upgraded the plan, and you can freeze your card in the Profile tab or contact Cloudbank support if you need to raise a formal card dispute."
+        agent: "I have marked the £45 Netflix charge in November as not recognised on your screen. It is worth checking whether anyone in your household upgraded the plan, and you can freeze your card in the Profile tab or contact Cloudbank support if you need to raise a formal card dispute."
 
       - user: "Open my Profile page so I can check my card controls."
         tool_calls:
@@ -237,4 +243,8 @@ conversations:
           - action: assist_everyday_banking
             args:
               switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
         agent: "You are very welcome, Chloe. Have a great rest of your day, and goodbye."
