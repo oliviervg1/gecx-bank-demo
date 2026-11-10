@@ -16,6 +16,8 @@ Defense-in-depth controls enforced here:
 """
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import datetime
 import functools
 import json
@@ -80,6 +82,7 @@ _VALID_TIMES_OF_DAY = frozenset({"morning", "afternoon", "evening"})
 
 _MAX_UPSTREAM_FRAME_BYTES = 4 * 1024 * 1024
 _MAX_CONCURRENT_SESSIONS = int(os.environ.get("PROXY_MAX_SESSIONS", "4"))
+DEFAULT_START_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_IDLE_SECONDS = 900.0
 DEFAULT_KEEPALIVE_SECONDS = 10.0
 
@@ -273,6 +276,17 @@ def _resolve_session_id(requested: str | None) -> str:
     return str(uuid.uuid4())
 
 
+def _start_timeout_seconds() -> float:
+    raw = os.environ.get("PROXY_START_TIMEOUT_SECONDS")
+    if not raw:
+        return DEFAULT_START_TIMEOUT_SECONDS
+    try:
+        val = float(raw)
+        return val if val > 0 else DEFAULT_START_TIMEOUT_SECONDS
+    except ValueError:
+        return DEFAULT_START_TIMEOUT_SECONDS
+
+
 def _max_idle_seconds() -> float:
     raw = os.environ.get("PROXY_MAX_IDLE_SECONDS")
     if not raw:
@@ -340,8 +354,14 @@ async def ws_agent(ws: WebSocket) -> None:
 
 async def _run_session(ws: WebSocket) -> None:
     try:
-        start_raw = await ws.receive_text()
+        start_raw = await asyncio.wait_for(
+            ws.receive_text(), timeout=_start_timeout_seconds()
+        )
     except WebSocketDisconnect:
+        return
+    except TimeoutError:
+        log.warning("closing websocket that never sent start frame")
+        await _fail(ws, "timed out waiting for start frame")
         return
 
     if len(start_raw) > MAX_CLIENT_FRAME_BYTES:
@@ -413,6 +433,8 @@ async def _run_session(ws: WebSocket) -> None:
         await _fail(ws, f"upstream {status_code}")
     except websockets.exceptions.ConnectionClosedError as exc:
         if relay is not None and relay.ended_cleanly:
+            with contextlib.suppress(RuntimeError):
+                await ws.close()
             return
         rcvd = getattr(exc, "rcvd", None)
         code = getattr(rcvd, "code", None) or 1006

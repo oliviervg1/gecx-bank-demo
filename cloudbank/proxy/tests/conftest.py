@@ -51,6 +51,12 @@ def fake_upstream() -> FakeUpstream:
     return FakeUpstream()
 
 
+@pytest.fixture(autouse=True)
+def _fast_start_timeout_for_mutation_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep un-sent start-frame waits fast in tests so broken-gate mutants fail in <100ms."""
+    monkeypatch.setenv("PROXY_START_TIMEOUT_SECONDS", "0.08")
+
+
 @pytest.fixture(scope="session")
 def persona_snapshots() -> dict[str, dict[str, Any]]:
     return {

@@ -6,10 +6,19 @@ screen state flows strictly server-to-browser via ``ServerUiState``.
 """
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    TypeAdapter,
+    ValidationError,
+    field_validator,
+)
 
 Persona = Literal["chloe", "david", "tom", "sarah"]
 
@@ -38,7 +47,18 @@ class AudioFrame(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["audio"] = "audio"
-    data: str = Field(max_length=_MAX_AUDIO_B64_LEN)
+    data: str = Field(min_length=1, max_length=_MAX_AUDIO_B64_LEN)
+
+    @field_validator("data")
+    @classmethod
+    def _validate_base64(cls, value: str) -> str:
+        try:
+            decoded = base64.b64decode(value, validate=True)
+        except (binascii.Error, ValueError) as exc:
+            raise ValueError("audio data must be valid standard base64") from exc
+        if not decoded:
+            raise ValueError("audio data must not decode to empty bytes")
+        return value
 
 
 class ClientText(BaseModel):
