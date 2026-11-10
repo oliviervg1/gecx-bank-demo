@@ -7,23 +7,37 @@
   "additionalProperties": false,
   "required": ["user", "accounts", "transactions"],
   "definitions": {
+    "noControlOrAngle": {
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
+    },
     "safeString120": {
       "type": "string",
       "minLength": 1,
       "maxLength": 120,
-      "pattern": "^[^<>\\u0000-\\u001f\\u007f]+$"
+      "pattern": "^[^<>\\u0000-\\u001f\\u007f]+$",
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
     },
     "safeName60": {
       "type": "string",
       "minLength": 1,
       "maxLength": 60,
-      "pattern": "^[A-Za-z][A-Za-z0-9\\s'\\-]{0,59}$"
+      "pattern": "^[A-Za-z][A-Za-z0-9 '\\-]{0,59}$",
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
     },
     "isoDate": {
       "type": "string",
       "minLength": 10,
       "maxLength": 10,
-      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
     }
   },
   "properties": {
@@ -49,7 +63,10 @@
           "type": "string",
           "minLength": 5,
           "maxLength": 120,
-          "pattern": "^[^<>\\s\\u0000-\\u001f\\u007f]+@example\\.com$"
+          "pattern": "^[A-Za-z0-9._%+\\-]+@example\\.com$",
+          "not": {
+            "pattern": "[<>\\u0000-\\u001f\\u007f\\s]"
+          }
         },
         "annual_income_pence": {
           "type": "integer",
@@ -88,11 +105,21 @@
             "name": { "$ref": "#/definitions/safeString120" },
             "sort_code": {
               "type": "string",
-              "pattern": "^\\d{2}-\\d{2}-\\d{2}$"
+              "minLength": 8,
+              "maxLength": 8,
+              "pattern": "^[0-9]{2}-[0-9]{2}-[0-9]{2}$",
+              "not": {
+                "pattern": "[<>\\u0000-\\u001f\\u007f]"
+              }
             },
             "account_number_last4": {
               "type": "string",
-              "pattern": "^\\d{4}$"
+              "minLength": 4,
+              "maxLength": 4,
+              "pattern": "^[0-9]{4}$",
+              "not": {
+                "pattern": "[<>\\u0000-\\u001f\\u007f]"
+              }
             },
             "balance_pence": {
               "type": "integer",
@@ -219,7 +246,12 @@
                 "properties": {
                   "id": {
                     "type": "string",
-                    "pattern": "^[a-z0-9\\-]{2,40}$"
+                    "minLength": 2,
+                    "maxLength": 40,
+                    "pattern": "^[a-z0-9\\-]{2,40}$",
+                    "not": {
+                      "pattern": "[<>\\u0000-\\u001f\\u007f]"
+                    }
                   },
                   "label": { "$ref": "#/definitions/safeString120" },
                   "term_years": {
@@ -250,7 +282,12 @@
         "properties": {
           "id": {
             "type": "string",
-            "pattern": "^txn-[a-zA-Z0-9_\\-]{1,60}$"
+            "minLength": 5,
+            "maxLength": 64,
+            "pattern": "^txn-[A-Za-z0-9_\\-]{1,60}$",
+            "not": {
+              "pattern": "[<>\\u0000-\\u001f\\u007f]"
+            }
           },
           "month_offset": {
             "type": "integer",
