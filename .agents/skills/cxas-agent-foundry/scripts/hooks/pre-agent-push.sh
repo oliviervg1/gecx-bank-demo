@@ -32,6 +32,7 @@ if [ -n "$project_dir" ] && [ -f "${project_dir}/gecx-config.json" ]; then
   config_file="${project_dir}/gecx-config.json"
 fi
 
+set +e
 python3 - "$payload_file" "$config_file" <<'PY'
 import json
 import pathlib
@@ -55,12 +56,12 @@ if isinstance(data, dict):
     elif isinstance(args, dict) and isinstance(args.get("command"), str):
         cmd = args["command"]
 
-B = r"(?:^|[^A-Za-z0-9_.-])"
-E = r"(?:[^A-Za-z0-9_.-]|$)"
+B = r"(?<![A-Za-z0-9_.-])"
+E = r"(?![A-Za-z0-9_.-])"
 patterns = (
     B + r"cxas(?:-eval)?\s+push" + E,
     B + r"push\.sh" + E,
-    B + r"manage_ces_app\.py" + E + r".*" + B + r"pr-eval" + E,
+    B + r"manage_ces_app\.py" + E + r".*?" + B + r"pr-eval" + E,
 )
 if not any(re.search(p, cmd, flags=re.DOTALL) for p in patterns):
     sys.exit(0)
@@ -82,3 +83,8 @@ for m in re.finditer(r"--to(?:=|\s+)['\"]?([^\s'\";|&)]+)", cmd):
 
 sys.exit(0)
 PY
+hook_rc=$?
+set -e
+if [ "$hook_rc" -ne 0 ]; then
+  exit 2
+fi
