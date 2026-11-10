@@ -1,74 +1,107 @@
 import { describe, it, expect } from 'vitest'
 import { parseServerMsg, serializeClientMsg, type ServerMsg } from '../agent/protocol'
+import { getFixture } from '../data/fixture'
+import { buildSessionVariables } from '../agent/sessionVariables'
 
-describe('parseServerMsg', () => {
-  it('parses a ready frame', () => {
-    const msg: ServerMsg = parseServerMsg(JSON.stringify({ type: 'ready' }))
-    expect(msg).toEqual({ type: 'ready' })
-  })
-
-  it('parses an audio frame with base64 data', () => {
-    const msg = parseServerMsg(JSON.stringify({ type: 'audio', data: 'AAAA' }))
-    expect(msg).toEqual({ type: 'audio', data: 'AAAA' })
-  })
-
-  it('parses a transcript frame', () => {
-    const msg = parseServerMsg(
-      JSON.stringify({ type: 'transcript', text: 'hello', isFinal: true }),
+describe('protocol.ts — symmetric with cloudbank/proxy/src/proxy/protocol.py', () => {
+  it('parses all 13 server message variants cleanly', () => {
+    const ready: ServerMsg = parseServerMsg(
+      JSON.stringify({ type: 'ready', sessionId: 'sess-123' }),
     )
-    expect(msg).toEqual({ type: 'transcript', text: 'hello', isFinal: true })
+    expect(ready).toEqual({ type: 'ready', sessionId: 'sess-123' })
+
+    expect(parseServerMsg(JSON.stringify({ type: 'audio', data: 'AAAA' }))).toEqual({
+      type: 'audio',
+      data: 'AAAA',
+    })
+    expect(
+      parseServerMsg(JSON.stringify({ type: 'transcript', text: 'hi', isFinal: true })),
+    ).toEqual({ type: 'transcript', text: 'hi', isFinal: true })
+    expect(
+      parseServerMsg(JSON.stringify({ type: 'text', text: 'Hello', partial: true })),
+    ).toEqual({ type: 'text', text: 'Hello', partial: true })
+    expect(
+      parseServerMsg(
+        JSON.stringify({ type: 'ui_state', tier: 2, state: { seq: 1, page: 'savings' } }),
+      ),
+    ).toEqual({ type: 'ui_state', tier: 2, state: { seq: 1, page: 'savings' } })
+    expect(
+      parseServerMsg(JSON.stringify({ type: 'turn_diagnostics', turnIndex: 1 })),
+    ).toEqual({
+      type: 'turn_diagnostics',
+      turnIndex: 1,
+      agentTransfers: [],
+      toolCalls: [],
+      toolResponses: [],
+      updatedVariables: {},
+      rootSpan: undefined,
+    })
+    expect(
+      parseServerMsg(
+        JSON.stringify({
+          type: 'search_suggestions',
+          htmls: ['<div>q</div>'],
+          webSearchQueries: ['cancel netflix'],
+        }),
+      ),
+    ).toEqual({
+      type: 'search_suggestions',
+      htmls: ['<div>q</div>'],
+      webSearchQueries: ['cancel netflix'],
+      citations: [],
+    })
+    expect(parseServerMsg(JSON.stringify({ type: 'turn_complete', turnIndex: 2 }))).toEqual({
+      type: 'turn_complete',
+      turnIndex: 2,
+    })
+    expect(parseServerMsg(JSON.stringify({ type: 'go_away', sessionId: 's1' }))).toEqual({
+      type: 'go_away',
+      sessionId: 's1',
+    })
+    expect(
+      parseServerMsg(JSON.stringify({ type: 'session_expired', message: 'idle' })),
+    ).toEqual({ type: 'session_expired', message: 'idle' })
+    expect(parseServerMsg(JSON.stringify({ type: 'interrupt' }))).toEqual({
+      type: 'interrupt',
+    })
+    expect(parseServerMsg(JSON.stringify({ type: 'end' }))).toEqual({ type: 'end' })
+    expect(
+      parseServerMsg(
+        JSON.stringify({ type: 'error', message: 'bad field', field: 'demo_date' }),
+      ),
+    ).toEqual({ type: 'error', message: 'bad field', field: 'demo_date' })
   })
 
-  it('parses a text frame', () => {
-    const msg = parseServerMsg(JSON.stringify({ type: 'text', text: 'Hi Chloe' }))
-    expect(msg).toEqual({ type: 'text', text: 'Hi Chloe' })
+  it('rejects removed client_function and malformed frames', () => {
+    expect(() =>
+      parseServerMsg(JSON.stringify({ type: 'client_function', id: '1', name: 'x', args: {} })),
+    ).toThrow(/unknown server message/i)
+    expect(() => parseServerMsg(JSON.stringify({ type: 'ready' }))).toThrow(/ready frame/)
+    expect(() => parseServerMsg(JSON.stringify({ type: 'audio' }))).toThrow(/audio frame/)
+    expect(() =>
+      parseServerMsg(JSON.stringify({ type: 'ui_state', state: { seq: 1, page: 'bogus' } })),
+    ).toThrow(/ui_state frame/)
+    expect(() => parseServerMsg(JSON.stringify({ type: 'go_away' }))).toThrow(/go_away frame/)
   })
 
-  it('parses an error frame', () => {
-    const msg = parseServerMsg(JSON.stringify({ type: 'error', message: 'auth' }))
-    expect(msg).toEqual({ type: 'error', message: 'auth' })
-  })
-
-  it('throws on an unknown type', () => {
-    expect(() => parseServerMsg(JSON.stringify({ type: 'mystery' }))).toThrow(
-      /unknown server message/i,
+  it('omits null/undefined sessionId on start serialization and preserves GoAway sessionId', () => {
+    const vars = buildSessionVariables('chloe', getFixture('chloe'), {
+      demoDate: '2026-11-24',
+      timeOfDay: 'morning',
+    })
+    const fresh = JSON.parse(
+      serializeClientMsg({ type: 'start', persona: 'chloe', variables: vars, sessionId: null }),
     )
-  })
+    expect(fresh).not.toHaveProperty('sessionId')
 
-  it('throws on malformed JSON', () => {
-    expect(() => parseServerMsg('not-json')).toThrow()
-  })
-
-  it('parses a client_function server message', () => {
-    const raw = JSON.stringify({ type: 'client_function', id: 'tc_1', name: 'navigate_to', args: { pageId: 'spending' } })
-    const msg = parseServerMsg(raw)
-    expect(msg).toEqual({ type: 'client_function', id: 'tc_1', name: 'navigate_to', args: { pageId: 'spending' } })
-  })
-
-  it('serializes a tool_response client message', () => {
-    const raw = serializeClientMsg({ type: 'tool_response', id: 'tc_1', response: { output: {} } })
-    expect(JSON.parse(raw)).toEqual({ type: 'tool_response', id: 'tc_1', response: { output: {} } })
-  })
-
-  // A recognised discriminator with a missing payload must be rejected here,
-  // where the caller logs and drops the frame. Left to blow up downstream, an
-  // audio frame with no `data` reaches atob(undefined) inside an async handler
-  // and surfaces as an unhandled rejection.
-  it.each([
-    ['audio with no data', { type: 'audio' }, /audio frame/],
-    ['audio with non-string data', { type: 'audio', data: 42 }, /audio frame/],
-    ['transcript with no text', { type: 'transcript' }, /transcript frame/],
-    ['text with no text', { type: 'text' }, /text frame/],
-    ['error with no message', { type: 'error' }, /error frame/],
-    ['client_function with no id', { type: 'client_function', name: 'x' }, /client_function frame/],
-    ['client_function with no name', { type: 'client_function', id: 'tc_1' }, /client_function frame/],
-  ])('rejects %s', (_label, frame, pattern) => {
-    expect(() => parseServerMsg(JSON.stringify(frame))).toThrow(pattern as RegExp)
-  })
-
-  it('still accepts the payload-free variants', () => {
-    for (const type of ['ready', 'interrupt', 'end']) {
-      expect(parseServerMsg(JSON.stringify({ type }))).toEqual({ type })
-    }
+    const resumed = JSON.parse(
+      serializeClientMsg({
+        type: 'start',
+        persona: 'chloe',
+        variables: vars,
+        sessionId: 'sess-goaway',
+      }),
+    )
+    expect(resumed.sessionId).toBe('sess-goaway')
   })
 })

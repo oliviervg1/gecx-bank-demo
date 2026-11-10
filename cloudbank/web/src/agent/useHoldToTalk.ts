@@ -43,8 +43,10 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
   // installed once instead of being torn down and re-added on every render.
   const onBeginRef = useRef(onBegin)
   const onEndRef = useRef(onEnd)
-  onBeginRef.current = onBegin
-  onEndRef.current = onEnd
+  useEffect(() => {
+    onBeginRef.current = onBegin
+    onEndRef.current = onEnd
+  }, [onBegin, onEnd])
 
   const clearWatchdog = useCallback(() => {
     if (watchdogRef.current !== null) {

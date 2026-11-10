@@ -85,6 +85,8 @@ export interface Mortgage {
   renewal_options: MortgageRenewalOption[]
 }
 
+export type MortgageAccount = Mortgage
+
 export interface UserProfile {
   first_name: string
   last_name: string
