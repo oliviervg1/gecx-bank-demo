@@ -1,0 +1,144 @@
+import json
+import logging
+import re
+from typing import Optional
+
+logger = logging.getLogger(__name__)
+
+_MAX_PASSES = 8
+_PLATFORM_TAG_RE = re.compile(
+    r"<(?:state_update|context|event)\b[^>]*>.*?</(?:state_update|context|event)>",
+    re.DOTALL | re.IGNORECASE,
+)
+
+
+def _is_tool_response(llm_request: LlmRequest) -> bool:
+    """Return True when the latest content entry is a tool function_response."""
+    contents = llm_request.contents or []
+    if not contents or not contents[-1].parts:
+        return False
+    return any(p.function_response is not None for p in contents[-1].parts)
+
+
+def _last_returned_tool_name(llm_request: LlmRequest) -> str:
+    """Return the name of the last tool that returned on this pass, or ''."""
+    contents = llm_request.contents or []
+    if not contents or not contents[-1].parts:
+        return ""
+    names = [
+        p.function_response.name
+        for p in contents[-1].parts
+        if p.function_response is not None and p.function_response.name
+    ]
+    return names[-1] if names else ""
+
+
+def _clean_user_utterance(llm_request: LlmRequest) -> str:
+    """Extract clean caller text or transcript without platform turn envelopes."""
+    contents = llm_request.contents or []
+    if not contents:
+        return ""
+    last = contents[-1]
+    if not last.is_user() or not last.parts:
+        return ""
+    chunks = []
+    for part in last.parts:
+        txt = part.text_or_transcript()
+        if txt:
+            chunks.append(txt)
+    if not chunks:
+        return ""
+    cleaned = _PLATFORM_TAG_RE.sub(" ", " ".join(chunks))
+    return " ".join(cleaned.split())[:500]
+
+
+def before_model_callback(
+    callback_context: CallbackContext, llm_request: LlmRequest
+) -> Optional[LlmResponse]:
+    """Guard pass limits, hide internal tools, route silently, and emit Tier 1 UI state."""
+    try:
+        state = callback_context.state
+        if state.get("call_complete") == "released":
+            return LlmResponse.from_parts(parts=[])
+
+        # 1. Hide restricted tools on every pass so only the active controller is exposed.
+        llm_request.config.hide_tool("end_session")
+        llm_request.config.hide_tool("transfer_to_agent")
+        llm_request.config.hide_tool("search_help")
+
+        # 2. Track per-invocation pass count as a declared string variable (V101).
+        inv_id = callback_context.invocation_id or ""
+        if state.get("pass_turn_id") != inv_id:
+            state["pass_turn_id"] = inv_id
+            count = 1
+        else:
+            count = int(state.get("pass_count") or "0") + 1
+        state["pass_count"] = str(count)
+
+        # 3. Post-tool pass: hide returned controller FIRST, then route or emit Tier 1 UI.
+        if _is_tool_response(llm_request):
+            returned_tool = _last_returned_tool_name(llm_request)
+            if returned_tool:
+                llm_request.config.hide_tool(returned_tool)
+
+            target = (state.get("target_agent") or "").strip()
+            if target:
+                state["target_agent"] = ""
+                current = (callback_context.agent_name or "").split("/")[-1]
+                if target != current:
+                    return LlmResponse.from_parts(
+                        parts=[Part.from_agent_transfer(agent=target)]
+                    )
+
+            session_id = callback_context.session_id or ""
+            if (
+                returned_tool != "transfer_to_agent"
+                and not session_id.startswith("evaluation")
+            ):
+                view = dict(state.get("ui_view_state") or {})
+                seq = int(view.get("seq") or 0)
+                prev_seq = int(state.get("ui_emitted_seq") or "0")
+                if seq >= 1 and seq > prev_seq:
+                    state["ui_emitted_seq"] = str(seq)
+                    resp = LlmResponse.from_parts(
+                        parts=[Part.from_json(data=json.dumps(view))]
+                    )
+                    resp.partial = True
+                    return resp
+        else:
+            utterance = _clean_user_utterance(llm_request)
+            if utterance:
+                state["last_user_utterance"] = utterance
+
+        # 4. Loop-cap guard: finish any staged route first, else close cleanly.
+        if count > _MAX_PASSES:
+            target = (state.get("target_agent") or "").strip()
+            if target:
+                state["target_agent"] = ""
+                current = (callback_context.agent_name or "").split("/")[-1]
+                if target != current:
+                    return LlmResponse.from_parts(
+                        parts=[Part.from_agent_transfer(agent=target)]
+                    )
+            reason = state.get("escalation_reason") or (
+                "CALL_COMPLETED"
+                if state.get("call_complete") == "true"
+                else "MAX_PASSES_EXCEEDED"
+            )
+            state["call_complete"] = "released"
+            state["escalation_reason"] = reason
+            return LlmResponse.from_parts(
+                parts=[
+                    Part.from_text(
+                        text="I am sorry, I ran into an unexpected snag processing that request. "
+                    ),
+                    Part.from_end_session(
+                        reason=reason,
+                        escalated=(reason != "CALL_COMPLETED"),
+                    ),
+                ]
+            )
+        return None
+    except Exception:
+        logger.exception("capture_utterance failed")
+        return None

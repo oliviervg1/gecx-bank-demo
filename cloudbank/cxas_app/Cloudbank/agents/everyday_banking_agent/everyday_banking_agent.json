@@ -1,0 +1,28 @@
+{
+  "name": "everyday_banking_agent",
+  "displayName": "everyday_banking_agent",
+  "description": "Cloudbank Everyday Banking specialist covering current account balances, multi-month spending drilldowns, recurring subscriptions, anomaly checks, and cancellation guidance.",
+  "instruction": "agents/everyday_banking_agent/instruction.txt",
+  "tools": [
+    "assist_everyday_banking",
+    "search_help",
+    "end_session"
+  ],
+  "childAgents": [],
+  "beforeModelCallbacks": [
+    {
+      "description": "Hide restricted tools, bound pass count, clean caller utterance, execute post-tool routing, and emit Tier 1 UI state.",
+      "pythonCode": "agents/everyday_banking_agent/before_model_callbacks/capture_utterance/python_code.py"
+    }
+  ],
+  "afterModelCallbacks": [
+    {
+      "description": "Defense-in-depth post-model routing guard.",
+      "pythonCode": "agents/everyday_banking_agent/after_model_callbacks/agent_transfer/python_code.py"
+    },
+    {
+      "description": "Stamp Tier 2 UI state cursor and append end_session when call_complete is latched.",
+      "pythonCode": "agents/everyday_banking_agent/after_model_callbacks/release_line/python_code.py"
+    }
+  ]
+}
