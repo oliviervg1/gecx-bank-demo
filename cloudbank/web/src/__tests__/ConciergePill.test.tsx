@@ -92,10 +92,10 @@ describe('ConciergePill', () => {
     expect(v.beginTalking).not.toHaveBeenCalled()
   })
 
-  it('shows "Retry" on transport error and calls reconnect on click', () => {
+  it('shows "Reconnect" on transport error and calls reconnect on click', () => {
     const v = makeAgent({ pushToTalk: false, phase: 'error', connState: 'error' })
     render(withAgent(v))
-    expect(screen.getByText('Retry')).toBeInTheDocument()
+    expect(screen.getByText('Reconnect')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button'))
     expect(v.reconnect).toHaveBeenCalledTimes(1)
   })

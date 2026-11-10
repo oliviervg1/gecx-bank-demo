@@ -1,5 +1,5 @@
 import { StrictMode } from 'react'
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, act, fireEvent, cleanup } from '@testing-library/react'
 import { AgentProvider, useAgent } from '../agent/AgentProvider'
 import { PersonaProvider, usePersona } from '../personas/PersonaProvider'
@@ -48,7 +48,7 @@ function installWebSocketSpy() {
 }
 
 function Probe() {
-  const { phase, connState, errorMessage, reconnect, disconnect } = useAgent()
+  const { phase, connState, errorMessage, reconnect, disconnect, submitText } = useAgent()
   const { setPersona } = usePersona()
   return (
     <div>
@@ -58,6 +58,7 @@ function Probe() {
       <button onClick={reconnect}>reconnect</button>
       <button onClick={disconnect}>disconnect</button>
       <button onClick={() => setPersona('david')}>switch-david</button>
+      <button onClick={() => submitText('Ping')}>send-text</button>
     </div>
   )
 }
@@ -185,6 +186,42 @@ describe('AgentProvider (sessionMachine integration)', () => {
       expect(screen.getByTestId('phase').textContent).toBe('disconnected')
       expect(screen.getByTestId('conn').textContent).toBe('idle')
     } finally {
+      spy.restore()
+    }
+  })
+
+  it('enforces the exact 15,000ms thinking watchdog timer', () => {
+    const spy = installWebSocketSpy()
+    vi.useFakeTimers()
+    try {
+      render(
+        <PersonaProvider initialDemoDate="2026-11-24">
+          <AgentProvider>
+            <Probe />
+          </AgentProvider>
+        </PersonaProvider>,
+      )
+      act(() => {
+        spy.instances[0].openFromServer()
+        spy.instances[0].deliver({ type: 'ready', sessionId: 's-watchdog' })
+      })
+      act(() => {
+        fireEvent.click(screen.getByText('send-text'))
+      })
+      expect(screen.getByTestId('phase').textContent).toBe('thinking')
+
+      // Still thinking at 14,999ms; recovers to ready at 15,000ms.
+      act(() => {
+        vi.advanceTimersByTime(14_999)
+      })
+      expect(screen.getByTestId('phase').textContent).toBe('thinking')
+
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(screen.getByTestId('phase').textContent).toBe('ready')
+    } finally {
+      vi.useRealTimers()
       spy.restore()
     }
   })

@@ -14,6 +14,22 @@ interface CapturedSocket {
 let sockets: CapturedSocket[] = []
 const origWS = globalThis.WebSocket
 
+const BANNED_TECHNICAL_TOKENS = [
+  'gemini-composite-v2',
+  'BidiRunSession',
+  'before_model_callback',
+  'Part.from_agent_transfer',
+  'ui_view_state',
+  'root_agent',
+  'everyday_banking_agent',
+  'savings_agent',
+  'mortgage_agent',
+  '16 kHz',
+  'Worklet',
+  'phase:',
+  'seq:',
+]
+
 beforeEach(() => {
   sockets = []
   class FakeWS {
@@ -61,28 +77,43 @@ afterEach(() => {
   window.history.replaceState({}, '', '/')
 })
 
-describe('Workbench & GECX Inspector end-to-end UI sync & security', () => {
-  it('switches across all 3 interactive SVG Inspector nodes on click', () => {
+describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
+  it('renders executive greeting on ready, calm Reconnect status on error, and zero technical jargon', async () => {
     render(
       <MotionConfig reducedMotion="always">
         <App />
       </MotionConfig>,
     )
 
-    // Default node is topology (Node 2)
-    expect(screen.getByTestId('inspector-panel-topology')).toBeInTheDocument()
+    const ws = sockets[sockets.length - 1]
+    await act(async () => {
+      ws.open()
+      ws.deliver({ type: 'ready', sessionId: 'sess-exec' })
+    })
 
-    // Click Node 1 (Audio & Relay)
-    fireEvent.click(screen.getByTestId('inspector-node-audio'))
-    expect(screen.getByTestId('inspector-panel-audio')).toBeInTheDocument()
-    expect(screen.getByText(/16\/44.1\/48 kHz/)).toBeInTheDocument()
+    expect(screen.getByText('How can I help today, Chloe?')).toBeInTheDocument()
+    expect(screen.queryByTestId('active-specialist-pill')).toBeNull()
 
-    // Click Node 3 (Controllers & Sync)
-    fireEvent.click(screen.getByTestId('inspector-node-controllers'))
-    expect(screen.getByTestId('inspector-panel-controllers')).toBeInTheDocument()
+    const bodyText = document.body.textContent ?? ''
+    for (const token of BANNED_TECHNICAL_TOKENS) {
+      expect(bodyText).not.toContain(token)
+    }
+
+    // Error state shows calm executive note instead of ready greeting or raw error codes.
+    await act(async () => {
+      ws.deliver({ type: 'error', message: 'upstream 1007 failed_precondition' })
+    })
+    expect(screen.getByTestId('concierge-unavailable-state')).toHaveTextContent(
+      'Concierge connection unavailable — select Reconnect to start.',
+    )
+    expect(screen.queryByText('How can I help today, Chloe?')).toBeNull()
+
+    // Clicking Reconnect opens a fresh socket.
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reconnect' })[0])
+    expect(sockets.length).toBeGreaterThan(1)
   })
 
-  it('drives every field of ui_view_state.schema.json across all 5 tabs and isolates diagnostics/search HTML', async () => {
+  it('drives every field of ui_view_state.schema.json across all 5 tabs, updates plain-English specialist pills, and sandboxes search HTML', async () => {
     render(
       <MotionConfig reducedMotion="always">
         <App />
@@ -95,7 +126,7 @@ describe('Workbench & GECX Inspector end-to-end UI sync & security', () => {
       ws.deliver({ type: 'ready', sessionId: 'sess-e2e' })
     })
 
-    // 1. Spending overview + highlight_vendor + unrecognised anomaly_status
+    // 1. Spending overview + highlight_vendor + anomaly_status + Everyday Banking pill
     await act(async () => {
       ws.deliver({
         type: 'ui_state',
@@ -113,20 +144,59 @@ describe('Workbench & GECX Inspector end-to-end UI sync & security', () => {
     expect(await screen.findByTestId('anomaly-status-badge')).toHaveTextContent(
       'Marked as not recognised',
     )
+    expect(screen.getByTestId('active-specialist-pill')).toHaveTextContent('Everyday Banking')
 
-    // 2. Assistant prose + search_suggestions + turn_diagnostics
+    // 2. Spending category + period ('last_month') and vendor subviews
+    await act(async () => {
+      ws.deliver({
+        type: 'ui_state',
+        tier: 1,
+        state: {
+          seq: 2,
+          page: 'spending',
+          view: 'category',
+          period: 'last_month',
+          category: 'coffee_shops',
+        },
+      })
+    })
+    expect(await screen.findByText(/Spending › Coffee shops/)).toBeInTheDocument()
+    expect(screen.getByText(/October · Coffee shops/i)).toBeInTheDocument()
+
+    await act(async () => {
+      ws.deliver({
+        type: 'ui_state',
+        tier: 1,
+        state: {
+          seq: 3,
+          page: 'spending',
+          view: 'vendor',
+          period: 'this_month',
+          vendor: 'Tesco',
+        },
+      })
+    })
+    expect(await screen.findByText(/Spending › Tesco/)).toBeInTheDocument()
+
+    // 3. Sanitized assistant prose + interrupted badge + sandboxed search_suggestions + hidden diagnostics
     await act(async () => {
       ws.deliver({
         type: 'text',
+        partial: true,
+        text: '<neutral> Let me check your Netflix plan.',
+      })
+      ws.deliver({ type: 'interrupt' })
+      ws.deliver({
+        type: 'text',
         partial: false,
-        text: '<warm> To cancel Netflix, open Account settings. [Diagnosis context: internal raw search payload]',
+        text: '<reassuring> To cancel Netflix, open Account settings. [Diagnosis context: internal raw search payload]',
       })
       ws.deliver({
         type: 'search_suggestions',
         htmls: ['<div class="chip">how to cancel Netflix UK</div>'],
         webSearchQueries: ['how to cancel Netflix subscription UK'],
         citations: [
-          { title: 'Netflix Help', uri: 'https://help.netflix.com/cancel' },
+          { title: 'Netflix Help Centre', uri: 'https://help.netflix.com/cancel' },
           { title: 'Evil URI', uri: 'javascript:alert(1)' },
         ],
       })
@@ -143,23 +213,24 @@ describe('Workbench & GECX Inspector end-to-end UI sync & security', () => {
 
     const stream = screen.getByTestId('conversation-stream')
     expect(stream.textContent).toContain('To cancel Netflix, open Account settings.')
+    expect(stream.textContent).toContain('(Interrupted)')
     expect(stream.textContent).not.toContain('Diagnosis context')
-    expect(stream.textContent).not.toContain('<warm>')
+    expect(stream.textContent).not.toContain('<reassuring>')
+    expect(stream.textContent).not.toContain('everyday_banking_agent')
 
-    // Sandboxed iframe used for htmls; javascript: URI dropped from citations!
     const iframe = stream.querySelector('iframe')
     expect(iframe).not.toBeNull()
     expect(iframe?.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox')
-    expect(screen.getByText('Netflix Help')).toBeInTheDocument()
+    expect(screen.getByText('Netflix Help Centre')).toBeInTheDocument()
     expect(screen.queryByText('Evil URI')).toBeNull()
 
-    // 3. Savings projection sync (extra_monthly_pence + custom_target_pence)
+    // 4. Savings projection sync (extra_monthly_pence + custom_target_pence + Savings pill)
     await act(async () => {
       ws.deliver({
         type: 'ui_state',
         tier: 1,
         state: {
-          seq: 2,
+          seq: 4,
           page: 'savings',
           extra_monthly_pence: 4500,
           custom_target_pence: 1500000,
@@ -168,14 +239,15 @@ describe('Workbench & GECX Inspector end-to-end UI sync & security', () => {
     })
     expect(await screen.findByText('Home Emergency Pot')).toBeInTheDocument()
     expect(screen.getByText('+£45.00/mo')).toBeInTheDocument()
+    expect(screen.getByTestId('active-specialist-pill')).toHaveTextContent('Savings')
 
-    // 4. Mortgage overpay sync (subview + monthly_overpayment_pence + lump_sum_overpayment_pence)
+    // 5. Mortgage overpay sync (subview + monthly_overpayment_pence + lump_sum_overpayment_pence + Mortgages pill)
     await act(async () => {
       ws.deliver({
         type: 'ui_state',
         tier: 1,
         state: {
-          seq: 3,
+          seq: 5,
           page: 'mortgage',
           subview: 'overpay',
           monthly_overpayment_pence: 20000,
@@ -185,5 +257,17 @@ describe('Workbench & GECX Inspector end-to-end UI sync & security', () => {
     })
     expect(await screen.findByTestId('mortgage-overpay-view')).toBeInTheDocument()
     expect(screen.getByText('+£200.00/mo')).toBeInTheDocument()
+    expect(screen.getByTestId('active-specialist-pill')).toHaveTextContent('Mortgages')
+
+    // 6. Profile & Home page sync
+    await act(async () => {
+      ws.deliver({ type: 'ui_state', tier: 1, state: { seq: 6, page: 'profile' } })
+    })
+    expect(await screen.findByText('Debit Card Controls')).toBeInTheDocument()
+
+    await act(async () => {
+      ws.deliver({ type: 'ui_state', tier: 1, state: { seq: 7, page: 'home' } })
+    })
+    expect(await screen.findByText('Accounts Overview')).toBeInTheDocument()
   })
 })

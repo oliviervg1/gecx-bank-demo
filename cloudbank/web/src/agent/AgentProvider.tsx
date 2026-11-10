@@ -176,10 +176,15 @@ function createSessionRuntime(
       if (state.phase === 'capturing') {
         activeCapture.setMuted(false)
       }
-    } catch {
+    } catch (err) {
+      const detail = err instanceof Error ? `${err.name} ${err.message}` : ''
+      const isNonPermissionError =
+        Boolean(detail) && !/denied|permission|notallowed|security/i.test(detail)
       dispatch({
         type: 'MIC_DENIED',
-        message: 'Microphone access denied. Allow microphone access and hold to retry.',
+        message: isNonPermissionError
+          ? `Audio capture failed (${(err as Error).message}). Hold to retry.`
+          : 'Microphone access denied. Allow microphone access and hold to retry.',
       })
     }
   }

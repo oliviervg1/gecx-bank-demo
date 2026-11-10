@@ -97,8 +97,8 @@ export function ProfilePage() {
 
         <ListRow
           icon={<IconBadge icon={Shield} tone="green" />}
-          title="Privacy & Guardrails"
-          subtitle="FCA Consumer Duty & prompt security active"
+          title="Privacy & Security"
+          subtitle="FCA Consumer Duty & account protection active"
         />
 
         <ListRow
@@ -121,7 +121,7 @@ export function ProfilePage() {
       </button>
 
       <div className="text-center text-[11px] text-brand-muted mt-3">
-        Cloudbank Retail Reference · GECX Composite v2
+        Cloudbank Personal Banking
       </div>
     </div>
   )

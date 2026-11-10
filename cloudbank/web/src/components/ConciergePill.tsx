@@ -59,9 +59,9 @@ function visualFor(
   }
   if (phase === 'error') {
     return {
-      label: 'Retry',
+      label: 'Reconnect',
       icon: <RefreshCw size={16} />,
-      className: 'bg-white border border-brand-danger text-brand-danger',
+      className: 'bg-white border border-brand-divider text-brand-text hover:border-brand-green',
       onClick: actions.reconnect,
     }
   }

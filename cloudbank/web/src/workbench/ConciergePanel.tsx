@@ -1,0 +1,298 @@
+import { useState, type FormEvent } from 'react'
+import { AlertCircle, ExternalLink, PauseCircle, RefreshCw, Send, Sparkles } from 'lucide-react'
+import { useAgent } from '../agent/AgentProvider'
+import { useFixture } from '../data/useFixture'
+import type { ServerSearchSuggestionsMsg } from '../agent/protocol'
+
+const STARTER_PROMPTS = [
+  'Give me a quick look at my spending this month.',
+  'Show me what putting £45 a month extra into savings does.',
+  'What would overpaying my mortgage by £200 a month save me?',
+  'Compare my fixed-rate renewal options.',
+] as const
+
+function resolveSpecialistLabel(activeAgentName: string, latestPage?: string): string | null {
+  if (activeAgentName === 'everyday_banking_agent' || latestPage === 'spending') {
+    return 'Everyday Banking'
+  }
+  if (activeAgentName === 'savings_agent' || latestPage === 'savings') {
+    return 'Savings'
+  }
+  if (activeAgentName === 'mortgage_agent' || latestPage === 'mortgage') {
+    return 'Mortgages'
+  }
+  return null
+}
+
+function isSafeHttpUrl(raw: unknown): raw is string {
+  if (typeof raw !== 'string') return false
+  try {
+    const parsed = new URL(raw)
+    return parsed.protocol === 'https:' || parsed.protocol === 'http:'
+  } catch {
+    return false
+  }
+}
+
+function buildSandboxedSuggestionDoc(htmlSnippet: string): string {
+  return [
+    '<!doctype html>',
+    '<html lang="en"><head><meta charset="utf-8">',
+    '<base target="_blank">',
+    '<style>html,body{margin:0;padding:4px 6px;font-family:system-ui,-apple-system,sans-serif;font-size:12px;background:#ffffff;color:#141413;overflow:hidden;}</style>',
+    '</head><body>',
+    htmlSnippet,
+    '</body></html>',
+  ].join('')
+}
+
+function SearchSuggestionsBlock({
+  suggestions,
+}: {
+  suggestions: ServerSearchSuggestionsMsg
+}) {
+  const safeCitations = suggestions.citations.filter((c) => isSafeHttpUrl(c.uri ?? c.url))
+
+  return (
+    <div className="mt-2.5 space-y-1.5" data-testid="search-suggestions-block">
+      {suggestions.htmls.map((html, idx) => (
+        <iframe
+          key={`gss-html-${idx}`}
+          title={`Google Search suggestion ${idx + 1}`}
+          sandbox="allow-popups allow-popups-to-escape-sandbox"
+          referrerPolicy="no-referrer"
+          srcDoc={buildSandboxedSuggestionDoc(html)}
+          className="w-full h-10 rounded-lg border border-brand-divider bg-white"
+        />
+      ))}
+
+      {(suggestions.webSearchQueries.length > 0 || safeCitations.length > 0) && (
+        <div className="flex flex-wrap gap-1.5">
+          {suggestions.webSearchQueries.map((query) => (
+            <a
+              key={`q-${query}`}
+              href={`https://www.google.com/search?q=${encodeURIComponent(query)}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-divider bg-[#faf9f6] text-[12px] font-medium text-brand-text hover:border-brand-green transition-colors"
+            >
+              <span>{query}</span>
+              <ExternalLink size={11} className="text-brand-muted" />
+            </a>
+          ))}
+
+          {safeCitations.map((cit, idx) => {
+            const href = String(cit.uri ?? cit.url)
+            const label = String(cit.title ?? href)
+            return (
+              <a
+                key={`cit-${idx}-${href}`}
+                href={href}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-divider bg-white text-[12px] font-medium text-brand-green hover:underline"
+              >
+                <span className="truncate max-w-[220px]">{label}</span>
+                <ExternalLink size={11} />
+              </a>
+            )
+          })}
+        </div>
+      )}
+    </div>
+  )
+}
+
+export function ConciergePanel() {
+  const agent = useAgent()
+  const fixture = useFixture()
+  const [draftText, setDraftText] = useState('')
+
+  const firstName = fixture.user.first_name
+  const specialistLabel = resolveSpecialistLabel(
+    agent.activeAgentName,
+    agent.latestUiState?.page,
+  )
+
+  function handleTextSubmit(e: FormEvent) {
+    e.preventDefault()
+    const trimmed = draftText.trim()
+    if (!trimmed) return
+    agent.submitText(trimmed)
+    setDraftText('')
+  }
+
+  return (
+    <section
+      aria-label="Cloudbank Concierge"
+      className="flex flex-col h-full bg-white border border-brand-divider rounded-xl overflow-hidden"
+    >
+      {/* Clean Executive Header */}
+      <div className="px-5 py-3.5 border-b border-brand-divider flex items-center justify-between gap-3 shrink-0">
+        <div className="flex items-center gap-2">
+          <Sparkles size={16} aria-hidden="true" className="text-brand-gold" />
+          <h2 className="text-[16px] font-bold tracking-[-0.01em] text-brand-text leading-none">
+            Cloudbank Concierge
+          </h2>
+        </div>
+
+        {specialistLabel && (
+          <span
+            data-testid="active-specialist-pill"
+            className="px-2.5 py-1 rounded-full border border-brand-divider bg-[#faf9f6] text-[12px] font-semibold text-brand-green"
+          >
+            {specialistLabel}
+          </span>
+        )}
+      </div>
+
+      {/* Conversation Stream / Executive Welcome */}
+      <div
+        data-testid="conversation-stream"
+        className="flex-1 min-h-0 overflow-y-auto px-5 py-5 space-y-4"
+      >
+        {agent.turns.length === 0 ? (
+          agent.phase === 'error' ? (
+            <div
+              data-testid="concierge-unavailable-state"
+              className="h-full flex flex-col justify-center items-start max-w-md py-6"
+            >
+              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-muted mb-2">
+                <AlertCircle size={15} className="text-brand-gold" />
+                <span>Concierge connection unavailable</span>
+              </div>
+              <p className="text-[15px] text-brand-text leading-relaxed">
+                Concierge connection unavailable — select Reconnect to start.
+              </p>
+              <button
+                type="button"
+                onClick={agent.reconnect}
+                className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-brand-divider bg-[#faf9f6] text-[13px] font-semibold text-brand-green hover:border-brand-green transition-colors"
+              >
+                <RefreshCw size={14} />
+                <span>Reconnect</span>
+              </button>
+            </div>
+          ) : agent.phase === 'paused' ? (
+            <div
+              data-testid="concierge-paused-state"
+              className="h-full flex flex-col justify-center items-start max-w-md py-6"
+            >
+              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-gold mb-2">
+                <PauseCircle size={15} />
+                <span>Session paused</span>
+              </div>
+              <p className="text-[15px] text-brand-text leading-relaxed">
+                Your concierge session paused after a quiet period. Hold the voice button above or ask a question below to continue.
+              </p>
+            </div>
+          ) : (
+            <div className="h-full flex flex-col justify-center items-start max-w-lg py-6">
+              <h3 className="text-[22px] font-bold tracking-[-0.02em] text-brand-text leading-tight">
+                How can I help today, {firstName}?
+              </h3>
+              <p className="text-[14px] text-brand-muted leading-relaxed mt-1.5">
+                Hold <strong className="font-semibold text-brand-text">Hold to talk</strong> (or press Spacebar) to speak, or choose a question below.
+              </p>
+
+              <div className="mt-5 w-full space-y-2">
+                {STARTER_PROMPTS.map((prompt) => (
+                  <button
+                    key={prompt}
+                    type="button"
+                    onClick={() => agent.submitText(prompt)}
+                    className="w-full text-left px-3.5 py-2.5 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13.5px] text-brand-text hover:bg-white hover:border-brand-green transition-colors"
+                  >
+                    {prompt}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )
+        ) : (
+          <>
+            {agent.turns.map((turn) => (
+              <div
+                key={turn.id}
+                data-testid={`turn-${turn.role}`}
+                className={
+                  'flex flex-col ' + (turn.role === 'user' ? 'items-end' : 'items-start')
+                }
+              >
+                <div className="flex items-center gap-2 mb-1 text-[12px] text-brand-muted">
+                  <span className="font-medium">
+                    {turn.role === 'user' ? 'You' : 'Cloudbank Concierge'}
+                  </span>
+                  {turn.interrupted && (
+                    <span data-testid="interrupted-badge" className="text-[11px] text-brand-muted">
+                      (Interrupted)
+                    </span>
+                  )}
+                </div>
+
+                {turn.text && (
+                  <div
+                    className={
+                      'max-w-[88%] px-4 py-3 rounded-xl text-[14.5px] leading-relaxed ' +
+                      (turn.role === 'user'
+                        ? 'bg-brand-green text-white'
+                        : 'bg-[#faf9f6] border border-brand-divider text-brand-text')
+                    }
+                  >
+                    {turn.text}
+                  </div>
+                )}
+
+                {turn.searchSuggestions && (
+                  <div className="w-full max-w-[88%]">
+                    <SearchSuggestionsBlock suggestions={turn.searchSuggestions} />
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {agent.phase === 'error' && (
+              <div
+                data-testid="concierge-error-banner"
+                className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13px] text-brand-text flex items-center justify-between gap-3"
+              >
+                <span>Concierge connection unavailable — select Reconnect to continue.</span>
+                <button
+                  type="button"
+                  onClick={agent.reconnect}
+                  className="font-semibold text-brand-green hover:underline shrink-0"
+                >
+                  Reconnect
+                </button>
+              </div>
+            )}
+          </>
+        )}
+      </div>
+
+      {/* Bottom Input Bar */}
+      <form
+        onSubmit={handleTextSubmit}
+        className="px-4 py-3 border-t border-brand-divider bg-white flex items-center gap-2.5 shrink-0"
+      >
+        <input
+          type="text"
+          aria-label="Ask your Cloudbank concierge"
+          value={draftText}
+          onChange={(e) => setDraftText(e.target.value)}
+          placeholder="Ask your Cloudbank concierge…"
+          className="flex-1 px-3.5 py-2 rounded-lg border border-brand-divider bg-[#faf9f6] text-[13.5px] text-brand-text placeholder:text-brand-muted focus:outline-none focus:bg-white focus:border-brand-green"
+        />
+        <button
+          type="submit"
+          aria-label="Send message"
+          disabled={!draftText.trim()}
+          className="px-3.5 py-2 rounded-lg bg-brand-green text-white text-[13px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40 transition-opacity"
+        >
+          <Send size={14} />
+          <span>Send</span>
+        </button>
+      </form>
+    </section>
+  )
+}

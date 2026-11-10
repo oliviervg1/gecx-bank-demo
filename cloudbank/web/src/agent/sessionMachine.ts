@@ -150,10 +150,25 @@ function appendOrUpdateAssistantText(
   const next = [...turns]
   const last = next[next.length - 1]
   if (last && last.role === 'assistant' && !last.interrupted && last.partial) {
-    next[next.length - 1] = { ...last, text: clean, partial }
+    if (!last.text || clean.startsWith(last.text)) {
+      // Cumulative text growth: replace with extended prefix.
+      next[next.length - 1] = { ...last, text: clean, partial }
+      return next
+    }
+    if (last.text.endsWith(clean)) {
+      // Final repeat of an already-appended trailing segment.
+      next[next.length - 1] = { ...last, partial }
+      return next
+    }
+    // Per-segment / incremental text (e.g. pacing phrase then answer): append cleanly.
+    const needsSpace = !/^[,.;:!?)]/.test(clean)
+    next[next.length - 1] = {
+      ...last,
+      text: `${last.text}${needsSpace ? ' ' : ''}${clean}`,
+      partial,
+    }
     return next
   }
-  // If CES re-sends the full finalized text right after partial chunks, update in-place rather than duplicating.
   if (last && last.role === 'assistant' && !last.interrupted && last.text === clean) {
     next[next.length - 1] = { ...last, partial }
     return next
@@ -166,6 +181,11 @@ function appendOrUpdateAssistantText(
     interrupted: false,
   })
   return next
+}
+
+function finalizeOpenTurns(turns: ConversationTurn[]): ConversationTurn[] {
+  if (turns.length === 0 || !turns.some((t) => t.partial)) return turns
+  return turns.map((t) => (t.partial ? { ...t, partial: false } : t))
 }
 
 function markActiveAssistantInterrupted(turns: ConversationTurn[]): ConversationTurn[] {
@@ -879,12 +899,13 @@ function reduceServerMessage(
 
     // Rows 2 & 3: turn_complete waits for player drain if playerActive, else transitions immediately to 'ready'.
     case 'turn_complete': {
+      const finalizedTurns = finalizeOpenTurns(state.turns)
       const effects: SessionEffect[] = [
         { type: 'STOP_TRAILING_SILENCE' },
         { type: 'CLEAR_THINKING_WATCHDOG' },
       ]
       if (state.phase === 'drainingFarewell') {
-        return { state, effects }
+        return { state: { ...state, turns: finalizedTurns }, effects }
       }
       if (state.playerActive) {
         return {
@@ -892,6 +913,7 @@ function reduceServerMessage(
             ...state,
             phase: 'agentSpeaking',
             turnCompletedWhileSpeaking: true,
+            turns: finalizedTurns,
           },
           effects,
         }
@@ -901,6 +923,7 @@ function reduceServerMessage(
           ...state,
           phase: state.phase === 'capturing' ? 'capturing' : 'ready',
           turnCompletedWhileSpeaking: false,
+          turns: finalizedTurns,
         },
         effects,
       }
@@ -919,12 +942,15 @@ function reduceServerMessage(
         }
       }
       const nextEpoch = state.connectionEpoch + 1
+      const rearmCapture =
+        state.phase === 'capturing' ? ({ kind: 'capture' } as const) : state.pendingPostConnect
       return {
         state: {
           ...state,
           phase: 'connecting',
           connectionEpoch: nextEpoch,
           resumeSessionId: msg.sessionId,
+          pendingPostConnect: rearmCapture,
         },
         effects: [
           { type: 'CLEAR_THINKING_WATCHDOG' },

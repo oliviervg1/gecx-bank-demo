@@ -4,6 +4,7 @@ export const INPUT_SAMPLE_RATE = TARGET_SAMPLE_RATE
 export const OUTPUT_SAMPLE_RATE = 24000
 export const TRAILING_SILENCE_INTERVAL_MS = 100
 export const MAX_TRAILING_SILENCE_MS = 2500
+const FLUSH_REPLY_FALLBACK_MS = 25
 
 export function float32ToPcm16Base64(samples: Float32Array): string {
   const buf = new ArrayBuffer(samples.length * 2)
@@ -67,7 +68,6 @@ export function createTrailingSilenceController(
 
   function beginTrailingSilence() {
     cancelTrailingSilence()
-    // Emit first 100 ms silence frame immediately after flushed speech, then every 100 ms up to cap.
     sentFrames = 1
     sendFrame(SILENCE_100MS_B64)
     if (sentFrames >= maxFrames) return
@@ -88,7 +88,6 @@ export function createTrailingSilenceController(
   }
 }
 
-export type MutedFill = 'silence' | 'dither'
 export type AudioFrameHandler = (base64: string) => void
 
 export interface AudioCapture {
@@ -104,32 +103,49 @@ export async function createAudioCapture(
   onFrame: AudioFrameHandler,
   opts: { startMuted?: boolean } = {},
 ): Promise<AudioCapture> {
+  // Open microphone and AudioContext at native hardware sampleRate (e.g. 44.1 / 48 kHz)
+  // so Firefox never throws a cross-rate MediaStreamSource mismatch; /audio-worklet.js
+  // resamples to 16 kHz in 1,600-sample (100 ms) chunks.
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
-      sampleRate: INPUT_SAMPLE_RATE,
       echoCancellation: true,
       noiseSuppression: true,
     },
   })
+
   let ctx: AudioContext | null = null
+  let source: MediaStreamAudioSourceNode
+  let node: AudioWorkletNode
   try {
-    ctx = new AudioContext({ sampleRate: INPUT_SAMPLE_RATE })
+    ctx = new AudioContext()
     await ctx.audioWorklet.addModule('/audio-worklet.js')
+    source = ctx.createMediaStreamSource(stream)
+    node = new AudioWorkletNode(ctx, 'pcm-capture')
+    source.connect(node)
   } catch (err) {
     stream.getTracks().forEach((t) => t.stop())
     if (ctx) void ctx.close()
     throw err
   }
-  const audioCtx = ctx
-  const source = audioCtx.createMediaStreamSource(stream)
-  const node = new AudioWorkletNode(audioCtx, 'pcm-capture')
 
+  const audioCtx = ctx
   let muted = opts.startMuted ?? false
+  let stopped = false
+  let awaitingFlushForSilence = false
+  let flushFallbackTimer: ReturnType<typeof setTimeout> | null = null
 
   const trailingSilence = createTrailingSilenceController((silenceB64) => {
     if (!stopped) onFrame(silenceB64)
   })
+
+  function clearPendingFlushSilence() {
+    awaitingFlushForSilence = false
+    if (flushFallbackTimer !== null) {
+      clearTimeout(flushFallbackTimer)
+      flushFallbackTimer = null
+    }
+  }
 
   function applyTrackEnabled() {
     for (const t of stream.getAudioTracks()) t.enabled = !muted
@@ -146,8 +162,16 @@ export async function createAudioCapture(
       !(payload instanceof Float32Array) &&
       payload.type === 'flushed'
     ) {
+      if (flushFallbackTimer !== null) {
+        clearTimeout(flushFallbackTimer)
+        flushFallbackTimer = null
+      }
       if (payload.samples.length > 0) {
         onFrame(float32ToPcm16Base64(payload.samples))
+      }
+      if (awaitingFlushForSilence) {
+        awaitingFlushForSilence = false
+        trailingSilence.beginTrailingSilence()
       }
       return
     }
@@ -160,9 +184,6 @@ export async function createAudioCapture(
     }
   }
 
-  source.connect(node)
-  let stopped = false
-
   return {
     async start() {
       if (audioCtx.state === 'suspended') await audioCtx.resume()
@@ -170,6 +191,7 @@ export async function createAudioCapture(
     stop() {
       if (stopped) return
       stopped = true
+      clearPendingFlushSilence()
       trailingSilence.cancelTrailingSilence()
       node.disconnect()
       source.disconnect()
@@ -178,6 +200,7 @@ export async function createAudioCapture(
     },
     setMuted(next: boolean) {
       if (!next) {
+        clearPendingFlushSilence()
         trailingSilence.cancelTrailingSilence()
       }
       if (muted === next) return
@@ -191,14 +214,26 @@ export async function createAudioCapture(
       if (stopped) return
       muted = true
       applyTrackEnabled()
+      clearPendingFlushSilence()
+      trailingSilence.cancelTrailingSilence()
+      awaitingFlushForSilence = true
       try {
         node.port.postMessage({ type: 'flush' })
+        // Fallback in case a minimal test stub has a no-op postMessage that never replies 'flushed'.
+        flushFallbackTimer = setTimeout(() => {
+          flushFallbackTimer = null
+          if (awaitingFlushForSilence && !stopped) {
+            awaitingFlushForSilence = false
+            trailingSilence.beginTrailingSilence()
+          }
+        }, FLUSH_REPLY_FALLBACK_MS)
       } catch {
-        // Ignore if port unsupported in minimal test stub.
+        awaitingFlushForSilence = false
+        trailingSilence.beginTrailingSilence()
       }
-      trailingSilence.beginTrailingSilence()
     },
     notifyServerReaction() {
+      clearPendingFlushSilence()
       trailingSilence.cancelTrailingSilence()
     },
   }
