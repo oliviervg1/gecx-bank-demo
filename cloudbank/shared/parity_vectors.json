@@ -1,6 +1,18 @@
 {
   "version": 1,
   "demo_date": "2026-11-24",
+  "kernels": {
+    "half_up": "For non-negative integers n >= 0 and d > 0: Python (n * 2 + d) // (2 * d); TypeScript const num = n * 2 + d, den = 2 * d; return (num - (num % den)) / den.",
+    "to_pence": "Python-only model-float conversion: int(math.floor(max(0.0, min(float(x), 10_000_000.0)) * 100.0 + 0.5)), returning 0 on NaN/Inf.",
+    "monthly_interest_step": "interest_pence = half_up(balance_pence * rate_bps, 120_000).",
+    "savings_projection": "target_pence = custom_target_pence if custom_target_pence > 0 else goal_target_pence. If balance_pence >= target_pence: months_to_goal = 0, unreachable = false, projected_balance_pence = balance_pence, total_interest_earned_pence = 0. Else iterate m = 1..600: interest = half_up(pot * gross_rate_bps, 120_000); pot += interest + monthly_contribution_pence + extra_monthly_pence; total_interest += interest; if pot >= target_pence return months_to_goal = m. If loop finishes 600 months without reaching target_pence: months_to_goal = null, unreachable = true.",
+    "annual_interest_on_balance_pence": "12-step monthly compounding of gross_rate_bps starting from balance_pence with zero monthly contributions (summing the 12 monthly half_up(pot * gross_rate_bps, 120_000) steps).",
+    "target_year_month": "From demo_date (year, month in 1..12) and months_to_goal m: total_m = year * 12 + (month - 1) + m; target_year = total_m // 12; target_month = (total_m % 12) + 1.",
+    "simulate_mortgage": "If opening_balance_pence <= 0: months = 0, total_interest_pence = 0, ending_balance_pence = 0, paid_off = true. Else iterate m = 1..max_months (default 600): interest = half_up(bal * interest_rate_bps, 120_000); if bal + interest <= monthly_payment_pence return {months: m, total_interest_pence: total_interest + interest, ending_balance_pence: 0, paid_off: true}; else bal = bal + interest - monthly_payment_pence; total_interest += interest. After max_months return {months: max_months, total_interest_pence: total_interest, ending_balance_pence: bal, paid_off: false}.",
+    "mortgage_overpayment": "effective_lump_pence = min(max(0, lump_sum_overpayment_pence), balance_pence). Baseline runs simulate_mortgage(balance_pence, interest_rate_bps, next_payment.amount_pence, 600). Projected runs simulate_mortgage(balance_pence - effective_lump_pence, interest_rate_bps, next_payment.amount_pence + monthly_overpayment_pence, 600). first_year_overpayment_pence = min(balance_pence, effective_lump_pence + min(12, projected.months) * monthly_overpayment_pence). remaining_allowance_pence = max(0, annual_overpayment_allowance_pence - overpaid_this_year_pence). exceeds_allowance = first_year_overpayment_pence > remaining_allowance_pence (strict >, so equality is ERC-free).",
+    "renewal_payment_bisection": "Integer bisection over simulate_mortgage(balance_pence, rate_bps, mid, max_months=term_remaining_months).paid_off with low = half_up(balance_pence * rate_bps, 120_000) + 1 and high = balance_pence + low, returning smallest payment_pence that pays off within term_remaining_months.",
+    "renter_readiness": "max_borrowing_pence = half_up(annual_income_pence * 45, 10); indicative_budget_with_goal_pence = max_borrowing_pence + goal_target_pence; remaining_to_goal_pence = max(0, goal_target_pence - balance_pence); deposit_progress_bps = min(10000, half_up(balance_pence * 10000, goal_target_pence))."
+  },
   "half_up_cases": [
     { "id": "zero_numerator", "n": 0, "d": 120000, "expected": 0 },
     { "id": "exact_half_rounds_up_small", "n": 5, "d": 2, "expected": 3 },
@@ -153,6 +165,23 @@
       }
     },
     {
+      "id": "chloe_custom_target_15000_extra_100",
+      "persona": "chloe",
+      "extra_monthly_pence": 10000,
+      "custom_target_pence": 1500000,
+      "expected": {
+        "baseline_months": 44,
+        "projected_months": 31,
+        "months_saved": 13,
+        "unreachable": false,
+        "projected_balance_pence": 1526546,
+        "total_interest_earned_pence": 111546,
+        "annual_interest_on_balance_pence": 21825,
+        "target_year": 2029,
+        "target_month": 6
+      }
+    },
+    {
       "id": "david_baseline",
       "persona": "david",
       "extra_monthly_pence": 0,
@@ -269,6 +298,38 @@
       }
     },
     {
+      "id": "edge_exact_600_months_reachable",
+      "synthetic": {
+        "balance_pence": 0,
+        "gross_rate_bps": 0,
+        "monthly_contribution_pence": 1000,
+        "extra_monthly_pence": 0,
+        "goal_target_pence": 600000
+      },
+      "expected": {
+        "months_to_goal": 600,
+        "unreachable": false,
+        "projected_balance_pence": 600000,
+        "total_interest_earned_pence": 0
+      }
+    },
+    {
+      "id": "edge_601_months_unreachable",
+      "synthetic": {
+        "balance_pence": 0,
+        "gross_rate_bps": 0,
+        "monthly_contribution_pence": 1000,
+        "extra_monthly_pence": 0,
+        "goal_target_pence": 600001
+      },
+      "expected": {
+        "months_to_goal": null,
+        "unreachable": true,
+        "projected_balance_pence": 600000,
+        "total_interest_earned_pence": 0
+      }
+    },
+    {
       "id": "edge_exceeds_600_months_cap",
       "synthetic": {
         "balance_pence": 10000,
@@ -341,6 +402,24 @@
       }
     },
     {
+      "id": "sarah_exact_allowance_boundary",
+      "persona": "sarah",
+      "monthly_overpayment_pence": 25000,
+      "lump_sum_overpayment_pence": 65000,
+      "expected": {
+        "baseline_months": 90,
+        "projected_months": 73,
+        "months_saved": 17,
+        "baseline_interest_pence": 1555817,
+        "projected_interest_pence": 1234205,
+        "interest_saved_pence": 321612,
+        "remaining_allowance_pence": 365000,
+        "first_year_overpayment_pence": 365000,
+        "exceeds_allowance": false,
+        "excess_over_allowance_pence": 0
+      }
+    },
+    {
       "id": "sarah_monthly_400_exceeds_erc_cap",
       "persona": "sarah",
       "monthly_overpayment_pence": 40000,
@@ -389,9 +468,24 @@
         "projected_interest_pence": 0,
         "interest_saved_pence": 1555817,
         "remaining_allowance_pence": 365000,
-        "first_year_overpayment_pence": 12120000,
+        "first_year_overpayment_pence": 9650000,
         "exceeds_allowance": true,
-        "excess_over_allowance_pence": 11755000
+        "excess_over_allowance_pence": 9285000
+      }
+    }
+  ],
+  "mortgage_simulation_edges": [
+    {
+      "id": "edge_non_amortizing_capped_at_600",
+      "balance_pence": 10000000,
+      "interest_rate_bps": 400,
+      "monthly_payment_pence": 1,
+      "max_months": 600,
+      "expected": {
+        "months": 600,
+        "total_interest_pence": 63643942,
+        "ending_balance_pence": 73643342,
+        "paid_off": false
       }
     }
   ],

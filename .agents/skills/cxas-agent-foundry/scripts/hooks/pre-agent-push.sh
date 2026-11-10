@@ -14,67 +14,71 @@
 # limitations under the License.
 
 # Validates CXAS push target resource names against cloudbank/gecx-config.json
-# before allowing cxas push, push.sh, or manage_ces_app.py push/pr-eval.
-# Works with both Claude Code and Gemini CLI.
+# before allowing cxas push, push.sh, or manage_ces_app.py pr-eval.
+# Exits 2 with a stderr message when blocked (harness-neutral for Claude Code and Gemini CLI).
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/../resolve-project.sh"
 
-input=$(cat)
-
-agent=$(echo "$input" | jq -r 'if .tool_input then "claude" else "gemini" end')
-cmd=$(echo "$input" | jq -r '.tool_input.command // .arguments.command // ""')
-
-allow_hook() {
-  if [ "$agent" = "claude" ]; then
-    echo '{}'
-  else
-    echo '{"decision":"allow"}'
-  fi
-}
-
-block_hook() {
-  local message="$1"
-  if [ "$agent" = "claude" ]; then
-    jq -cn --arg msg "$message" \
-      '{hookSpecificOutput:{hookEventName:"PreToolUse",blockToolExecution:true,additionalContext:$msg}}'
-  else
-    jq -cn --arg msg "$message" \
-      '{decision:"block",context_update:$msg}'
-  fi
-}
-
-is_push_cmd=false
-if echo "$cmd" | grep -qE '(^|[[:space:]/])(cxas(-eval)?[[:space:]]+push|push\.sh)([[:space:]]|$)'; then
-  is_push_cmd=true
-elif echo "$cmd" | grep -qE 'manage_ces_app\.py' && echo "$cmd" | grep -qE '(^|[[:space:]])(push|pr-eval)([[:space:]]|$)'; then
-  is_push_cmd=true
-fi
-
-if [ "$is_push_cmd" = false ]; then
-  allow_hook
-  exit 0
-fi
+payload_file="$(mktemp)"
+trap 'rm -f "$payload_file"' EXIT
+cat >"$payload_file"
 
 project_dir="$(resolve_project_dir || true)"
-if [ -z "$project_dir" ] || [ ! -f "${project_dir}/gecx-config.json" ]; then
-  allow_hook
-  exit 0
+config_file=""
+if [ -n "$project_dir" ] && [ -f "${project_dir}/gecx-config.json" ]; then
+  config_file="${project_dir}/gecx-config.json"
 fi
 
-config_file="${project_dir}/gecx-config.json"
-project="$(jq -r '.gcp_project_id' "$config_file")"
-location="$(jq -r '.location' "$config_file")"
-expected_prefix="projects/${project}/locations/${location}/apps/"
+python3 - "$payload_file" "$config_file" <<'PY'
+import json
+import pathlib
+import re
+import sys
 
-if echo "$cmd" | grep -q -- "--to"; then
-  push_target="$(echo "$cmd" | sed -nE 's/.*--to(=|[[:space:]]+)["'\'']?([^"'\''[:space:]]+).*/\2/p')"
-  if [ -n "$push_target" ] && [[ "$push_target" == projects/* ]] && [[ "$push_target" != "${expected_prefix}"* ]]; then
-    block_hook "PUSH BLOCKED: Target '${push_target}' does not match configured prefix '${expected_prefix}' from gecx-config.json."
-    exit 0
-  fi
-fi
+raw = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8", errors="replace").strip()
+config_path = sys.argv[2]
 
-allow_hook
+try:
+    data = json.loads(raw) if raw else {}
+except Exception:
+    data = {}
+
+cmd = ""
+if isinstance(data, dict):
+    ti = data.get("tool_input")
+    args = data.get("arguments")
+    if isinstance(ti, dict) and isinstance(ti.get("command"), str):
+        cmd = ti["command"]
+    elif isinstance(args, dict) and isinstance(args.get("command"), str):
+        cmd = args["command"]
+
+B = r"(?:^|[^A-Za-z0-9_.-])"
+E = r"(?:[^A-Za-z0-9_.-]|$)"
+patterns = (
+    B + r"cxas(?:-eval)?\s+push" + E,
+    B + r"push\.sh" + E,
+    B + r"manage_ces_app\.py" + E + r".*" + B + r"pr-eval" + E,
+)
+if not any(re.search(p, cmd, flags=re.DOTALL) for p in patterns):
+    sys.exit(0)
+
+if not config_path:
+    sys.exit(0)
+
+cfg = json.loads(pathlib.Path(config_path).read_text(encoding="utf-8"))
+expected_prefix = f"projects/{cfg['gcp_project_id']}/locations/{cfg['location']}/apps/"
+
+for m in re.finditer(r"--to(?:=|\s+)['\"]?([^\s'\";|&)]+)", cmd):
+    target = m.group(1)
+    if target.startswith("projects/") and not target.startswith(expected_prefix):
+        sys.stderr.write(
+            f"PUSH BLOCKED: Target '{target}' does not match configured prefix "
+            f"'{expected_prefix}' from gecx-config.json.\n"
+        )
+        sys.exit(2)
+
+sys.exit(0)
+PY
