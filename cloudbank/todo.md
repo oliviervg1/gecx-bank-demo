@@ -10,11 +10,11 @@
 - [x] Author cross-runtime `cloudbank/shared/parity_vectors.json` (4 personas + edge vectors)
 
 ## Stage 2: Multi-Product CXAS Bundle (`cloudbank/cxas_app/Cloudbank/`)
-- [ ] Update `cloudbank/gecx-config.json` (`locations/eu`, `gemini-composite-v2`) and `cloudbank/cxaslint.yaml` (`T012` active)
-- [ ] Author `app.json`, `global_instruction.txt`, and 3 active `respondImmediately` guardrails (`0808 157 0100` + `116 123`)
-- [ ] Author 4 agents (`root_agent`, `everyday_banking_agent`, `savings_agent`, `mortgage_agent`) + 3 identical callbacks per agent (`capture_utterance`, `agent_transfer`, `release_line`)
-- [ ] Author 4 Python controllers (`route_banking_intent`, `assist_everyday_banking` wrapping `tools.search_help`, `assist_savings`, `assist_mortgages`) + `search_help` `toolFakeConfig`
-- [ ] Delete legacy `spending_agent` and 6 `clientFunction` directories; pass `cxas lint` (`0/0`) and `audit_agent.py` (`0` P0/P1)
+- [x] Update `cloudbank/gecx-config.json` (`locations/eu`, `gemini-composite-v2`) and `cloudbank/cxaslint.yaml` (`T012` active)
+- [x] Author `app.json`, `global_instruction.txt`, and 3 active `respondImmediately` guardrails (`0808 157 0100` + `116 123`)
+- [x] Author 4 agents (`root_agent`, `everyday_banking_agent`, `savings_agent`, `mortgage_agent`) + 3 identical callbacks per agent (`capture_utterance`, `agent_transfer`, `release_line`)
+- [x] Author 4 Python controllers (`route_banking_intent`, `assist_everyday_banking` wrapping `tools.search_help`, `assist_savings`, `assist_mortgages`) + `search_help` `toolFakeConfig`
+- [x] Delete legacy `spending_agent` and 6 `clientFunction` directories; pass `cxas lint` (`0/0`) and `audit_agent.py` (`0` P0/P1)
 
 ## Stage 3: Python Agent Test Suite, NAIVE Goldens & Simulations
 - [ ] Author `cloudbank/pyproject.toml` + `cloudbank/uv.lock` (PyPI index pinned, zero internal URLs)

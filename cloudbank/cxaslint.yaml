@@ -1,25 +1,13 @@
-# Lint policy for the Cloudbank Gemini Live demo.
-# Default severities live in cxas_scrapi; this file overrides only where
-# the SDK's lint catalog does not match the tool types this app uses.
-#
-# Run from `cloudbank/`: `cxas lint`.
+# Zero-warning lint policy for the Cloudbank Multi-Product GECX app.
+# Run from `cloudbank/` WITHOUT `--app-dir` so evaluation rules (E001-E011) execute:
+#   cd cloudbank && uv run --locked cxas lint
 
 app_dir: cxas_app/Cloudbank
 
-# Path to the evals directory (default; stated explicitly).
 evals_dir: evals/
 
-rules:
-  # T012 checks for pythonFunction.description or widgetTool.description on
-  # every tool JSON, and does not recognise `clientFunction` tools (see
-  # cxas_scrapi/utils/lint_rules/tools.py:526-549 — the rule falls into the
-  # missing-description branch whenever neither pythonFunction nor widgetTool
-  # is set, even when a clientFunction.description is present). The
-  # navigate_to tool is clientFunction-only and carries a full description
-  # inside its clientFunction block, so the rule is a false positive here.
-  T012: off
+rules: {}
 
-# Files the linter should not scan.
 ignore:
   - "**/__pycache__/**"
   - "**/test_*.py"

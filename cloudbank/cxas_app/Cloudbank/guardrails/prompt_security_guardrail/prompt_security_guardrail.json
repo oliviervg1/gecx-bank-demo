@@ -1,0 +1,18 @@
+{
+  "name": "prompt_security_guardrail",
+  "displayName": "prompt_security_guardrail",
+  "description": "Blocks prompt injection, jailbreaks, and system-instruction extraction attempts.",
+  "enabled": true,
+  "llmPromptSecurity": {
+    "defaultSettings": {}
+  },
+  "action": {
+    "respondImmediately": {
+      "responses": [
+        {
+          "text": "I can only help with your Cloudbank accounts, spending, savings goals, and mortgage questions. How would you like to look at your finances today?"
+        }
+      ]
+    }
+  }
+}
