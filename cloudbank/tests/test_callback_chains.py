@@ -31,23 +31,28 @@ def _run_after_model_chain(
     agent_name: str,
     cb_ctx: cbl.CallbackContext,
     initial_response: cbl.LlmResponse,
+    callback_names: list[str] | None = None,
 ) -> cbl.LlmResponse:
-    """Execute afterModelCallbacks in exact <agent>.json order with deep-copy per callback."""
-    agent_cfg = json.loads(
-        (BUNDLE_DIR / "agents" / agent_name / f"{agent_name}.json").read_text(
-            encoding="utf-8"
+    """Execute afterModelCallbacks with CXAS first-non-None short-circuit and deep-copy."""
+    if callback_names is None:
+        agent_cfg = json.loads(
+            (BUNDLE_DIR / "agents" / agent_name / f"{agent_name}.json").read_text(
+                encoding="utf-8"
+            )
         )
-    )
-    active = initial_response
-    for entry in agent_cfg["afterModelCallbacks"]:
-        cb_name = entry["pythonCode"].split("/")[-2]
+        callback_names = [
+            entry["pythonCode"].split("/")[-2]
+            for entry in agent_cfg["afterModelCallbacks"]
+        ]
+    for cb_name in callback_names:
         ns = load_callback_namespace(agent_name, "after_model_callbacks", cb_name)
         # Deep-copy models CXAS's None-mutation asymmetry: in-place edits returning None are dropped.
-        candidate = copy.deepcopy(active)
+        candidate = copy.deepcopy(initial_response)
         returned = ns["after_model_callback"](cb_ctx, candidate)
         if returned is not None:
-            active = returned
-    return active
+            # CXAS short-circuits the remainder of the hook on the first non-None LlmResponse.
+            return returned
+    return initial_response
 
 
 def test_callback_chain_order_pinned_across_all_agents() -> None:
@@ -66,24 +71,44 @@ def test_callback_chain_order_pinned_across_all_agents() -> None:
             f"agents/{name}/after_model_callbacks/release_line/python_code.py",
         ]
 
-    # Reason proof: when agent_transfer fires first on defense-in-depth target_agent,
-    # release_line sees function_call="transfer_to_agent" and skips stamping ui_emitted_seq,
-    # preserving the pending UI sequence for the destination agent.
+    # Reason proof (callbacks §2 short-circuit):
+    # 1. With agent_transfer FIRST, a defense-in-depth staged target_agent short-circuits
+    #    with Part.from_agent_transfer before release_line can stamp ui_emitted_seq.
     state: dict[str, Any] = {
         "target_agent": "savings_agent",
         "ui_view_state": {"seq": 2, "page": "spending", "view": "overview"},
         "ui_emitted_seq": "1",
     }
     ctx = _make_cb_ctx("everyday_banking_agent", "live-1", "inv-1", state)
-    resp = _run_after_model_chain(
-        "everyday_banking_agent",
-        ctx,
-        cbl.LlmResponse.from_parts(parts=[cbl.Part.from_text(text="Routing summary")]),
+    raw_model_resp = cbl.LlmResponse.from_parts(
+        parts=[cbl.Part.from_text(text="Routing summary [Diagnosis context: note]")]
     )
+    resp = _run_after_model_chain("everyday_banking_agent", ctx, raw_model_resp)
     assert len(resp.content.parts) == 1
     assert resp.content.parts[0].function_call.name == "transfer_to_agent"
     assert resp.content.parts[0].function_call.args == {"agent_name": "savings_agent"}
     assert state["ui_emitted_seq"] == "1"
+
+    # 2. If release_line ran FIRST, any response rewrite (diagnosis strip or Tier 2 JSON append)
+    #    returns a non-None LlmResponse that short-circuits the hook, preventing agent_transfer
+    #    from ever running and leaving target_agent stranded!
+    bad_state: dict[str, Any] = {
+        "target_agent": "savings_agent",
+        "ui_view_state": {"seq": 2, "page": "spending", "view": "overview"},
+        "ui_emitted_seq": "1",
+    }
+    bad_ctx = _make_cb_ctx("everyday_banking_agent", "live-2", "inv-2", bad_state)
+    swapped = _run_after_model_chain(
+        "everyday_banking_agent",
+        bad_ctx,
+        raw_model_resp,
+        callback_names=["release_line", "agent_transfer"],
+    )
+    assert all(
+        (p.function_call is None or p.function_call.name != "transfer_to_agent")
+        for p in swapped.content.parts
+    )
+    assert bad_state["target_agent"] == "savings_agent"
 
 
 def test_capture_utterance_hides_tools_extracts_digits_and_routes_before_tier1() -> None:
