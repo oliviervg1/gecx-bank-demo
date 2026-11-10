@@ -1,8 +1,10 @@
-// Persona fixtures. One file per persona, all in the same shape so every
-// screen and every get_* ClientFunction works for any of them without
-// branching. `fixtureConformance.test.ts` enforces that shape.
+// Persona fixtures (`customer_snapshot` verbatim).
 //
-// Vite imports the JSON at build time.
+// All monetary amounts are stored in integer pence (`*_pence`) and all rates
+// in integer basis points (`*_bps`) so TypeScript selectors and CXAS Python
+// controllers execute identical integer arithmetic with zero floating-point
+// rounding drift. Every fixture is validated against
+// `cloudbank/shared/customer_snapshot.schema.json` in both Vitest and Pytest.
 
 import chloeFixture from '../fixtures/chloe.json'
 import davidFixture from '../fixtures/david.json'
@@ -11,62 +13,102 @@ import sarahFixture from '../fixtures/sarah.json'
 
 import { ALL_PERSONAS, type Persona } from '../personas/personas'
 
+export const SPEND_CATEGORIES = [
+  'groceries',
+  'coffee_shops',
+  'eating_out',
+  'subscriptions',
+  'transport',
+  'shopping',
+  'bills',
+  'entertainment',
+] as const
+
+export type SpendCategory = (typeof SPEND_CATEGORIES)[number]
+export type TransactionCategory = SpendCategory | 'income'
+
+export type MonthOffset = 0 | 1 | 2
+
 export interface Transaction {
   id: string
-  days_ago: number
+  month_offset: MonthOffset
+  day: number
   vendor: string
-  category: string
-  amount: number
+  category: TransactionCategory
+  amount_pence: number
   is_subscription?: boolean
   is_anomaly?: boolean
-  renewal_days_ago?: number
 }
 
 export interface CurrentAccount {
   name: string
-  balance: number
-  currency: string
+  sort_code: string
+  account_number_last4: string
+  balance_pence: number
+  currency: 'GBP'
 }
 
-// Not every persona has a mortgage — Tom rents. Pages must handle its absence
-// rather than assume it.
+export interface SavingsAccount {
+  name: string
+  balance_pence: number
+  // Nominal annual rate in basis points used for monthly compounding math.
+  gross_rate_bps: number
+  // Effective annual rate (AER) in basis points for display and speech.
+  aer_bps: number
+  monthly_contribution_pence: number
+  goal_name: string
+  goal_target_pence: number
+}
+
+export interface MortgageRenewalOption {
+  id: string
+  label: string
+  term_years: number
+  rate_bps: number
+}
+
+// Not every persona has a mortgage — Tom rents. Pages and controllers handle
+// its absence gracefully.
 export interface Mortgage {
-  balance: number
+  balance_pence: number
   address: string
-  interest_rate: number
+  interest_rate_bps: number
   rate_type: string
-  term_remaining: string
+  fixed_until: string
+  term_remaining_months: number
   next_payment: {
-    amount: number
-    // A recurring day, not a date: an absolute date goes stale (the fixture
-    // once announced a payment a month in the past). Resolve it with
-    // nextMonthlyOccurrence().
+    amount_pence: number
     day_of_month: number
   }
+  annual_overpayment_allowance_pence: number
+  overpaid_this_year_pence: number
+  renewal_options: MortgageRenewalOption[]
+}
+
+export interface UserProfile {
+  first_name: string
+  last_name: string
+  age: number
+  location: string
+  employment: string
+  email?: string
+  annual_income_pence: number
+  monthly_rent_pence?: number
+  goals: string[]
 }
 
 export interface Fixture {
-  user: {
-    first_name: string
-    last_name: string
-    age: number
-    location: string
-    employment: string
-    // Declared here, not just present in the JSON, so ProfilePage, HomePage
-    // and MortgagePage can read them without `as never as {…}` casts.
-    email?: string
-    goals: string[]
-  }
+  user: UserProfile
   accounts: {
     current: CurrentAccount
+    savings: SavingsAccount
     mortgage?: Mortgage
   }
   transactions: Transaction[]
 }
 
-// Every persona in ALL_PERSONAS must have an entry — asserted by
-// fixtureConformance.test.ts, so adding a persona without a fixture fails the
-// suite rather than rendering an empty screen at runtime.
+export type CustomerSnapshot = Fixture
+
 const FIXTURES: Record<Persona, Fixture> = {
   chloe: chloeFixture as Fixture,
   david: davidFixture as Fixture,
