@@ -17,9 +17,9 @@
 - [x] Delete legacy `spending_agent` and 6 `clientFunction` directories; pass `cxas lint` (`0/0`) and `audit_agent.py` (`0` P0/P1)
 
 ## Stage 3: Python Agent Test Suite, NAIVE Goldens & Simulations
-- [ ] Author `cloudbank/pyproject.toml` + `cloudbank/uv.lock` (PyPI index pinned, zero internal URLs)
-- [ ] Author `conftest.py` (`protobuf.Struct` round-trip), `test_bundle_integrity.py`, `test_controllers.py`, `test_controller_state_matrix.py`, `test_callback_chains.py`, and `test_parity_vectors.py`
-- [ ] Author multi-segment NAIVE goldens (`common_session_parameters` deep-equal to fixtures) and `SimulationEvals`; pass `cxas lint` (`E001`–`E011`) and `pytest`
+- [x] Author `cloudbank/pyproject.toml` + `cloudbank/uv.lock` (PyPI index pinned, zero internal URLs)
+- [x] Author `conftest.py` (`protobuf.Struct` round-trip), `test_bundle_integrity.py`, `test_controllers.py`, `test_controller_state_matrix.py`, `test_callback_chains.py`, and `test_parity_vectors.py`
+- [x] Author multi-segment NAIVE goldens (`common_session_parameters` deep-equal to fixtures) and `SimulationEvals`; pass `cxas lint` (`E001`–`E011`) and `pytest`
 
 ## Stage 4: Bidi WebSocket Proxy Hardening (`cloudbank/proxy/`)
 - [ ] Pin PyPI index in `cloudbank/proxy/pyproject.toml`, move tests to `cloudbank/proxy/tests/`, and remove legacy client-tool protocol types
