@@ -123,10 +123,6 @@ class ServerTurnDiagnostics(BaseModel):
     type: Literal["turn_diagnostics"] = "turn_diagnostics"
     turnIndex: int | None = None
     agentTransfers: list[dict[str, Any]] = Field(default_factory=list)
-    toolCalls: list[dict[str, Any]] = Field(default_factory=list)
-    toolResponses: list[dict[str, Any]] = Field(default_factory=list)
-    updatedVariables: dict[str, Any] = Field(default_factory=dict)
-    rootSpan: dict[str, Any] | None = None
 
 
 class ServerSearchSuggestions(BaseModel):

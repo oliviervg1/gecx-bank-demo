@@ -16,7 +16,7 @@
   "accounts": {
     "current": {
       "name": "Cloudbank Everyday Account",
-      "sort_code": "04-00-75",
+      "sort_code": "00-00-99",
       "account_number_last4": "1954",
       "balance_pence": 184050,
       "currency": "GBP"
@@ -52,6 +52,7 @@
     { "id": "txn-muji", "month_offset": 0, "day": 20, "vendor": "Muji", "category": "shopping", "amount_pence": 4600 },
     { "id": "txn-adobe", "month_offset": 0, "day": 22, "vendor": "Adobe Creative Cloud", "category": "subscriptions", "amount_pence": 19900, "is_subscription": true, "is_anomaly": true },
 
+    { "id": "txn-invoice-2", "month_offset": 1, "day": 1, "vendor": "Client Invoice", "category": "income", "amount_pence": -265000 },
     { "id": "txn-rent-2", "month_offset": 1, "day": 1, "vendor": "Hamilton Lettings", "category": "bills", "amount_pence": 145000, "is_subscription": true },
     { "id": "txn-coffee-1-0", "month_offset": 1, "day": 2, "vendor": "Pret a Manger", "category": "coffee_shops", "amount_pence": 360 },
     { "id": "txn-tfl-2", "month_offset": 1, "day": 5, "vendor": "TfL", "category": "transport", "amount_pence": 3870 },
@@ -68,6 +69,7 @@
     { "id": "txn-lunch-1-1", "month_offset": 1, "day": 24, "vendor": "Franco Manca", "category": "eating_out", "amount_pence": 1450 },
     { "id": "txn-gig-2", "month_offset": 1, "day": 26, "vendor": "Barbican", "category": "entertainment", "amount_pence": 3500 },
 
+    { "id": "txn-invoice-3", "month_offset": 2, "day": 1, "vendor": "Client Invoice", "category": "income", "amount_pence": -310000 },
     { "id": "txn-rent-3", "month_offset": 2, "day": 1, "vendor": "Hamilton Lettings", "category": "bills", "amount_pence": 145000, "is_subscription": true },
     { "id": "txn-coffee-2-0", "month_offset": 2, "day": 3, "vendor": "Pret a Manger", "category": "coffee_shops", "amount_pence": 360 },
     { "id": "txn-tfl-3", "month_offset": 2, "day": 5, "vendor": "TfL", "category": "transport", "amount_pence": 4510 },

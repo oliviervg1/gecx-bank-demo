@@ -53,7 +53,7 @@ Never hardcode a GCP project ID, region, or app UUID in code, tests, scripts, or
   "gcp_project_id": "<your-gcp-project-id>",
   "location": "eu",
   "app_name": "Cloudbank",
-  "deployed_app_id": "<your-ces-app-uuid>",
+  "deployed_app_id": "<your-cxas-app-uuid>",
   "app_dir": "cxas_app",
   "goldens_dir": "evals/goldens",
   "simulations_dir": "evals/simulations",
@@ -92,7 +92,7 @@ Always deploy through `./cloudbank/push.sh` rather than calling `cxas push` or `
 cd cloudbank
 ./push.sh                                   # Deploy to prod target in gecx-config.json
 ./push.sh dev                               # Deploy to dev or named branch target
-./push.sh --create-version v-release-1      # Deploy + snapshot an immutable CES version
+./push.sh --create-version v-release-1      # Deploy + snapshot an immutable CXAS version
 ```
 
 What `./push.sh` enforces in sequence:

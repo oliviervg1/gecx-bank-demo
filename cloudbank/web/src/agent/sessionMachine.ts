@@ -54,7 +54,6 @@ export interface SessionMachineState {
   micDenied: boolean
   errorMessage: string | null
   turns: ConversationTurn[]
-  diagnostics: ServerTurnDiagnosticsMsg[]
   activeAgentName: string
   latestUiState: UiViewStatePayload | null
   latestUiTier: 1 | 2 | 3 | null
@@ -81,6 +80,7 @@ export type SessionEvent =
   | { type: 'PERSONA_SWITCH'; persona: PersonaId }
   | { type: 'PTT_PRESS' }
   | { type: 'PTT_RELEASE' }
+  | { type: 'STOP_MIC_ONLY' }
   | { type: 'MIC_DENIED'; message?: string }
   | { type: 'CLIENT_TEXT_SUBMIT'; text: string }
   | { type: 'SERVER_MESSAGE'; epoch: number; msg: ServerMsg }
@@ -110,7 +110,6 @@ export function createInitialSessionState(persona: PersonaId = 'chloe'): Session
     micDenied: false,
     errorMessage: null,
     turns: [],
-    diagnostics: [],
     activeAgentName: 'root_agent',
     latestUiState: null,
     latestUiTier: null,
@@ -222,13 +221,6 @@ function attachSearchSuggestions(
   return next
 }
 
-const TOOL_TO_AGENT: Record<string, string> = {
-  route_banking_intent: 'root_agent',
-  assist_everyday_banking: 'everyday_banking_agent',
-  assist_savings: 'savings_agent',
-  assist_mortgages: 'mortgage_agent',
-}
-
 function inferActiveAgentFromDiagnostics(
   current: string,
   diag: ServerTurnDiagnosticsMsg,
@@ -240,13 +232,6 @@ function inferActiveAgentFromDiagnostics(
     )
     const tail = rawTarget.split('/').filter(Boolean).pop()
     if (tail) active = tail
-  }
-  for (const call of diag.toolCalls) {
-    const rawTool = String(call.displayName ?? call.display_name ?? call.tool ?? call.name ?? '')
-    const toolTail = rawTool.split('/').filter(Boolean).pop() ?? ''
-    if (toolTail in TOOL_TO_AGENT) {
-      active = TOOL_TO_AGENT[toolTail]
-    }
   }
   return active
 }
@@ -313,7 +298,7 @@ export function reduceSessionMachine(
       }
     }
 
-    // Row 11: PERSONA_SWITCH valid from ANY state; tears down WS, resets UI/seq/stream/Inspector, opens fresh session.
+    // Row 11: PERSONA_SWITCH valid from ANY state; tears down WS, resets UI/seq/stream, opens fresh session.
     case 'PERSONA_SWITCH': {
       if (event.persona === state.persona && state.phase === 'ready' && state.turns.length === 0) {
         return { state, effects: [] }
@@ -480,6 +465,16 @@ export function reduceSessionMachine(
           },
         ],
       }
+    }
+
+    case 'STOP_MIC_ONLY': {
+      if (state.phase === 'capturing') {
+        return {
+          state: { ...state, phase: 'ready', userHasFloor: false },
+          effects: [{ type: 'STOP_MIC_CAPTURE' }],
+        }
+      }
+      return { state, effects: [{ type: 'STOP_MIC_CAPTURE' }] }
     }
 
     // Row 9: Mic permission denied surfaces actionable error and retries cleanly on next press.
@@ -880,7 +875,6 @@ function reduceServerMessage(
       return {
         state: {
           ...state,
-          diagnostics: [...state.diagnostics, msg],
           activeAgentName: inferActiveAgentFromDiagnostics(state.activeAgentName, msg),
         },
         effects: [],

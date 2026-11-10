@@ -14,11 +14,15 @@ export function buildSessionVariables(
     now?: Date
   } = {},
 ): SeedVariables {
+  const firstName = fixture.user.first_name.trim()
+  if (!firstName) {
+    throw new Error(`Invalid customer_snapshot for ${personaId}: missing user.first_name`)
+  }
   const demoDate = opts.demoDate ?? DEFAULT_PINNED_DEMO_DATE
   const timeOfDay = opts.timeOfDay ?? resolveTimeOfDay(opts.now)
   return {
     persona_id: personaId,
-    first_name: fixture.user.first_name,
+    first_name: firstName,
     demo_date: demoDate,
     time_of_day: timeOfDay,
     customer_snapshot: fixture,

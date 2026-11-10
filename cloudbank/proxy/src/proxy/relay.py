@@ -369,9 +369,11 @@ class Relay:
 
             diag = so.get("diagnosticInfo") or so.get("diagnostic_info")
             if turn_completed and isinstance(diag, dict):
-                diag_msg, latest_tier3_ui = _extract_turn_diagnostics(
+                diag_msg, latest_tier3_ui, diag_ended = _extract_turn_diagnostics(
                     diag, turn_idx
                 )
+                if diag_ended:
+                    has_end_session = True
                 if latest_tier3_ui is not None:
                     tier3_msg = self._maybe_emit_ui_state(latest_tier3_ui, tier=3)
                     if tier3_msg is not None:
@@ -457,12 +459,10 @@ def _extract_search_suggestions(so: dict[str, Any]) -> ServerSearchSuggestions |
 def _extract_turn_diagnostics(
     diag: dict[str, Any],
     turn_index: int | None,
-) -> tuple[ServerTurnDiagnostics | None, Any]:
+) -> tuple[ServerTurnDiagnostics | None, Any, bool]:
     transfers: list[dict[str, Any]] = []
-    tool_calls: list[dict[str, Any]] = []
-    tool_responses: list[dict[str, Any]] = []
-    merged_vars: dict[str, Any] = {}
     latest_ui_view: Any = None
+    saw_end_session = False
 
     for message in diag.get("messages") or []:
         if not isinstance(message, dict):
@@ -472,41 +472,39 @@ def _extract_turn_diagnostics(
                 continue
             xfer = chunk.get("agentTransfer") or chunk.get("agent_transfer")
             if isinstance(xfer, dict):
-                transfers.append(xfer)
+                safe_xfer = {
+                    k: v
+                    for k, v in xfer.items()
+                    if k in ("targetAgent", "target_agent", "displayName", "display_name")
+                    and isinstance(v, str)
+                }
+                if safe_xfer:
+                    transfers.append(safe_xfer)
             tc = chunk.get("toolCall") or chunk.get("tool_call")
             if isinstance(tc, dict):
-                tool_calls.append(tc)
-            tr = chunk.get("toolResponse") or chunk.get("tool_response")
-            if isinstance(tr, dict):
-                tool_responses.append(tr)
+                tc_name = str(
+                    tc.get("displayName")
+                    or tc.get("display_name")
+                    or tc.get("tool")
+                    or ""
+                )
+                if tc_name == "end_session" or tc_name.endswith("/tools/end_session"):
+                    saw_end_session = True
             uv = chunk.get("updatedVariables") or chunk.get("updated_variables")
             if isinstance(uv, dict):
                 if "ui_view_state" in uv:
                     latest_ui_view = uv["ui_view_state"]
-                for k, v in uv.items():
-                    if k != "customer_snapshot":
-                        merged_vars[k] = v
+                if uv.get("call_complete") == "released":
+                    saw_end_session = True
 
-    root_span = diag.get("rootSpan") or diag.get("root_span")
-    clean_span = root_span if isinstance(root_span, dict) else None
-
-    if (
-        not transfers
-        and not tool_calls
-        and not tool_responses
-        and not merged_vars
-        and clean_span is None
-    ):
-        return None, latest_ui_view
+    if not transfers:
+        return None, latest_ui_view, saw_end_session
 
     return (
         ServerTurnDiagnostics(
             turnIndex=turn_index,
             agentTransfers=transfers,
-            toolCalls=tool_calls,
-            toolResponses=tool_responses,
-            updatedVariables=merged_vars,
-            rootSpan=clean_span,
         ),
         latest_ui_view,
+        saw_end_session,
     )

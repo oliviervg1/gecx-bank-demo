@@ -15,7 +15,7 @@
   "accounts": {
     "current": {
       "name": "Cloudbank Everyday Account",
-      "sort_code": "04-00-75",
+      "sort_code": "00-00-99",
       "account_number_last4": "4821",
       "balance_pence": 425075,
       "currency": "GBP"
@@ -84,6 +84,7 @@
     { "id": "txn-pret-03", "month_offset": 0, "day": 22, "vendor": "Pret a Manger", "category": "coffee_shops", "amount_pence": 495 },
     { "id": "txn-tesco-03", "month_offset": 0, "day": 23, "vendor": "Tesco Express", "category": "groceries", "amount_pence": 1240 },
 
+    { "id": "txn-salary-2", "month_offset": 1, "day": 1, "vendor": "Salary", "category": "income", "amount_pence": -320000 },
     { "id": "txn-mortgage-02", "month_offset": 1, "day": 1, "vendor": "Cloudbank Mortgage", "category": "bills", "amount_pence": 139971, "is_subscription": true },
     { "id": "txn-council-02", "month_offset": 1, "day": 3, "vendor": "Manchester City Council", "category": "bills", "amount_pence": 16500, "is_subscription": true },
     { "id": "txn-tesco-04", "month_offset": 1, "day": 4, "vendor": "Tesco", "category": "groceries", "amount_pence": 2840 },
@@ -105,6 +106,7 @@
     { "id": "txn-uber-02", "month_offset": 1, "day": 26, "vendor": "Uber", "category": "transport", "amount_pence": 940 },
     { "id": "txn-pret-05", "month_offset": 1, "day": 27, "vendor": "Pret a Manger", "category": "coffee_shops", "amount_pence": 495 },
 
+    { "id": "txn-salary-3", "month_offset": 2, "day": 1, "vendor": "Salary", "category": "income", "amount_pence": -320000 },
     { "id": "txn-mortgage-03", "month_offset": 2, "day": 1, "vendor": "Cloudbank Mortgage", "category": "bills", "amount_pence": 139971, "is_subscription": true },
     { "id": "txn-council-03", "month_offset": 2, "day": 3, "vendor": "Manchester City Council", "category": "bills", "amount_pence": 16500, "is_subscription": true },
     { "id": "txn-tesco-06", "month_offset": 2, "day": 5, "vendor": "Tesco", "category": "groceries", "amount_pence": 2630 },

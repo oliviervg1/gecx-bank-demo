@@ -245,6 +245,7 @@ def test_push_sh_pipeline_order_and_no_push_eval() -> None:
         "uv run --locked pytest -v",
         "uv run --locked python scripts/manage_ces_app.py --config gecx-config.json push",
         "uv run --locked python scripts/run_golden_evals.py --config gecx-config.json sync",
+        "uv run --locked python scripts/manage_ces_app.py --config gecx-config.json create-version",
     ]
     positions = []
     for step in required_steps:
@@ -326,3 +327,35 @@ def test_push_hooks_gate_manage_ces_app_push_subcommand(tmp_path: Path) -> None:
         env=env,
     )
     assert readonly_res.returncode == 0
+
+    # 3. Non-executing commands mentioning push.sh as a file argument never false-trigger!
+    for safe_cmd in (
+        "git add cloudbank/push.sh",
+        "git diff cloudbank/push.sh",
+        "cat cloudbank/push.sh",
+        "bash -n cloudbank/push.sh",
+    ):
+        payload = json.dumps({"tool_input": {"command": safe_cmd}})
+        for hook in (push_hook, lint_hook):
+            res = subprocess.run(
+                ["bash", str(hook)],
+                input=payload,
+                capture_output=True,
+                text=True,
+                cwd=REPO_ROOT,
+                env=env,
+            )
+            assert res.returncode == 0, f"{hook.name} false-triggered on {safe_cmd!r}: {res.stderr}"
+
+    # Whereas actually invoking ./push.sh in command position IS intercepted!
+    exec_push_payload = json.dumps({"tool_input": {"command": "cd cloudbank && ./push.sh"}})
+    exec_res = subprocess.run(
+        ["bash", str(lint_hook)],
+        input=exec_push_payload,
+        capture_output=True,
+        text=True,
+        cwd=REPO_ROOT,
+        env=env,
+    )
+    assert exec_res.returncode == 2
+    assert "LINT BLOCKED" in exec_res.stderr

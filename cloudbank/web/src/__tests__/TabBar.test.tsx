@@ -23,16 +23,14 @@ describe('TabBar (5 tabs)', () => {
     expect(screen.getByText('Profile')).toBeInTheDocument()
   })
 
-  it('marks the active tab with data-active="true"', () => {
+  it('marks the active tab with data-active="true" and aria-current="page"', () => {
     render(withPage('savings'))
-    expect(screen.getByRole('button', { name: /savings/i })).toHaveAttribute(
-      'data-active',
-      'true',
-    )
-    expect(screen.getByRole('button', { name: /^home$/i })).toHaveAttribute(
-      'data-active',
-      'false',
-    )
+    const savingsBtn = screen.getByRole('button', { name: /savings/i })
+    const homeBtn = screen.getByRole('button', { name: /^home$/i })
+    expect(savingsBtn).toHaveAttribute('data-active', 'true')
+    expect(savingsBtn).toHaveAttribute('aria-current', 'page')
+    expect(homeBtn).toHaveAttribute('data-active', 'false')
+    expect(homeBtn).not.toHaveAttribute('aria-current')
   })
 
   it('calls navigateTo(pageId) when a tab is clicked', () => {

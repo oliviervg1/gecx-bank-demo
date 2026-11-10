@@ -1,7 +1,7 @@
 # `route_banking_intent` Specification
 
 - **Owning Agent:** `root_agent`
-- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L1-L167) (entrypoint at [`#L13-L85`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L13-L85))
+- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L1-L160) (entrypoint at [`#L13-L63`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L13-L63))
 - **Manifest:** [route_banking_intent.json](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/route_banking_intent.json)
 
 ## 1. Overview & Architectural Principles
@@ -59,12 +59,12 @@ def route_banking_intent(
 
 ### Helper Index
 
-- [`_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L88-L94): Increments `ui_view_state.seq` monotonically and writes the new page payload.
-- [`_stage_domain_route`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L97-L107): Resets `unclear_count = "0"`, writes `router_state`, and sets `target_agent` (`everyday_banking_agent`, `savings_agent`, or `mortgage_agent`).
-- [`_build_greeting`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L110-L124): Composes a time-of-day (`morning`, `afternoon`, `evening`) and `first_name`-aware greeting introducing all three banking areas.
-- [`_capabilities_message`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L127-L135): Summarises support across everyday spending, savings goal projections, and mortgages.
-- [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L138-L151): Implements the non-terminating 2-strike unclear ladder.
-- [`_handle_farewell`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L154-L167): Sets `call_complete = "true"` and `escalation_reason = "CALL_COMPLETED"` so `release_line` appends `Part.from_end_session`.
+- [`_handle_local_intent`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L66-L81) & [`_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L84-L90): Dispatches local hub actions, increments `ui_view_state.seq` monotonically, and writes the new page payload.
+- [`_stage_domain_route`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L93-L100): Resets `unclear_count = "0"`, writes `router_state`, and sets `target_agent` (`everyday_banking_agent`, `savings_agent`, or `mortgage_agent`).
+- [`_build_greeting`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L103-L117): Composes a time-of-day (`morning`, `afternoon`, `evening`) and `first_name`-aware greeting introducing all three banking areas.
+- [`_capabilities_message`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L120-L128): Summarises support across everyday spending, savings goal projections, and mortgages.
+- [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L131-L144): Implements the non-terminating 2-strike unclear ladder.
+- [`_handle_farewell`](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py#L147-L160): Sets `call_complete = "true"` and `escalation_reason = "CALL_COMPLETED"` so `release_line` appends `Part.from_end_session`.
 
 ### Session State Reads & Writes
 

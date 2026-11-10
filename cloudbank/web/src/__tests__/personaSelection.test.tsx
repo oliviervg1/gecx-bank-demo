@@ -24,7 +24,6 @@ const stubAgent: AgentContextValue = {
   micState: 'idle',
   sessionId: 'sess-1',
   turns: [],
-  diagnostics: [],
   activeAgentName: 'root_agent',
   latestUiState: null,
   latestUiTier: null,

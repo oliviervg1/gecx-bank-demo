@@ -73,10 +73,6 @@ export interface ServerTurnDiagnosticsMsg {
   type: 'turn_diagnostics'
   turnIndex?: number
   agentTransfers: Array<Record<string, unknown>>
-  toolCalls: Array<Record<string, unknown>>
-  toolResponses: Array<Record<string, unknown>>
-  updatedVariables: Record<string, unknown>
-  rootSpan?: Record<string, unknown>
 }
 
 export interface ServerSearchSuggestionsMsg {
@@ -214,14 +210,6 @@ export function parseServerMsg(raw: string): ServerMsg {
         agentTransfers: Array.isArray(parsed.agentTransfers)
           ? (parsed.agentTransfers as Array<Record<string, unknown>>)
           : [],
-        toolCalls: Array.isArray(parsed.toolCalls)
-          ? (parsed.toolCalls as Array<Record<string, unknown>>)
-          : [],
-        toolResponses: Array.isArray(parsed.toolResponses)
-          ? (parsed.toolResponses as Array<Record<string, unknown>>)
-          : [],
-        updatedVariables: isPlainObject(parsed.updatedVariables) ? parsed.updatedVariables : {},
-        rootSpan: isPlainObject(parsed.rootSpan) ? parsed.rootSpan : undefined,
       }
     case 'search_suggestions':
       return {

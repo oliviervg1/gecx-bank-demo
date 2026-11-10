@@ -10,7 +10,6 @@ function makeAgent(overrides: Partial<AgentContextValue> = {}): AgentContextValu
     micState: 'idle',
     sessionId: 'sess-1',
     turns: [],
-    diagnostics: [],
     activeAgentName: 'root_agent',
     latestUiState: null,
     latestUiTier: null,
@@ -92,11 +91,13 @@ describe('ConciergePill', () => {
     expect(v.beginTalking).not.toHaveBeenCalled()
   })
 
-  it('shows "Reconnect" on transport error and calls reconnect on click', () => {
-    const v = makeAgent({ pushToTalk: false, phase: 'error', connState: 'error' })
+  it('shows "Reconnect" on transport error without arming mic capture on pointerDown, even in push-to-talk mode', () => {
+    const v = makeAgent({ pushToTalk: true, phase: 'error', connState: 'error', micDenied: false })
     render(withAgent(v))
-    expect(screen.getByText('Reconnect')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button'))
+    const pill = screen.getByRole('button', { name: 'Reconnect' })
+    fireEvent.pointerDown(pill, { pointerId: 1 })
+    expect(v.beginTalking).not.toHaveBeenCalled()
+    fireEvent.click(pill)
     expect(v.reconnect).toHaveBeenCalledTimes(1)
   })
 
@@ -130,6 +131,7 @@ describe('ConciergePill', () => {
         }),
       ),
     )
+    expect(screen.getByText('Microphone off')).toBeInTheDocument()
     expect(pill).toHaveAttribute(
       'title',
       'Allow microphone access in your browser, then hold to talk',

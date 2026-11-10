@@ -28,10 +28,8 @@ def route_banking_intent(
     """Classify the caller's opening request and stage the appropriate banking action.
 
     Pass the intent matching what the caller just asked for and a short summary
-    in topic_hint when available.
-
-    Do not speak a conversational pacing phrase before calling this tool; call
-    it immediately so the caller hears only the post-tool response.
+    in topic_hint when available. Do not speak a conversational pacing phrase
+    before calling this tool; call it immediately.
 
     Args:
         intent: High-level banking intent spoken by the caller ("GREETING",
@@ -45,44 +43,42 @@ def route_banking_intent(
         routing context.
     """
     try:
-        clean_intent = (intent or "").strip()
-        clean_hint = (topic_hint or "").strip()
-
-        if clean_intent == "FAREWELL":
-            return _handle_farewell()
-
-        if clean_intent in _DOMAIN_TARGETS:
-            return _stage_domain_route(clean_intent, clean_hint)
-
-        if clean_intent == "GREETING":
-            context.state["unclear_count"] = "0"
-            _emit_ui_view({"page": "home"})
-            return {"agent_action": _build_greeting()}
-
-        if clean_intent == "NAVIGATE_HOME":
-            context.state["unclear_count"] = "0"
-            _emit_ui_view({"page": "home"})
-            return {
-                "agent_action": "I have opened your Home summary. Would you like to look into your spending, your savings pot, or your mortgage?"
-            }
-
-        if clean_intent == "NAVIGATE_PROFILE":
-            context.state["unclear_count"] = "0"
-            _emit_ui_view({"page": "profile"})
-            return {
-                "agent_action": "I have opened your Profile page, where you can review your personal details and card controls. What else can I help you with?"
-            }
-
-        if clean_intent == "CAPABILITIES":
-            context.state["unclear_count"] = "0"
-            return {"agent_action": _capabilities_message()}
-
-        return _handle_unclear()
+        return _dispatch_route(intent.strip(), topic_hint.strip())
     except Exception:
         logger.exception("route_banking_intent failed")
         return {
             "agent_action": "I am sorry, I ran into a temporary issue checking that. Could you tell me again whether you would like help with everyday banking, savings, or mortgages?"
         }
+
+
+def _dispatch_route(intent: str, hint: str) -> dict:
+    """Route a normalised top-level intent to its handler."""
+    if intent == "FAREWELL":
+        return _handle_farewell()
+    if intent in _DOMAIN_TARGETS:
+        return _stage_domain_route(intent, hint)
+    if intent in ("GREETING", "NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES"):
+        context.state["unclear_count"] = "0"
+        return _handle_local_intent(intent)
+    return _handle_unclear()
+
+
+def _handle_local_intent(intent: str) -> dict:
+    """Handle greeting, Home/Profile screen navigation, or capability summary."""
+    if intent == "GREETING":
+        _emit_ui_view({"page": "home"})
+        return {"agent_action": _build_greeting()}
+    if intent == "NAVIGATE_HOME":
+        _emit_ui_view({"page": "home"})
+        return {
+            "agent_action": "I have opened your Home summary. Would you like to look into your spending, your savings pot, or your mortgage?"
+        }
+    if intent == "NAVIGATE_PROFILE":
+        _emit_ui_view({"page": "profile"})
+        return {
+            "agent_action": "I have opened your Profile page, where you can review your personal details and card controls. What else can I help you with?"
+        }
+    return {"agent_action": _capabilities_message()}
 
 
 def _emit_ui_view(payload: dict) -> None:
@@ -98,10 +94,7 @@ def _stage_domain_route(intent: str, hint: str) -> dict:
     """Stage silent specialist routing in target_agent and record router_state."""
     target_agent, label = _DOMAIN_TARGETS[intent]
     context.state["unclear_count"] = "0"
-    context.state["router_state"] = {
-        "last_intent": intent,
-        "topic_hint": hint,
-    }
+    context.state["router_state"] = {"last_intent": intent, "topic_hint": hint}
     context.state["target_agent"] = target_agent
     suffix = f": {hint}" if hint else "."
     return {"agent_action": f"Customer asked about {label}{suffix}"}

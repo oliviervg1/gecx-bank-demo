@@ -9,6 +9,7 @@ _DIAGNOSIS_NOTE_RE = re.compile(r"\s*\[Diagnosis context:.*?\]\s*", re.DOTALL)
 
 
 def _is_call_ended(state: Any) -> bool:
+    """Return True when the session completion latch has been staged or released."""
     return state.get("call_complete") in ("true", "released")
 
 

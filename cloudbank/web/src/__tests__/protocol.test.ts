@@ -31,10 +31,6 @@ describe('protocol.ts — symmetric with cloudbank/proxy/src/proxy/protocol.py',
       type: 'turn_diagnostics',
       turnIndex: 1,
       agentTransfers: [],
-      toolCalls: [],
-      toolResponses: [],
-      updatedVariables: {},
-      rootSpan: undefined,
     })
     expect(
       parseServerMsg(

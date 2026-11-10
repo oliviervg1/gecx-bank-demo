@@ -61,6 +61,7 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
                 <button
                   key={opt.id}
                   type="button"
+                  aria-pressed={active}
                   data-active={active}
                   onClick={() => setPeriod(opt.id)}
                   className={
@@ -79,13 +80,15 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
       </div>
 
       {isTopSubview && (
-        <div className="flex items-center gap-4 mt-3">
+        <div className="flex items-center gap-4 mt-3" role="tablist" aria-label="Spending views">
           {SUBVIEW_TABS.map((tab) => {
             const active = view === tab.id
             return (
               <button
                 key={tab.id}
                 type="button"
+                role="tab"
+                aria-selected={active}
                 data-active={active}
                 onClick={() => setView({ view: tab.id })}
                 className={

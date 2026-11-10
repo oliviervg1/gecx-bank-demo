@@ -81,7 +81,7 @@ export function ProfilePage() {
               onClick={() => {
                 const next = !cardFrozen
                 setCardFrozen(next)
-                show(next ? 'Debit card frozen on screen.' : 'Debit card unfrozen.')
+                show(next ? 'Your debit card is frozen.' : 'Your debit card is unfrozen.')
               }}
               className={
                 'px-3 py-1 rounded-lg text-[12px] font-semibold border ' +
@@ -98,7 +98,7 @@ export function ProfilePage() {
         <ListRow
           icon={<IconBadge icon={Shield} tone="green" />}
           title="Privacy & Security"
-          subtitle="FCA Consumer Duty & account protection active"
+          subtitle="Two-step verification on · Biometric sign-in active"
         />
 
         <ListRow

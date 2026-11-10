@@ -9,7 +9,7 @@ uv run --locked uvicorn proxy.main:app --reload --host 127.0.0.1 --port 8080
 
 ## Security Posture — Localhost Only
 
-**This proxy is unauthenticated by design and must only bind to `127.0.0.1`.** Because it holds local `ADC` credentials and opens billed CES sessions with them, never pass `--host 0.0.0.0` or expose the port on a routable interface without adding authentication.
+**This proxy is unauthenticated by design and must only bind to `127.0.0.1`.** Because it holds local `ADC` credentials and opens billed CX Agent Studio sessions with them, never pass `--host 0.0.0.0` or expose the port on a routable interface without adding authentication.
 
 | Control | Policy | Environment Override |
 |---|---|---|

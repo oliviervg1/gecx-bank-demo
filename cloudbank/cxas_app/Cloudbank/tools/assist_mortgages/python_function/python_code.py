@@ -50,10 +50,8 @@ def assist_mortgages(
     """Answer mortgage summary, overpayment allowance, overpayment projection, renewal deal, and renter readiness requests.
 
     Pass only the arguments spoken by the caller on this turn. Monetary amounts
-    are passed in pounds (for example ``monthly_overpayment=200.0``).
-
-    Do not speak a conversational pacing phrase before calling this tool; call
-    it immediately so the caller hears only the post-tool response.
+    are passed in pounds (for example ``monthly_overpayment=200.0``). Do not
+    speak a pacing phrase before calling this tool; call it immediately.
 
     Args:
         query_type: Specific mortgage request ("summary", "next_payment",
@@ -70,80 +68,70 @@ def assist_mortgages(
         A single-key dict with ``agent_action`` carrying the spoken reply.
     """
     try:
-        clean_switch = (switch_intent or "").strip()
-        clean_query = (query_type or "").strip()
-        monthly_pence = _to_pence(monthly_overpayment)
-        lump_pence = _to_pence(lump_sum_overpayment)
-
         handoff = dict(context.state.get("handoff_context") or {})
         context.state["handoff_context"] = {}
-
-        if clean_switch:
-            return _handle_switch_intent(clean_switch)
-
+        if switch_intent.strip():
+            return _handle_switch_intent(switch_intent.strip())
         snapshot = _normalize_snapshot(context.state.get("customer_snapshot") or {})
         if not snapshot:
             return {
                 "agent_action": "I could not load your mortgage details right now. Please try your question again in a moment."
             }
-
-        anchor_year, anchor_month, anchor_day = _parse_demo_date()
-        statement_month = _MONTH_NAMES[anchor_month - 1]
-
-        mortgage = snapshot.get("mortgage")
-        mortgage_st = dict(context.state.get("mortgage_state") or {})
-        if (
-            mortgage is None
-            and not clean_query
-            and monthly_pence <= 0
-            and lump_pence <= 0
-            and mortgage_st.get("pending_savings_pivot")
-        ):
-            return _handle_unclear()
-        if mortgage is None:
-            context.state["unclear_count"] = "0"
-            return _handle_renter_guidance(snapshot, statement_month)
-
-        handoff_freed = int(handoff.get("freed_monthly_pence") or 0)
-        if (
-            clean_query in ("", "overpayment_projection")
-            and monthly_pence <= 0
-            and lump_pence <= 0
-            and handoff_freed > 0
-        ):
-            monthly_pence = handoff_freed
-            clean_query = "overpayment_projection"
-        elif not clean_query and (monthly_pence > 0 or lump_pence > 0):
-            clean_query = "overpayment_projection"
-
-        if clean_query == "summary":
-            context.state["unclear_count"] = "0"
-            return _handle_summary(mortgage, anchor_year, anchor_month, anchor_day)
-
-        if clean_query == "next_payment":
-            context.state["unclear_count"] = "0"
-            return _handle_next_payment(mortgage, anchor_year, anchor_month, anchor_day)
-
-        if clean_query == "overpayment_allowance":
-            context.state["unclear_count"] = "0"
-            return _handle_allowance(mortgage, statement_month)
-
-        if clean_query == "overpayment_projection":
-            context.state["unclear_count"] = "0"
-            return _handle_overpayment_projection(
-                mortgage, monthly_pence, lump_pence, statement_month
-            )
-
-        if clean_query == "rate_options":
-            context.state["unclear_count"] = "0"
-            return _handle_rate_options(mortgage, statement_month)
-
-        return _handle_unclear()
+        return _dispatch_mortgage(
+            snapshot,
+            query_type.strip(),
+            _to_pence(monthly_overpayment),
+            _to_pence(lump_sum_overpayment),
+            handoff,
+        )
     except Exception:
         logger.exception("assist_mortgages failed")
         return {
             "agent_action": "I am sorry, I ran into a temporary issue checking your mortgage details. Please ask again in a moment."
         }
+
+
+def _dispatch_mortgage(
+    snapshot: dict, query: str, monthly_pence: int, lump_pence: int, handoff: dict
+) -> dict:
+    """Resolve renter/handoff defaults and dispatch a mortgage query."""
+    anchor_year, anchor_month, anchor_day = _parse_demo_date()
+    statement_month = _MONTH_NAMES[anchor_month - 1]
+    mortgage = snapshot["mortgage"]
+    mortgage_st = dict(context.state.get("mortgage_state") or {})
+
+    if mortgage is None:
+        if not query and monthly_pence <= 0 and lump_pence <= 0 and mortgage_st.get("pending_savings_pivot"):
+            return _handle_unclear()
+        context.state["unclear_count"] = "0"
+        return _handle_renter_guidance(snapshot, statement_month)
+
+    handoff_freed = int(handoff.get("freed_monthly_pence") or 0)
+    if (
+        query in ("", "overpayment_projection")
+        and monthly_pence <= 0
+        and lump_pence <= 0
+        and handoff_freed > 0
+    ):
+        monthly_pence = handoff_freed
+        query = "overpayment_projection"
+    elif not query and (monthly_pence > 0 or lump_pence > 0):
+        query = "overpayment_projection"
+
+    handlers = {
+        "summary": lambda: _handle_summary(mortgage, anchor_year, anchor_month, anchor_day),
+        "next_payment": lambda: _handle_next_payment(mortgage, anchor_year, anchor_month, anchor_day),
+        "overpayment_allowance": lambda: _handle_allowance(mortgage, statement_month),
+        "overpayment_projection": lambda: _handle_overpayment_projection(
+            mortgage, monthly_pence, lump_pence, statement_month
+        ),
+        "rate_options": lambda: _handle_rate_options(mortgage, statement_month),
+    }
+    handler = handlers.get(query)
+    if handler is None:
+        return _handle_unclear()
+    context.state["unclear_count"] = "0"
+    return handler()
 
 
 def _half_up(n: int, d: int) -> int:
@@ -256,51 +244,47 @@ def _project_overpayment(
 
 def _normalize_snapshot(raw: dict) -> dict:
     """Coerce protobuf Struct floats on user, savings, and mortgage into exact ints."""
-    if not isinstance(raw, dict) or "accounts" not in raw:
+    if not isinstance(raw, dict) or "accounts" not in raw or "user" not in raw:
         return {}
-    user_raw = dict(raw.get("user") or {})
-    accounts_raw = dict(raw.get("accounts") or {})
-    sav_raw = dict(accounts_raw.get("savings") or {})
+    user_raw = raw["user"]
+    accounts_raw = raw["accounts"]
+    sav_raw = accounts_raw["savings"]
     mg_raw = accounts_raw.get("mortgage")
 
     result: dict = {
-        "annual_income_pence": int(user_raw.get("annual_income_pence") or 0),
+        "annual_income_pence": int(user_raw["annual_income_pence"]),
         "savings": {
-            "goal_name": str(sav_raw.get("goal_name") or "First Home Deposit"),
-            "balance_pence": int(sav_raw.get("balance_pence") or 0),
-            "goal_target_pence": int(sav_raw.get("goal_target_pence") or 0),
+            "goal_name": str(sav_raw["goal_name"]),
+            "balance_pence": int(sav_raw["balance_pence"]),
+            "goal_target_pence": int(sav_raw["goal_target_pence"]),
         },
         "mortgage": None,
     }
 
     if isinstance(mg_raw, dict) and mg_raw:
-        np_raw = dict(mg_raw.get("next_payment") or {})
-        options = []
-        for opt in mg_raw.get("renewal_options") or []:
-            options.append(
-                {
-                    "id": str(opt.get("id") or ""),
-                    "label": str(opt.get("label") or ""),
-                    "term_years": int(opt.get("term_years") or 2),
-                    "rate_bps": int(opt.get("rate_bps") or 0),
-                }
-            )
+        np_raw = mg_raw["next_payment"]
         result["mortgage"] = {
-            "balance_pence": int(mg_raw.get("balance_pence") or 0),
-            "address": str(mg_raw.get("address") or ""),
-            "interest_rate_bps": int(mg_raw.get("interest_rate_bps") or 0),
-            "rate_type": str(mg_raw.get("rate_type") or "Fixed"),
-            "fixed_until": str(mg_raw.get("fixed_until") or ""),
-            "term_remaining_months": int(mg_raw.get("term_remaining_months") or 0),
+            "balance_pence": int(mg_raw["balance_pence"]),
+            "address": str(mg_raw["address"]),
+            "interest_rate_bps": int(mg_raw["interest_rate_bps"]),
+            "rate_type": str(mg_raw["rate_type"]),
+            "fixed_until": str(mg_raw["fixed_until"]),
+            "term_remaining_months": int(mg_raw["term_remaining_months"]),
             "next_payment": {
-                "amount_pence": int(np_raw.get("amount_pence") or 0),
-                "day_of_month": int(np_raw.get("day_of_month") or 1),
+                "amount_pence": int(np_raw["amount_pence"]),
+                "day_of_month": int(np_raw["day_of_month"]),
             },
-            "annual_overpayment_allowance_pence": int(
-                mg_raw.get("annual_overpayment_allowance_pence") or 0
-            ),
-            "overpaid_this_year_pence": int(mg_raw.get("overpaid_this_year_pence") or 0),
-            "renewal_options": options,
+            "annual_overpayment_allowance_pence": int(mg_raw["annual_overpayment_allowance_pence"]),
+            "overpaid_this_year_pence": int(mg_raw["overpaid_this_year_pence"]),
+            "renewal_options": [
+                {
+                    "id": str(opt["id"]),
+                    "label": str(opt["label"]),
+                    "term_years": int(opt["term_years"]),
+                    "rate_bps": int(opt["rate_bps"]),
+                }
+                for opt in mg_raw["renewal_options"]
+            ],
         }
     return result
 
@@ -323,9 +307,11 @@ def _parse_demo_date() -> tuple[int, int, int]:
 
 
 def _format_gbp(amount_pence: int) -> str:
-    """Format integer pence as £X,XXX.XX without float division."""
+    """Format integer pence as £X,XXX when whole pounds else £X,XXX.XX."""
     sign = "-" if amount_pence < 0 else ""
     pounds, pence = divmod(abs(amount_pence), 100)
+    if pence == 0:
+        return f"{sign}£{pounds:,}"
     return f"{sign}£{pounds:,}.{pence:02d}"
 
 
@@ -442,6 +428,42 @@ def _handle_allowance(mg: dict, statement_month: str) -> dict:
     }
 
 
+def _format_overpayment_reply(res: dict, monthly_pence: int, lump_pence: int, statement_month: str) -> str:
+    """Format spoken amortisation & ERC allowance summary from _project_overpayment."""
+    parts_desc = []
+    if monthly_pence > 0:
+        parts_desc.append(f"{_format_gbp(monthly_pence)} a month")
+    if lump_pence > 0:
+        parts_desc.append(f"a {_format_gbp(lump_pence)} lump sum")
+    proposal_text = " plus ".join(parts_desc)
+
+    if res["exceeds_allowance"]:
+        cap_clause = (
+            f"adds {_format_gbp(res['first_year_overpayment_pence'])} in year one, which exceeds "
+            f"your remaining {_format_gbp(res['remaining_allowance_pence'])} fee-free allowance by "
+            f"{_format_gbp(res['excess_over_allowance_pence'])} and could incur an early repayment charge"
+        )
+    else:
+        cap_clause = (
+            f"totals {_format_gbp(res['first_year_overpayment_pence'])} in year one, fitting within "
+            f"your remaining {_format_gbp(res['remaining_allowance_pence'])} 10% fee-free allowance"
+        )
+
+    if res["projected_months"] == 0:
+        outcome_clause = (
+            f"It would clear the entire balance immediately and save {_format_gbp(res['interest_saved_pence'])} in future interest."
+        )
+    else:
+        outcome_clause = (
+            f"It would shave {_format_months_duration(res['months_saved'])} off your remaining term "
+            f"(down to {_format_months_duration(res['projected_months'])}) and save {_format_gbp(res['interest_saved_pence'])} in total interest."
+        )
+    return (
+        f"Starting from {statement_month}, overpaying {proposal_text} {cap_clause}. "
+        f"{outcome_clause} {_ILLUSTRATION_NOTE}"
+    )
+
+
 def _handle_overpayment_projection(
     mg: dict, monthly_pence: int, lump_pence: int, statement_month: str
 ) -> dict:
@@ -473,41 +495,7 @@ def _handle_overpayment_projection(
         }
 
     res = _project_overpayment(mg, monthly_pence, lump_pence)
-    parts_desc = []
-    if monthly_pence > 0:
-        parts_desc.append(f"{_format_gbp(monthly_pence)} a month")
-    if lump_pence > 0:
-        parts_desc.append(f"a {_format_gbp(lump_pence)} lump sum")
-    proposal_text = " plus ".join(parts_desc)
-
-    if res["exceeds_allowance"]:
-        cap_clause = (
-            f"adds {_format_gbp(res['first_year_overpayment_pence'])} in year one, which exceeds "
-            f"your remaining {_format_gbp(res['remaining_allowance_pence'])} fee-free allowance by "
-            f"{_format_gbp(res['excess_over_allowance_pence'])} and could incur an early repayment charge"
-        )
-    else:
-        cap_clause = (
-            f"totals {_format_gbp(res['first_year_overpayment_pence'])} in year one, fitting within "
-            f"your remaining {_format_gbp(res['remaining_allowance_pence'])} 10% fee-free allowance"
-        )
-
-    if res["projected_months"] == 0:
-        outcome_clause = (
-            f"It would clear the entire balance immediately and save {_format_gbp(res['interest_saved_pence'])} in future interest."
-        )
-    else:
-        outcome_clause = (
-            f"It would shave {_format_months_duration(res['months_saved'])} off your remaining term "
-            f"(down to {_format_months_duration(res['projected_months'])}) and save {_format_gbp(res['interest_saved_pence'])} in total interest."
-        )
-
-    return {
-        "agent_action": (
-            f"Starting from {statement_month}, overpaying {proposal_text} {cap_clause}. "
-            f"{outcome_clause} {_ILLUSTRATION_NOTE}"
-        )
-    }
+    return {"agent_action": _format_overpayment_reply(res, monthly_pence, lump_pence, statement_month)}
 
 
 def _handle_rate_options(mg: dict, statement_month: str) -> dict:
@@ -573,47 +561,37 @@ def _handle_switch_intent(switch_intent: str) -> dict:
         context.state["mortgage_state"] = {}
         context.state["escalation_reason"] = "CALL_COMPLETED"
         context.state["call_complete"] = "true"
-        if first_name:
+        suffix = f", {first_name}" if first_name else ""
+        return {
+            "agent_action": f"You are very welcome{suffix}. Have a great rest of your day, and goodbye."
+        }
+
+    if switch_intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES"):
+        context.state["unclear_count"] = "0"
+        if switch_intent == "NAVIGATE_HOME":
+            _emit_ui_view({"page": "home"})
             return {
-                "agent_action": f"You are very welcome, {first_name}. Have a great rest of your day, and goodbye."
+                "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
             }
-        return {
-            "agent_action": "You are very welcome. Have a great rest of your day, and goodbye."
-        }
-
-    if switch_intent == "NAVIGATE_HOME":
-        context.state["unclear_count"] = "0"
-        _emit_ui_view({"page": "home"})
-        return {
-            "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
-        }
-
-    if switch_intent == "NAVIGATE_PROFILE":
-        context.state["unclear_count"] = "0"
-        _emit_ui_view({"page": "profile"})
-        return {
-            "agent_action": "I have opened your Profile page on screen. What else can I help you with?"
-        }
-
-    if switch_intent == "CAPABILITIES":
-        context.state["unclear_count"] = "0"
+        if switch_intent == "NAVIGATE_PROFILE":
+            _emit_ui_view({"page": "profile"})
+            return {
+                "agent_action": "I have opened your Profile page on screen. What else can I help you with?"
+            }
         return {
             "agent_action": "I can help with everyday banking and spending, your savings pot and goal projections, or your mortgage payments, overpayments, and fixed-rate renewal options. Which area would you like to explore?"
         }
 
     if switch_intent in ("EVERYDAY_BANKING", "SAVINGS"):
-        pass_count = int(context.state.get("pass_count") or "0")
         target = (
-            "everyday_banking_agent"
-            if switch_intent == "EVERYDAY_BANKING"
-            else "savings_agent"
+            "everyday_banking_agent" if switch_intent == "EVERYDAY_BANKING" else "savings_agent"
         )
         label = (
             "everyday banking and spending"
             if switch_intent == "EVERYDAY_BANKING"
             else "savings projections"
         )
-        if pass_count > 4:
+        if int(context.state.get("pass_count") or "0") > 4:
             return {
                 "agent_action": f"Sure, tell me what you would like to check on your {label}."
             }

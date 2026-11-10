@@ -1,15 +1,43 @@
-import { useState, type FormEvent } from 'react'
+import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import { AlertCircle, ExternalLink, MicOff, PauseCircle, RefreshCw, Send, Sparkles } from 'lucide-react'
 import { useAgent } from '../agent/AgentProvider'
+import type { CustomerSnapshot } from '../data/fixture'
 import { useFixture } from '../data/useFixture'
 import type { ServerSearchSuggestionsMsg } from '../agent/protocol'
 
-const STARTER_PROMPTS = [
-  'Give me a quick look at my spending this month.',
-  'Show me what putting £45 a month extra into savings does.',
-  'What would overpaying my mortgage by £200 a month save me?',
-  'Compare my fixed-rate renewal options.',
-] as const
+export function buildStarterPrompts(fixture: CustomerSnapshot): string[] {
+  const { mortgage, savings } = fixture.accounts
+  if (!mortgage) {
+    return [
+      'Give me a quick look at my spending this month.',
+      'How much could I borrow for my first home?',
+      `When will I reach my ${savings.goal_name} target?`,
+      'Which recurring subscriptions am I paying for?',
+    ]
+  }
+
+  const anomSub = fixture.transactions.find(
+    (t) => t.month_offset === 0 && t.is_anomaly && t.category === 'subscriptions',
+  )
+  const extraWholePounds = anomSub
+    ? Math.max(10, Math.round(anomSub.amount_pence / 100))
+    : 45
+  const remainingAllowance = Math.max(
+    0,
+    mortgage.annual_overpayment_allowance_pence - mortgage.overpaid_this_year_pence,
+  )
+  const mortgageOverpayPrompt =
+    remainingAllowance < 500_000
+      ? 'What happens if I overpay my mortgage by £400 a month?'
+      : 'What would overpaying my mortgage by £200 a month save me?'
+
+  return [
+    'Give me a quick look at my spending this month.',
+    `Show me what putting £${extraWholePounds} a month extra into savings does.`,
+    mortgageOverpayPrompt,
+    'Compare my fixed-rate renewal options.',
+  ]
+}
 
 function resolveSpecialistLabel(activeAgentName: string, latestPage?: string): string | null {
   if (activeAgentName === 'everyday_banking_agent' || latestPage === 'spending') {
@@ -52,6 +80,8 @@ function SearchSuggestionsBlock({
   suggestions: ServerSearchSuggestionsMsg
 }) {
   const safeCitations = suggestions.citations.filter((c) => isSafeHttpUrl(c.uri ?? c.url))
+  const fallbackQueries =
+    suggestions.htmls.length === 0 ? suggestions.webSearchQueries : []
 
   return (
     <div className="mt-2.5 space-y-1.5" data-testid="search-suggestions-block">
@@ -66,9 +96,9 @@ function SearchSuggestionsBlock({
         />
       ))}
 
-      {(suggestions.webSearchQueries.length > 0 || safeCitations.length > 0) && (
+      {(fallbackQueries.length > 0 || safeCitations.length > 0) && (
         <div className="flex flex-wrap gap-1.5">
-          {suggestions.webSearchQueries.map((query) => (
+          {fallbackQueries.map((query) => (
             <a
               key={`q-${query}`}
               href={`https://www.google.com/search?q=${encodeURIComponent(query)}`}
@@ -107,13 +137,45 @@ export function ConciergePanel() {
   const agent = useAgent()
   const fixture = useFixture()
   const [draftText, setDraftText] = useState('')
+  const streamRef = useRef<HTMLDivElement>(null)
+  const endSentinelRef = useRef<HTMLDivElement>(null)
+  const stickToBottomRef = useRef(true)
+  const prevTurnCountRef = useRef(0)
 
   const firstName = fixture.user.first_name
+  const starterPrompts = useMemo(() => buildStarterPrompts(fixture), [fixture])
   const specialistLabel = resolveSpecialistLabel(
     agent.activeAgentName,
     agent.latestUiState?.page,
   )
   const isMicBlockedOnly = agent.micDenied && agent.connState !== 'error'
+
+  useEffect(() => {
+    const el = streamRef.current
+    const lastTurn = agent.turns[agent.turns.length - 1]
+    const userJustSubmitted =
+      agent.turns.length > prevTurnCountRef.current && lastTurn?.role === 'user'
+    prevTurnCountRef.current = agent.turns.length
+    if (!el || agent.turns.length === 0) return
+
+    if (userJustSubmitted || stickToBottomRef.current) {
+      stickToBottomRef.current = true
+      el.scrollTop = el.scrollHeight
+      if (
+        endSentinelRef.current &&
+        typeof endSentinelRef.current.scrollIntoView === 'function'
+      ) {
+        endSentinelRef.current.scrollIntoView({ block: 'end' })
+      }
+    }
+  }, [agent.turns, agent.phase])
+
+  function handleStreamScroll() {
+    const el = streamRef.current
+    if (!el) return
+    const distanceFromBottom = el.scrollHeight - el.scrollTop - el.clientHeight
+    stickToBottomRef.current = distanceFromBottom <= 80
+  }
 
   function handleTextSubmit(e: FormEvent) {
     e.preventDefault()
@@ -149,6 +211,10 @@ export function ConciergePanel() {
 
       {/* Conversation Stream / Executive Welcome */}
       <div
+        ref={streamRef}
+        onScroll={handleStreamScroll}
+        role="log"
+        aria-live="polite"
         data-testid="conversation-stream"
         className="flex-1 min-h-0 overflow-y-auto px-5 py-5 space-y-4"
       >
@@ -167,7 +233,7 @@ export function ConciergePanel() {
               </p>
 
               <div className="mt-5 w-full space-y-2">
-                {STARTER_PROMPTS.map((prompt) => (
+                {starterPrompts.map((prompt) => (
                   <button
                     key={prompt}
                     type="button"
@@ -189,7 +255,7 @@ export function ConciergePanel() {
                 <span>Concierge connection unavailable</span>
               </div>
               <p className="text-[15px] text-brand-text leading-relaxed">
-                Concierge connection unavailable — select Reconnect to start.
+                We couldn&apos;t reach the concierge. Select Reconnect to try again.
               </p>
               <button
                 type="button"
@@ -219,11 +285,11 @@ export function ConciergePanel() {
                 How can I help today, {firstName}?
               </h3>
               <p className="text-[14px] text-brand-muted leading-relaxed mt-1.5">
-                Hold <strong className="font-semibold text-brand-text">Hold to talk</strong> (or press Spacebar) to speak, or choose a question below.
+                Press and hold <strong className="font-semibold text-brand-text">Hold to talk</strong>, or hold the Spacebar, to speak. You can also choose a question below.
               </p>
 
               <div className="mt-5 w-full space-y-2">
-                {STARTER_PROMPTS.map((prompt) => (
+                {starterPrompts.map((prompt) => (
                   <button
                     key={prompt}
                     type="button"
@@ -278,6 +344,16 @@ export function ConciergePanel() {
               </div>
             ))}
 
+            {agent.phase === 'thinking' && (
+              <div
+                data-testid="concierge-thinking-indicator"
+                className="flex items-center gap-2 text-[13px] text-brand-muted"
+              >
+                <Sparkles size={14} aria-hidden="true" className="text-brand-gold animate-pulse" />
+                <span>Thinking…</span>
+              </div>
+            )}
+
             {isMicBlockedOnly ? (
               <div
                 data-testid="concierge-mic-blocked-banner"
@@ -294,7 +370,7 @@ export function ConciergePanel() {
                   data-testid="concierge-error-banner"
                   className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13px] text-brand-text flex items-center justify-between gap-3"
                 >
-                  <span>Concierge connection unavailable — select Reconnect to continue.</span>
+                  <span>We couldn&apos;t reach the concierge. Select Reconnect to continue.</span>
                   <button
                     type="button"
                     onClick={agent.reconnect}
@@ -305,6 +381,8 @@ export function ConciergePanel() {
                 </div>
               )
             )}
+
+            <div ref={endSentinelRef} aria-hidden="true" />
           </>
         )}
       </div>

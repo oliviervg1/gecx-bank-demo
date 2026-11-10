@@ -31,6 +31,7 @@ export function HomePage() {
     mortgage: mortgage ? { next_payment: mortgage.next_payment } : undefined,
     currentBalancePence: current.balance_pence,
     demoDate,
+    transactions: fixture.transactions,
   })
 
   return (

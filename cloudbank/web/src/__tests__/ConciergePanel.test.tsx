@@ -94,9 +94,16 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     expect(screen.getByText('How can I help today, Chloe?')).toBeInTheDocument()
     expect(screen.queryByTestId('active-specialist-pill')).toBeNull()
 
-    const bodyText = document.body.textContent ?? ''
+    const attributeStrings: string[] = []
+    for (const el of Array.from(document.querySelectorAll('[aria-label], [title]'))) {
+      const aria = el.getAttribute('aria-label')
+      const title = el.getAttribute('title')
+      if (aria) attributeStrings.push(aria)
+      if (title) attributeStrings.push(title)
+    }
+    const combinedVisibleAndA11y = `${document.body.textContent ?? ''} ${attributeStrings.join(' ')}`
     for (const token of BANNED_TECHNICAL_TOKENS) {
-      expect(bodyText).not.toContain(token)
+      expect(combinedVisibleAndA11y).not.toContain(token)
     }
 
     // Error state shows calm executive note instead of ready greeting or raw error codes.
@@ -104,7 +111,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       ws.deliver({ type: 'error', message: 'upstream 1007 failed_precondition' })
     })
     expect(screen.getByTestId('concierge-unavailable-state')).toHaveTextContent(
-      'Concierge connection unavailable — select Reconnect to start.',
+      "We couldn't reach the concierge. Select Reconnect to try again.",
     )
     expect(screen.queryByText('How can I help today, Chloe?')).toBeNull()
 
@@ -204,14 +211,13 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
         type: 'turn_diagnostics',
         turnIndex: 1,
         agentTransfers: [{ targetAgent: 'everyday_banking_agent' }],
-        toolCalls: [{ displayName: 'assist_everyday_banking' }],
-        toolResponses: [{ response: { agent_action: '[Diagnosis context: secret]' } }],
-        updatedVariables: { everyday_state: { anomaly_status: 'unrecognised' } },
       })
       ws.deliver({ type: 'turn_complete', turnIndex: 1 })
     })
 
     const stream = screen.getByTestId('conversation-stream')
+    expect(stream).toHaveAttribute('role', 'log')
+    expect(stream).toHaveAttribute('aria-live', 'polite')
     expect(stream.textContent).toContain('To cancel Netflix, open Account settings.')
     expect(stream.textContent).toContain('(Interrupted)')
     expect(stream.textContent).not.toContain('Diagnosis context')
@@ -221,6 +227,8 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     const iframe = stream.querySelector('iframe')
     expect(iframe).not.toBeNull()
     expect(iframe?.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox')
+    // Duplicate webSearchQueries pill is suppressed when sandboxed htmls chip is present.
+    expect(screen.queryByText('how to cancel Netflix subscription UK')).toBeNull()
     expect(screen.getByText('Netflix Help Centre')).toBeInTheDocument()
     expect(screen.queryByText('Evil URI')).toBeNull()
 
@@ -328,7 +336,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
 
       // Pill tooltip uses plain executive guidance, never leaking NotAllowedError.
-      const blockedPill = screen.getByRole('button', { name: /Mic blocked/i })
+      const blockedPill = screen.getByRole('button', { name: /Microphone off/i })
       expect(blockedPill).toHaveAttribute(
         'title',
         'Allow microphone access in your browser, then hold to talk',
@@ -351,5 +359,72 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       })
       ;(globalThis as unknown as { AudioContext: unknown }).AudioContext = origAudioCtx
     }
+  })
+
+  it('tailors starter prompts per persona (renter Tom vs ERC-near Sarah), auto-scrolls on new turns, and opens mobile concierge drawer', async () => {
+    window.history.replaceState({}, '', '/?persona=tom')
+    const { unmount } = render(
+      <MotionConfig reducedMotion="always">
+        <App />
+      </MotionConfig>,
+    )
+
+    const wsTom = sockets[sockets.length - 1]
+    await act(async () => {
+      wsTom.open()
+      wsTom.deliver({ type: 'ready', sessionId: 'sess-tom' })
+    })
+
+    // Tom is a renter: starter prompts offer first-home borrowing instead of mortgage overpay/renewal.
+    expect(
+      screen.getByRole('button', { name: 'How much could I borrow for my first home?' }),
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /overpaying my mortgage/i }),
+    ).toBeNull()
+    expect(
+      screen.queryByRole('button', { name: /fixed-rate renewal/i }),
+    ).toBeNull()
+
+    // Switch to Sarah: shows £96 savings prompt and £400/mo ERC-near overpay prompt.
+    fireEvent.click(screen.getByRole('button', { name: /Sarah/i }))
+    const wsSarah = sockets[sockets.length - 1]
+    await act(async () => {
+      wsSarah.open()
+      wsSarah.deliver({ type: 'ready', sessionId: 'sess-sarah' })
+    })
+    expect(
+      screen.getByRole('button', {
+        name: 'Show me what putting £96 a month extra into savings does.',
+      }),
+    ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', {
+        name: 'What happens if I overpay my mortgage by £400 a month?',
+      }),
+    ).toBeInTheDocument()
+
+    // Submit text -> shows thinking indicator and auto-scrolls conversation-stream.
+    const scrollSpy = vi.fn()
+    HTMLElement.prototype.scrollIntoView = scrollSpy
+    fireEvent.click(
+      screen.getByRole('button', {
+        name: 'What happens if I overpay my mortgage by £400 a month?',
+      }),
+    )
+    expect(screen.getByTestId('concierge-thinking-indicator')).toBeInTheDocument()
+    expect(scrollSpy).toHaveBeenCalled()
+    unmount()
+
+    // Mobile view (?layout=mobile) exposes a clean toggle for the concierge chat drawer.
+    window.history.replaceState({}, '', '/?layout=mobile')
+    render(
+      <MotionConfig reducedMotion="always">
+        <App />
+      </MotionConfig>,
+    )
+    const toggle = screen.getByTestId('mobile-concierge-toggle')
+    fireEvent.click(toggle)
+    expect(screen.getByTestId('mobile-concierge-drawer')).toBeInTheDocument()
   })
 })

@@ -82,9 +82,9 @@ def test_pending_redirect_offer_empty_args_and_bare_yes_no(
     assert state["everyday_state"]["pending_redirect_offer"] is True
     seq_after_cancel = state["ui_view_state"]["seq"]
 
-    # Empty args re-asks the £45.00 redirect offer without dropping pending_redirect_offer
+    # Empty args re-asks the £45 redirect offer without dropping pending_redirect_offer
     reask = ns["assist_everyday_banking"]()
-    assert "£45.00 a month" in reask["agent_action"]
+    assert "£45 a month" in reask["agent_action"]
     assert state["everyday_state"]["pending_redirect_offer"] is True
     assert state["ui_view_state"]["seq"] == seq_after_cancel
 
@@ -102,7 +102,7 @@ def test_pending_redirect_offer_empty_args_and_bare_yes_no(
 
     # Accepting via anomaly_confirmed="yes" pivots to savings_agent with freed_monthly_pence
     accepted = ns["assist_everyday_banking"](anomaly_confirmed="yes")
-    assert "£45.00 a month freed from Netflix" in accepted["agent_action"]
+    assert "£45 a month freed from Netflix" in accepted["agent_action"]
     assert state["target_agent"] == "savings_agent"
     assert state["handoff_context"]["freed_monthly_pence"] == 4500
 
@@ -115,7 +115,7 @@ def test_renter_pending_savings_pivot_empty_args_and_pivot(
     ns = load_controller_namespace("assist_mortgages", state)
 
     first = ns["assist_mortgages"](query_type="summary")
-    assert "£189,000.00" in first["agent_action"]
+    assert "£189,000" in first["agent_action"]
     assert state["mortgage_state"]["pending_savings_pivot"] is True
     seq_first = state["ui_view_state"]["seq"]
 

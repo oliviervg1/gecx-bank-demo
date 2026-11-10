@@ -15,7 +15,7 @@
   "accounts": {
     "current": {
       "name": "Cloudbank Everyday Account",
-      "sort_code": "04-00-75",
+      "sort_code": "00-00-99",
       "account_number_last4": "6612",
       "balance_pence": 934015,
       "currency": "GBP"
@@ -77,6 +77,7 @@
     { "id": "txn-boston-2", "month_offset": 0, "day": 22, "vendor": "Boston Tea Party", "category": "coffee_shops", "amount_pence": 880 },
     { "id": "txn-insurance", "month_offset": 0, "day": 23, "vendor": "Aviva Home Insurance", "category": "subscriptions", "amount_pence": 9600, "is_subscription": true, "is_anomaly": true },
 
+    { "id": "txn-salary-s-2", "month_offset": 1, "day": 1, "vendor": "Salary", "category": "income", "amount_pence": -610000 },
     { "id": "txn-mortgage-s-2", "month_offset": 1, "day": 2, "vendor": "Cloudbank Mortgage", "category": "bills", "amount_pence": 124510, "is_subscription": true },
     { "id": "txn-council-s-2", "month_offset": 1, "day": 4, "vendor": "Bristol City Council", "category": "bills", "amount_pence": 21500, "is_subscription": true },
     { "id": "txn-energy-s-2", "month_offset": 1, "day": 6, "vendor": "OVO Energy", "category": "bills", "amount_pence": 11820, "is_subscription": true },
@@ -93,6 +94,7 @@
     { "id": "txn-waitrose-4", "month_offset": 1, "day": 25, "vendor": "Waitrose", "category": "groceries", "amount_pence": 8560 },
     { "id": "txn-garden", "month_offset": 1, "day": 27, "vendor": "Bristol Garden Centre", "category": "shopping", "amount_pence": 6720 },
 
+    { "id": "txn-salary-s-3", "month_offset": 2, "day": 1, "vendor": "Salary", "category": "income", "amount_pence": -610000 },
     { "id": "txn-mortgage-s-3", "month_offset": 2, "day": 2, "vendor": "Cloudbank Mortgage", "category": "bills", "amount_pence": 124510, "is_subscription": true },
     { "id": "txn-council-s-3", "month_offset": 2, "day": 4, "vendor": "Bristol City Council", "category": "bills", "amount_pence": 21500, "is_subscription": true },
     { "id": "txn-energy-s-3", "month_offset": 2, "day": 6, "vendor": "OVO Energy", "category": "bills", "amount_pence": 11820, "is_subscription": true },
@@ -104,6 +106,10 @@
     { "id": "txn-boston-4", "month_offset": 2, "day": 20, "vendor": "Boston Tea Party", "category": "coffee_shops", "amount_pence": 440 },
     { "id": "txn-rest-s3", "month_offset": 2, "day": 22, "vendor": "Pasta Loco", "category": "eating_out", "amount_pence": 5420 },
     { "id": "txn-insurance-3", "month_offset": 2, "day": 23, "vendor": "Aviva Home Insurance", "category": "subscriptions", "amount_pence": 4800, "is_subscription": true },
-    { "id": "txn-theatre-2", "month_offset": 2, "day": 26, "vendor": "Bristol Old Vic", "category": "entertainment", "amount_pence": 6400 }
+    { "id": "txn-gwr-s3", "month_offset": 2, "day": 24, "vendor": "Great Western Railway", "category": "transport", "amount_pence": 11400 },
+    { "id": "txn-waitrose-6", "month_offset": 2, "day": 25, "vendor": "Waitrose", "category": "groceries", "amount_pence": 9200 },
+    { "id": "txn-theatre-2", "month_offset": 2, "day": 26, "vendor": "Bristol Old Vic", "category": "entertainment", "amount_pence": 6400 },
+    { "id": "txn-jl-s3", "month_offset": 2, "day": 27, "vendor": "John Lewis", "category": "shopping", "amount_pence": 18500 },
+    { "id": "txn-fuel-s3", "month_offset": 2, "day": 28, "vendor": "Esso", "category": "transport", "amount_pence": 6100 }
   ]
 }

@@ -237,6 +237,6 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
     assert progress_bps == tom_exp["deposit_progress_bps"]
 
     tom_resp = tom_ns["assist_mortgages"](query_type="summary")
-    assert "£189,000.00" in tom_resp["agent_action"]
-    assert "£224,000.00" in tom_resp["agent_action"]
-    assert "£20,800.00" in tom_resp["agent_action"]
+    assert "£189,000" in tom_resp["agent_action"]
+    assert "£224,000" in tom_resp["agent_action"]
+    assert "£20,800" in tom_resp["agent_action"]

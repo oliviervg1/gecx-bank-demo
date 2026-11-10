@@ -50,7 +50,7 @@ Yes, I recognise it. How do I cancel Netflix?
 assist_everyday_banking(query_type="cancel_subscription", vendor_name="Netflix", anomaly_confirmed="yes")
 ```
 ```tool_outputs
-{"agent_action": "Summarise the Netflix cancellation steps from the diagnosis context in at most two plain sentences with no web addresses or URLs read aloud, then ask if Chloe would like to see what redirecting that £45.00 a month from November into their Home Emergency Pot could do. [Diagnosis context: Sign in to your account page in the provider's app or website, open Membership and Billing, and select Cancel Membership. Your subscription remains active until the end of the current billing period.]"}
+{"agent_action": "Summarise the Netflix cancellation steps from the diagnosis context in at most two plain sentences with no web addresses or URLs read aloud, then ask if Chloe would like to see what redirecting that £45 a month from November into their Home Emergency Pot could do. [Diagnosis context: Sign in to your account page in the provider's app or website, open Membership and Billing, and select Cancel Membership. Your subscription remains active until the end of the current billing period.]"}
 ```
 [model]
 <warm> To cancel Netflix, sign in to your account page in the Netflix app or website, open Membership and Billing, and choose Cancel Membership — your subscription stays active until the end of your current billing period. <short pause> Would you like to see what redirecting that £45 a month from November into your Home Emergency Pot could do?
@@ -65,9 +65,9 @@ Yes, show me what putting that £45 a month into savings does.
 assist_everyday_banking(switch_intent="SAVINGS")
 ```
 ```tool_outputs
-{"agent_action": "Customer wants to explore savings projections with £45.00 a month freed from Netflix."}
+{"agent_action": "Customer wants to explore savings projections with £45 a month freed from Netflix."}
 ```
 [model]
-Customer wants to explore savings projections with £45.00 a month freed from Netflix.
+Customer wants to explore savings projections with £45 a month freed from Netflix.
 End example
 </examples>

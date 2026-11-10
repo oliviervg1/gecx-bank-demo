@@ -1,7 +1,7 @@
 # `assist_mortgages` Specification
 
 - **Owning Agent:** `mortgage_agent`
-- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L1-L650) (entrypoint at [`#L29-L146`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L29-L146))
+- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L1-L628) (entrypoint & thin dispatcher at [`#L29-L134`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L29-L134))
 - **Manifest:** [assist_mortgages.json](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/assist_mortgages.json)
 
 ## 1. Overview & Architectural Principles
@@ -26,7 +26,7 @@ flowchart TD
     Norm --> HasMtg{"snapshot.mortgage<br/>present?"}
     HasMtg -->|"No (Tom — Renter)"| Renter["_handle_renter_guidance()<br/>4.5x income + deposit gap + illustration note"]
     HasMtg -->|"Yes"| Mode{"Effective query_type"}
-    Mode -->|"summary / next_payment / overpayment_allowance"| Sum["Emit ui_view_state(page=mortgage, subview=summary)"]
+    Mode -->|"summary / next_payment / overpayment_allowance"| Sum["Emit ui_view_state(page=mortgage, subview=overview)"]
     Mode -->|"overpayment_projection"| Overpay["_handle_overpayment_projection()<br/>_project_overpayment() + ERC check + subview=overpay"]
     Mode -->|"rate_options"| Rates["_handle_rate_options()<br/>_renewal_payment_pence() bisection + subview=rates"]
     Mode -->|"Empty / Unclear"| Unclear["_handle_unclear() (re-ask renter offer or 2-strike ladder)"]
@@ -69,12 +69,12 @@ def assist_mortgages(
 
 ### Helper Index
 
-- [`_half_up` / `_to_pence`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L149-L160): Exact integer half-up division and clamped model-float-to-pence conversion.
-- [`_simulate_mortgage` / `_renewal_payment_pence` / `_project_overpayment`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L163-L254): Month-by-month amortisation loop, integer bisection solver for fixed-rate renewal deals, and ERC-aware overpayment comparator.
-- [`_normalize_snapshot` .. `_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L257-L382): Snapshot normalisation, `demo_date` & payment-day helpers, duration/currency/rate formatters, and monotonic `ui_view_state` writer.
-- [`_handle_summary` / `_handle_next_payment` / `_handle_allowance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L385-L442): Mortgage balance, current deal rate, next Direct Debit date/amount, and remaining 10% annual fee-free allowance.
-- [`_handle_overpayment_projection`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L445-L510), [`_handle_rate_options`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L513-L540), and [`_handle_renter_guidance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L543-L565): Overpayment projection, 2-year vs 5-year fixed renewal comparison, and first-time buyer readiness.
-- [`_handle_switch_intent`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L568-L625) & [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L628-L650): Local navigation, guarded cross-spoke pivots, and 2-strike unclear recovery.
+- [`_half_up` / `_to_pence`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L137-L148): Exact integer half-up division and clamped model-float-to-pence conversion.
+- [`_simulate_mortgage` / `_renewal_payment_pence` / `_project_overpayment`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L151-L242): Month-by-month amortisation loop, integer bisection solver for fixed-rate renewal deals, and ERC-aware overpayment comparator.
+- [`_normalize_snapshot` .. `_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L245-L368): Snapshot normalisation, `demo_date` & payment-day helpers, duration/currency/rate formatters, and monotonic `ui_view_state` writer.
+- [`_handle_summary` / `_handle_next_payment` / `_handle_allowance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L371-L428): Mortgage balance, current deal rate, next Direct Debit date/amount, and remaining 10% annual fee-free allowance.
+- [`_handle_overpayment_projection`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L431-L498), [`_handle_rate_options`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L501-L528), and [`_handle_renter_guidance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L531-L553): Overpayment projection, 2-year vs 5-year fixed renewal comparison, and first-time buyer readiness.
+- [`_handle_switch_intent`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L556-L603) & [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L606-L628): Local navigation, guarded cross-spoke pivots, and 2-strike unclear recovery.
 
 ### Session State Reads & Writes
 
