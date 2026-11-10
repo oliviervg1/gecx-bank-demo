@@ -6,6 +6,7 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 _MAX_PASSES = 8
+_ENABLE_TIER1_PARTIAL_UI = True
 _PLATFORM_TAG_RE = re.compile(
     r"<(?:state_update|context|event)\b[^>]*>.*?</(?:state_update|context|event)>",
     re.DOTALL | re.IGNORECASE,
@@ -92,7 +93,8 @@ def before_model_callback(
 
             session_id = callback_context.session_id or ""
             if (
-                returned_tool != "transfer_to_agent"
+                _ENABLE_TIER1_PARTIAL_UI
+                and returned_tool != "transfer_to_agent"
                 and not session_id.startswith("evaluation")
             ):
                 view = dict(state.get("ui_view_state") or {})

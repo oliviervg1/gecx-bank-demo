@@ -42,7 +42,7 @@ def route_banking_intent(
 
     Returns:
         A single-key dict with ``agent_action`` carrying the spoken reply or
-        handoff summary.
+        routing context.
     """
     try:
         clean_intent = (intent or "").strip()
@@ -86,7 +86,7 @@ def route_banking_intent(
 
 
 def _emit_ui_view(payload: dict) -> None:
-    """Write a monotonic ui_view_state update into session state."""
+    """Increment ui_view_state.seq monotonically and store payload."""
     current = dict(context.state.get("ui_view_state") or {})
     next_seq = int(current.get("seq") or 0) + 1
     updated = dict(payload)
