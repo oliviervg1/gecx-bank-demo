@@ -1,71 +1,65 @@
 """Browser ↔ proxy WebSocket message types.
 
-Mirrors cloudbank/web/src/agent/protocol.ts. Any change here must land there
-too — the contract is symmetric.
+Mirrors ``cloudbank/web/src/agent/protocol.ts``. All client-function round-trip
+messages (``ClientToolResponse`` / ``ServerClientFunction``) have been removed:
+screen state flows strictly server-to-browser via ``ServerUiState``.
 """
 from __future__ import annotations
 
 import json
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, Field, TypeAdapter, ValidationError
+from pydantic import BaseModel, ConfigDict, Field, TypeAdapter, ValidationError
 
 Persona = Literal["chloe", "david", "tom", "sarah"]
 
-# Cap on a single inbound browser frame. Audio arrives as small base64 PCM16
-# chunks (a 100ms 16 kHz frame is ~4 KB), so 1 MiB is generous. Callers check
-# this before parsing; the field limits below bound the parsed payloads too.
+# Cap on a single inbound browser frame (100ms 16 kHz PCM16 is ~4.3 KB base64;
+# ClientStart with a 15 KB customer_snapshot is <32 KB).
 MAX_CLIENT_FRAME_BYTES = 1024 * 1024
 _MAX_AUDIO_B64_LEN = MAX_CLIENT_FRAME_BYTES
 _MAX_TEXT_LEN = 8192
 
 
-# Client → proxy
+# ── Client → Proxy ──────────────────────────────────────────────────────────
+
+
 class ClientStart(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["start"]
     persona: Persona
-    # Session variables forwarded to CES as setSessionState entries.
-    # The client (web) computes them from the persona fixture and sends
-    # them on every start frame — the proxy is a dumb relay.
-    variables: dict[str, str]
-    # CES session to resume. The browser owns this so that a reconnect after
-    # CES's ~20-30s inactivity close lands back in the SAME conversation
-    # rather than a blank one. Absent on the first connect and from older
-    # clients. NOT trusted: main._resolve_session_id replaces anything that
-    # is not a plain UUID, because it is interpolated into the CES resource
-    # path in relay._send_initial_config.
+    variables: dict[str, Any]
     sessionId: str | None = None
 
 
 class AudioFrame(BaseModel):
-    """Used in both directions; type='audio'."""
-    type: Literal["audio"]
-    data: str = Field(max_length=_MAX_AUDIO_B64_LEN)  # base64 PCM16
+    """Used in both directions; ``type='audio'``."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["audio"] = "audio"
+    data: str = Field(max_length=_MAX_AUDIO_B64_LEN)
 
 
 class ClientText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["text"]
     text: str = Field(max_length=_MAX_TEXT_LEN)
 
 
-class ClientToolResponse(BaseModel):
-    type: Literal["tool_response"]
-    id: str
-    response: dict[str, Any]  # {"output": {...}} or {"error": "..."}
-
-
 class ClientStop(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["stop"]
 
 
 ClientMsg = Annotated[
-    ClientStart | AudioFrame | ClientText | ClientToolResponse | ClientStop,
+    ClientStart | AudioFrame | ClientText | ClientStop,
     Field(discriminator="type"),
 ]
 
 _client_adapter: TypeAdapter[ClientMsg] = TypeAdapter(ClientMsg)
-
-
 _UNKNOWN_TYPE_CODES = {"union_tag_invalid", "union_tag_not_found"}
 
 
@@ -73,17 +67,18 @@ def parse_client_msg(raw: str) -> ClientMsg:
     try:
         return _client_adapter.validate_json(raw)
     except ValidationError as exc:
-        # Surface a friendly error when the `type` discriminator is unknown,
-        # so callers don't have to inspect Pydantic's internal error model.
         for err in exc.errors():
             if err["type"] in _UNKNOWN_TYPE_CODES:
                 raise ValueError("unknown client message") from exc
         raise ValueError(str(exc)) from exc
 
 
-# Proxy → client
+# ── Proxy → Client ──────────────────────────────────────────────────────────
+
+
 class ServerReady(BaseModel):
     type: Literal["ready"] = "ready"
+    sessionId: str
 
 
 class ServerTranscript(BaseModel):
@@ -95,13 +90,45 @@ class ServerTranscript(BaseModel):
 class ServerText(BaseModel):
     type: Literal["text"] = "text"
     text: str
+    partial: bool = False
 
 
-class ServerClientFunction(BaseModel):
-    type: Literal["client_function"] = "client_function"
-    id: str
-    name: str
-    args: dict[str, Any]
+class ServerUiState(BaseModel):
+    type: Literal["ui_state"] = "ui_state"
+    state: dict[str, Any]
+    tier: Literal[1, 2, 3] = 1
+
+
+class ServerTurnDiagnostics(BaseModel):
+    type: Literal["turn_diagnostics"] = "turn_diagnostics"
+    turnIndex: int | None = None
+    agentTransfers: list[dict[str, Any]] = Field(default_factory=list)
+    toolCalls: list[dict[str, Any]] = Field(default_factory=list)
+    toolResponses: list[dict[str, Any]] = Field(default_factory=list)
+    updatedVariables: dict[str, Any] = Field(default_factory=dict)
+    rootSpan: dict[str, Any] | None = None
+
+
+class ServerSearchSuggestions(BaseModel):
+    type: Literal["search_suggestions"] = "search_suggestions"
+    htmls: list[str] = Field(default_factory=list)
+    webSearchQueries: list[str] = Field(default_factory=list)
+    citations: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class ServerTurnComplete(BaseModel):
+    type: Literal["turn_complete"] = "turn_complete"
+    turnIndex: int | None = None
+
+
+class ServerGoAway(BaseModel):
+    type: Literal["go_away"] = "go_away"
+    sessionId: str
+
+
+class ServerSessionExpired(BaseModel):
+    type: Literal["session_expired"] = "session_expired"
+    message: str = "Session paused due to inactivity"
 
 
 class ServerInterrupt(BaseModel):
@@ -115,13 +142,28 @@ class ServerEnd(BaseModel):
 class ServerError(BaseModel):
     type: Literal["error"] = "error"
     message: str
+    field: str | None = None
 
 
 ServerMsg = (
-    ServerReady | ServerTranscript | ServerText | AudioFrame
-    | ServerClientFunction | ServerInterrupt | ServerEnd | ServerError
+    ServerReady
+    | ServerTranscript
+    | ServerText
+    | AudioFrame
+    | ServerUiState
+    | ServerTurnDiagnostics
+    | ServerSearchSuggestions
+    | ServerTurnComplete
+    | ServerGoAway
+    | ServerSessionExpired
+    | ServerInterrupt
+    | ServerEnd
+    | ServerError
 )
 
 
 def serialize_server_msg(msg: ServerMsg) -> str:
-    return json.dumps(msg.model_dump(mode="json"), separators=(",", ":"))
+    return json.dumps(
+        msg.model_dump(mode="json", exclude_none=True),
+        separators=(",", ":"),
+    )

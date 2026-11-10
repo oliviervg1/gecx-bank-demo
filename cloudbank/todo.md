@@ -22,9 +22,9 @@
 - [x] Author multi-segment NAIVE goldens (`common_session_parameters` deep-equal to fixtures) and `SimulationEvals`; pass `cxas lint` (`E001`–`E011`) and `pytest`
 
 ## Stage 4: Bidi WebSocket Proxy Hardening (`cloudbank/proxy/`)
-- [ ] Pin PyPI index in `cloudbank/proxy/pyproject.toml`, move tests to `cloudbank/proxy/tests/`, and remove legacy client-tool protocol types
-- [ ] Enforce strict CSWSH origin validation, 5-key `CLIENT_SEEDABLE_VARIABLES` + `customer_snapshot.schema.json` validation, 10s silence keepalive + `PROXY_MAX_IDLE_SECONDS=900` (`ServerSessionExpired`), 3-tier `ui_state`, `ServerTurnDiagnostics`, and `ServerSearchSuggestions`
-- [ ] Pass `uv run --locked --all-extras pytest` and `ruff check .`
+- [x] Pin PyPI index in `cloudbank/proxy/pyproject.toml`, move tests to `cloudbank/proxy/tests/`, and remove legacy client-tool protocol types
+- [x] Enforce strict CSWSH origin validation, 5-key `CLIENT_SEEDABLE_VARIABLES` + `customer_snapshot.schema.json` validation, 10s silence keepalive + `PROXY_MAX_IDLE_SECONDS=900` (`ServerSessionExpired`), 3-tier `ui_state`, `ServerTurnDiagnostics`, and `ServerSearchSuggestions`
+- [x] Pass `uv run --locked --all-extras pytest` and `ruff check .`
 
 ## Stage 5: Audio Worklet, `sessionMachine.ts`, 5-Tab App & Split-Screen Workbench (`cloudbank/web/`)
 - [ ] Author `demoClock.ts`, `savingsMath.ts`, `mortgageMath.ts`, updated `spendingSummary.ts` & `spendingViews.ts`, and `parityVectors.test.ts`
