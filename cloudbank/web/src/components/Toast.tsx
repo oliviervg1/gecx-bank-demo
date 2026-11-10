@@ -11,7 +11,7 @@ export function Toast({ message, variant }: Props) {
       role="status"
       aria-live="polite"
       className={
-        'mx-3 mt-2 px-3 py-2 rounded-xl bg-white shadow-card border ' +
+        'mx-4 mt-2 px-3 py-2 rounded-lg bg-white border ' +
         'text-[13px] text-brand-text ' +
         border
       }

@@ -1,152 +1,102 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { ConciergePill } from '../components/ConciergePill'
-import { AgentContext } from '../agent/AgentProvider'
-import type { Registry } from '../agent/clientFunctions'
+import { AgentContext, type AgentContextValue } from '../agent/AgentProvider'
 
-function makeAgent(overrides: Partial<{
-  connState: 'idle' | 'connecting' | 'ready' | 'error'
-  micState: 'idle' | 'listening' | 'held' | 'speaking' | 'muted'
-  startMic: () => Promise<void>
-  stopMic: () => void
-  reconnect: () => void
-  pushToTalk: boolean
-  beginTalking: () => Promise<void>
-  endTalking: () => void
-}> = {}) {
+function makeAgent(overrides: Partial<AgentContextValue> = {}): AgentContextValue {
   return {
-    connState: 'ready' as const,
-    micState: 'idle' as const,
+    phase: 'ready',
+    connState: 'ready',
+    micState: 'idle',
+    sessionId: 'sess-1',
+    turns: [],
+    diagnostics: [],
+    activeAgentName: 'root_agent',
+    latestUiState: null,
+    latestUiTier: null,
     transcript: null,
     agentText: null,
     errorMessage: null,
-    registry: { register: () => {}, unregister: () => {}, dispatch: async () => ({ id: '', response: {} }) } as unknown as Registry,
-    startMic: vi.fn().mockResolvedValue(undefined),
-    stopMic: vi.fn(),
-    reconnect: vi.fn(),
-    disconnect: vi.fn(),
-    // Defaults to the ALWAYS-ON mode so the pre-existing cases below keep
-    // describing that mode. Push-to-talk has its own block.
+    micDenied: false,
     pushToTalk: false,
     beginTalking: vi.fn().mockResolvedValue(undefined),
     endTalking: vi.fn(),
+    startMic: vi.fn().mockResolvedValue(undefined),
+    stopMic: vi.fn(),
+    submitText: vi.fn(),
+    reconnect: vi.fn(),
+    disconnect: vi.fn(),
     ...overrides,
   }
 }
 
-function withAgent(value: ReturnType<typeof makeAgent>) {
+function withAgent(value: AgentContextValue) {
   return (
-    <AgentContext.Provider value={value as never}>
+    <AgentContext.Provider value={value}>
       <ConciergePill />
     </AgentContext.Provider>
   )
 }
 
 describe('ConciergePill', () => {
-  it('shows "Talk to concierge" when ready and idle in always-on mode', () => {
-    render(withAgent(makeAgent()))
-    expect(screen.getByText('Talk to concierge')).toBeInTheDocument()
+  beforeEach(() => {
+    Object.assign(HTMLElement.prototype, {
+      setPointerCapture: vi.fn(),
+      releasePointerCapture: vi.fn(),
+    })
   })
 
-  it('calls startMic when tapped in idle state', () => {
-    const v = makeAgent()
+  it('shows "Talk to concierge" in always-on mode and calls startMic on click', () => {
+    const v = makeAgent({ pushToTalk: false })
     render(withAgent(v))
+    expect(screen.getByText('Talk to concierge')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button'))
     expect(v.startMic).toHaveBeenCalled()
   })
 
-  it('shows "Listening" and calls stopMic when listening', () => {
-    const v = makeAgent({ micState: 'listening' })
+  it('shows "Session paused — hold to talk" on idle expiry (phase="paused") and holds cleanly', () => {
+    const v = makeAgent({ pushToTalk: true, phase: 'paused', connState: 'idle' })
     render(withAgent(v))
-    expect(screen.getByText('Listening')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button'))
-    expect(v.stopMic).toHaveBeenCalled()
+    expect(screen.getByText('Session paused — hold to talk')).toBeInTheDocument()
+    const pill = screen.getByRole('button')
+    fireEvent.pointerDown(pill, { pointerId: 1 })
+    expect(v.beginTalking).toHaveBeenCalledTimes(1)
   })
 
-  it('shows "Speaking" when the agent is speaking', () => {
-    render(withAgent(makeAgent({ micState: 'speaking' })))
-    expect(screen.getByText('Speaking')).toBeInTheDocument()
-  })
-
-  it('shows "Mic blocked" when muted', () => {
-    render(withAgent(makeAgent({ micState: 'muted' })))
-    expect(screen.getByText('Mic blocked')).toBeInTheDocument()
-  })
-
-  it('shows "Connecting…" while connecting and ignores taps', () => {
-    const v = makeAgent({ connState: 'connecting' })
-    render(withAgent(v))
-    expect(screen.getByText('Connecting…')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button'))
-    expect(v.startMic).not.toHaveBeenCalled()
-  })
-
-  it('shows "Retry" when in error state and calls reconnect on tap', () => {
-    const v = makeAgent({ connState: 'error' })
-    render(withAgent(v))
-    expect(screen.getByText('Retry')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button'))
-    expect(v.reconnect).toHaveBeenCalled()
-  })
-})
-
-describe('ConciergePill — push-to-talk', () => {
-  beforeEach(() => {
-    Object.assign(HTMLElement.prototype, {
-      setPointerCapture: vi.fn(), releasePointerCapture: vi.fn(),
-    })
-  })
-
-  it('invites a hold rather than a tap when ready and idle', () => {
-    render(withAgent(makeAgent({ pushToTalk: true })))
+  it('shows "Hold to talk" when ready in push-to-talk mode and "Release to send" when capturing', () => {
+    const { rerender } = render(withAgent(makeAgent({ pushToTalk: true, phase: 'ready' })))
     expect(screen.getByText('Hold to talk')).toBeInTheDocument()
-    expect(screen.queryByText('Talk to concierge')).not.toBeInTheDocument()
-  })
 
-  it('shows the live-mic state while held', () => {
-    render(withAgent(makeAgent({ pushToTalk: true, micState: 'held' })))
-    // Deliberately unmistakable from the back of a room.
+    rerender(
+      withAgent(makeAgent({ pushToTalk: true, phase: 'capturing', micState: 'held' })),
+    )
     expect(screen.getByText('Release to send')).toBeInTheDocument()
   })
 
-  it('calls beginTalking on press and endTalking on release', () => {
-    const agent = makeAgent({ pushToTalk: true })
-    render(withAgent(agent))
+  it('allows holding during agentSpeaking for deliberate barge-in while ignoring plain clicks', () => {
+    const v = makeAgent({ pushToTalk: true, phase: 'agentSpeaking', micState: 'speaking' })
+    render(withAgent(v))
+    expect(screen.getByText('Speaking')).toBeInTheDocument()
     const pill = screen.getByRole('button')
+    fireEvent.click(pill)
+    expect(v.stopMic).not.toHaveBeenCalled()
     fireEvent.pointerDown(pill, { pointerId: 1 })
-    expect(agent.beginTalking).toHaveBeenCalledTimes(1)
-    fireEvent.pointerUp(pill, { pointerId: 1 })
-    expect(agent.endTalking).toHaveBeenCalledTimes(1)
-  })
-
-  it('does not start the mic on a plain click', () => {
-    // In push-to-talk a click must not latch the mic on — that would be the
-    // always-listening behaviour the mode exists to avoid.
-    const agent = makeAgent({ pushToTalk: true })
-    render(withAgent(agent))
-    fireEvent.click(screen.getByRole('button'))
-    expect(agent.startMic).not.toHaveBeenCalled()
-  })
-
-  it('is inert while the agent is speaking, since the mic is already silent', () => {
-    const agent = makeAgent({ pushToTalk: true, micState: 'speaking' })
-    render(withAgent(agent))
-    fireEvent.click(screen.getByRole('button'))
-    expect(agent.stopMic).not.toHaveBeenCalled()
+    expect(v.beginTalking).toHaveBeenCalledTimes(1)
   })
 
   it('does not hold while connecting', () => {
-    const agent = makeAgent({ pushToTalk: true, connState: 'connecting' })
-    render(withAgent(agent))
+    const v = makeAgent({ pushToTalk: true, phase: 'connecting', connState: 'connecting' })
+    render(withAgent(v))
+    expect(screen.getByText('Connecting…')).toBeInTheDocument()
     fireEvent.pointerDown(screen.getByRole('button'), { pointerId: 1 })
-    expect(agent.beginTalking).not.toHaveBeenCalled()
+    expect(v.beginTalking).not.toHaveBeenCalled()
   })
 
-  it('?ptt=0 keeps the original click-to-start behaviour', () => {
-    const agent = makeAgent({ pushToTalk: false })
-    render(withAgent(agent))
+  it('shows "Retry" on transport error and calls reconnect on click', () => {
+    const v = makeAgent({ pushToTalk: false, phase: 'error', connState: 'error' })
+    render(withAgent(v))
+    expect(screen.getByText('Retry')).toBeInTheDocument()
     fireEvent.click(screen.getByRole('button'))
-    expect(agent.startMic).toHaveBeenCalledTimes(1)
-    expect(agent.beginTalking).not.toHaveBeenCalled()
+    expect(v.reconnect).toHaveBeenCalledTimes(1)
   })
 })

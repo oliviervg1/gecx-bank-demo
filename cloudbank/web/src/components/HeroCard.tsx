@@ -4,14 +4,11 @@ type HeroCardProps = {
   children: ReactNode
   className?: string
 } & (
-  | { onClick: () => void } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'className'>
-  | { onClick?: undefined } & Omit<HTMLAttributes<HTMLDivElement>, 'onClick' | 'className'>
+  | ({ onClick: () => void } & Omit<ButtonHTMLAttributes<HTMLButtonElement>, 'onClick' | 'className'>)
+  | ({ onClick?: undefined } & Omit<HTMLAttributes<HTMLDivElement>, 'onClick' | 'className'>)
 )
 
-// Subtle vertical gradient brandGreen → brandGreenDeep.
-const BASE =
-  'rounded-2xl shadow-card p-4 text-white ' +
-  'bg-brand-green bg-gradient-to-b from-brand-green to-brand-green-deep'
+const BASE = 'rounded-xl border border-brand-green-deep p-4 text-white bg-brand-green'
 
 export function HeroCard({ children, className = '', onClick, ...rest }: HeroCardProps) {
   if (onClick) {
@@ -20,7 +17,7 @@ export function HeroCard({ children, className = '', onClick, ...rest }: HeroCar
         type="button"
         data-card
         onClick={onClick}
-        className={`${BASE} text-left w-full ${className}`}
+        className={`${BASE} text-left w-full hover:bg-brand-green-deep transition-colors ${className}`}
         {...(rest as ButtonHTMLAttributes<HTMLButtonElement>)}
       >
         {children}
