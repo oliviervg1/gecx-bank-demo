@@ -54,17 +54,17 @@ if isinstance(data, dict):
     elif isinstance(args, dict) and isinstance(args.get("command"), str):
         cmd = args["command"]
 
-B = r"(?:^|[^A-Za-z0-9_.-])"
-E = r"(?:[^A-Za-z0-9_.-]|$)"
+B = r"(?<![A-Za-z0-9_.-])"
+E = r"(?![A-Za-z0-9_.-])"
 patterns = (
     B + r"cxas(?:-eval)?\s+push" + E,
     B + r"push\.sh" + E,
-    B + r"manage_ces_app\.py" + E + r".*" + B + r"pr-eval" + E,
+    B + r"manage_ces_app\.py" + E + r".*?" + B + r"pr-eval" + E,
 )
 matched = any(re.search(p, cmd, flags=re.DOTALL) for p in patterns)
 print("yes" if matched else "no")
 PY
-)"
+)" || exit 2
 
 if [ "$should_check" != "yes" ]; then
   exit 0
@@ -96,6 +96,7 @@ else
 fi
 set -e
 
+set +e
 python3 - "$lint_file" "$stderr_file" "$lint_rc" "$project_dir" <<'PY'
 import json
 import os
@@ -145,3 +146,8 @@ if issues:
 
 sys.exit(0)
 PY
+analysis_rc=$?
+set -e
+if [ "$analysis_rc" -ne 0 ]; then
+  exit 2
+fi
