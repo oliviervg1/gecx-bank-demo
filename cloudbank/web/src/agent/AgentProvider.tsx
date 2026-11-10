@@ -369,6 +369,9 @@ function createSessionRuntime(
     ) {
       capture.setMuted(false)
     }
+    if (state.errorMessage && state.errorMessage !== prev.errorMessage) {
+      console.warn('[Cloudbank Concierge]', state.errorMessage)
+    }
     if (state !== prev) {
       notify()
     }

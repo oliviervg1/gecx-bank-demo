@@ -1,9 +1,8 @@
-# Enforces the gates listed in AGENTS.md § "Testing the Cloudbank app".
+# Enforces the exact four local verification gates listed in AGENTS.md plus
+# repository hygiene checks (PyPI-only lockfiles and no hardcoded GCP project IDs).
 #
-# Every gate here is also a command a human can run locally, but the point is
-# that none of them depends on a human remembering to. In particular the
-# agent/UI parity suite in the `web` job is only worth having if it runs
-# unattended.
+# Every gate runs offline with zero GCP credentials so it is safe to run on
+# untrusted pull requests.
 #
 # Security note: no `github.event.*` value is interpolated into any `run:`
 # block. The single expression below is `github.ref` in a concurrency group
@@ -23,61 +22,35 @@ permissions:
   contents: read
 
 jobs:
-  web:
-    name: web (vitest, tsc, eslint, build)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: cloudbank/web
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version-file: cloudbank/web/.nvmrc
-          cache: npm
-          cache-dependency-path: cloudbank/web/package-lock.json
-
-      # `npm ci` rather than `npm install` — fails if package.json and the
-      # lockfile disagree, which is the point of committing the lockfile.
-      - run: npm ci
-
-      - name: Typecheck
-        run: npm run typecheck
-
-      - name: Lint
-        run: npm run lint
-
-      - name: Test
-        run: npm test
-
-      - name: Production build
-        run: npm run build
-
-  web-audit:
-    # Split from `web` so an advisory published upstream reports as its own
-    # failure rather than masquerading as a broken build. Gates on high and
-    # critical; moderate and low are surfaced in the log without failing, since
-    # they are frequently dev-only and land with no change on our side.
-    name: web (npm audit)
+  agent:
+    name: agent (cxas lint, Composite v2 audit, pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
       run:
-        working-directory: cloudbank/web
+        working-directory: cloudbank
     steps:
       - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+
+      - uses: astral-sh/setup-uv@v7
         with:
-          node-version-file: cloudbank/web/.nvmrc
-          cache: npm
-          cache-dependency-path: cloudbank/web/package-lock.json
-      - run: npm ci
-      - name: Audit (report everything)
-        run: npm audit || true
-      - name: Audit (fail on high or critical)
-        run: npm audit --audit-level=high
+          enable-cache: true
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Verify PyPI-only lockfile
+        run: "! grep -i airlock uv.lock"
+
+      # Run from cloudbank/ WITHOUT --app-dir so evaluation rules E001-E011 execute.
+      - name: CXAS structural & evaluation lint
+        run: uv run --locked cxas lint
+
+      - name: Composite v2 readiness audit
+        run: uv run --locked python scripts/audit_agent.py --workspace=cxas_app/Cloudbank --report
+
+      - name: Offline Python agent suite
+        run: uv run --locked pytest -v
 
   proxy:
     name: proxy (pytest, ruff)
@@ -98,38 +71,76 @@ jobs:
       - name: Install (locked)
         run: uv sync --locked --all-extras
 
+      - name: Verify PyPI-only lockfile
+        run: "! grep -i airlock uv.lock"
+
       # --all-extras on every `uv run` too, not just the sync: a bare `uv run`
       # re-syncs to the DEFAULT dependency group and silently drops the dev
-      # extras, which removes pytest-asyncio. The async tests then don't fail —
-      # they degrade to "Unknown pytest.mark.asyncio" warnings and stop
-      # asserting anything.
-      - name: Lint
-        run: uv run --all-extras ruff check .
-
+      # extras, which removes pytest-asyncio.
       - name: Test
-        run: uv run --all-extras pytest -q
+        run: uv run --locked --all-extras pytest -v
 
-  agent:
-    name: agent (cxas lint)
+      - name: Lint
+        run: uv run --locked --all-extras ruff check .
+
+  web:
+    name: web (vitest, tsc, eslint, build)
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudbank/web
     steps:
       - uses: actions/checkout@v7
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: actions/setup-node@v7
         with:
-          enable-cache: true
+          node-version-file: cloudbank/web/.nvmrc
+          cache: npm
+          cache-dependency-path: cloudbank/web/package-lock.json
 
-      # cxas lint is offline — it reads the local app directory and needs no
-      # GCP credentials, so it is safe to run against untrusted PR code.
-      - name: Lint the CES app
-        working-directory: cloudbank
-        run: uvx --from cxas-scrapi cxas lint
+      # `npm ci` rather than `npm install` — fails if package.json and the
+      # lockfile disagree, which is the point of committing the lockfile.
+      - run: npm ci
+
+      - name: Test
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint (zero warnings)
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+  web-audit:
+    # Split from `web` so an advisory published upstream reports as its own
+    # failure rather than masquerading as a broken build. Gates on high and
+    # critical; moderate and low are surfaced in the log without failing.
+    name: web (npm audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudbank/web
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version-file: cloudbank/web/.nvmrc
+          cache: npm
+          cache-dependency-path: cloudbank/web/package-lock.json
+      - run: npm ci
+      - name: Audit (report everything)
+        run: npm audit || true
+      - name: Audit (fail on high or critical)
+        run: npm audit --audit-level=high
 
   no-hardcoded-project:
-    # A hardcoded project id survives the project it names. When that project is
-    # gone, every CES call fails with 403 CONSUMER_INVALID, which reads like an
-    # IAM problem. Everything must derive the resource from gecx-config.json.
+    # A hardcoded project id survives the project it names. Everything must
+    # derive the resource dynamically from cloudbank/gecx-config.json.
     name: no hardcoded GCP project id
     runs-on: ubuntu-latest
     timeout-minutes: 5
@@ -141,7 +152,7 @@ jobs:
           if grep -rn --exclude-dir=.git --exclude-dir=node_modules \
                       --exclude-dir=.venv --exclude-dir=.github \
                       --exclude=gecx-config.json \
-                      -F "projects/${PROJECT}" . ; then
+                      -F "${PROJECT}" . ; then
             echo "::error::Hardcoded GCP project id found. Derive it from cloudbank/gecx-config.json instead."
             exit 1
           fi

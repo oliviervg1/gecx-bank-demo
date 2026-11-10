@@ -105,6 +105,31 @@ function visualFor(
   }
 }
 
+function tooltipFor(
+  phase: SessionPhase,
+  micState: MicState,
+  micDenied: boolean,
+  pushToTalk: boolean,
+): string | undefined {
+  if (micDenied || micState === 'muted') {
+    return pushToTalk
+      ? 'Allow microphone access in your browser, then hold to talk'
+      : 'Allow microphone access in your browser to talk'
+  }
+  if (phase === 'error') {
+    return 'Select Reconnect to start a new concierge session'
+  }
+  if (phase === 'paused') {
+    return pushToTalk
+      ? 'Hold the pill or Spacebar to resume'
+      : 'Select to resume your concierge session'
+  }
+  if (pushToTalk) {
+    return 'Hold the pill or Spacebar to talk'
+  }
+  return undefined
+}
+
 export function ConciergePill() {
   const agent = useAgent()
   const phase = resolvePhase(agent.phase, agent.connState, agent.micState)
@@ -116,7 +141,8 @@ export function ConciergePill() {
     onEnd: agent.endTalking,
   })
 
-  const v = visualFor(phase, agent.micState, Boolean(agent.micDenied), agent.pushToTalk, {
+  const micDenied = Boolean(agent.micDenied)
+  const v = visualFor(phase, agent.micState, micDenied, agent.pushToTalk, {
     startMic: () => {
       void agent.startMic()
     },
@@ -132,13 +158,7 @@ export function ConciergePill() {
       onClick={v.onClick ?? undefined}
       disabled={v.onClick === null && !holdable}
       style={holdable ? { touchAction: 'none' } : undefined}
-      title={
-        agent.errorMessage
-          ? agent.errorMessage
-          : agent.pushToTalk
-            ? 'Hold the pill or Spacebar to talk'
-            : undefined
-      }
+      title={tooltipFor(phase, agent.micState, micDenied, agent.pushToTalk)}
       {...holdProps}
       className={
         'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ' +
