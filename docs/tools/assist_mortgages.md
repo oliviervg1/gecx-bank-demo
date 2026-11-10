@@ -6,7 +6,7 @@
 
 ## 1. Overview & Architectural Principles
 
-`assist_mortgages` handles mortgage balance and rate summaries, next payment dates, 10% annual ERC-free overpayment allowances, monthly and lump-sum overpayment amortisation projections, fixed-rate renewal comparisons, and first-time buyer borrowing/deposit readiness for renters (`mortgage: null`).
+`assist_mortgages` handles mortgage balance and rate summaries, next payment dates, 10% annual ERC-free overpayment allowances, monthly and lump-sum overpayment amortisation projections, fixed-rate renewal comparisons, and first-time buyer borrowing/deposit readiness for renters (`accounts.mortgage` omitted in the fixture, normalised to `snapshot["mortgage"] = None`).
 
 Core invariants:
 - **Exact amortisation & integer bisection:** Uses `_simulate_mortgage` (`_half_up(bal * rate_bps, 120_000)` monthly interest, cap `600` months) for overpayment savings and `_renewal_payment_pence` integer bisection over the identical kernel for 2-year and 5-year fixed renewal deals.
@@ -83,7 +83,8 @@ def assist_mortgages(
 | `customer_snapshot` | Read | Reads `mortgage` (when homeowner) or `user.annual_income_pence` + `savings` (when renter). |
 | `handoff_context` | Read / Write | Consumes optional `freed_monthly_pence` for default monthly overpayment and clears to `{}` on entry. |
 | `demo_date` / `first_name` | Read | Resolves next monthly payment date and personalises farewells. |
-| `mortgage_state` | Read / Write | Tracks `last_subview`, `last_monthly_overpayment_pence`, `last_lump_sum_overpayment_pence`, `pending_savings_pivot`, `pivot_hop_turn`, and `pivot_hop_count`. |
+| `pass_count` | Read | Bounds cross-spoke pivots (`int(pass_count) > 4` stops ping-pong loops). |
+| `mortgage_state` | Read / Write | Tracks `last_subview`, `monthly_overpayment_pence`, `lump_sum_overpayment_pence`, and `pending_savings_pivot`. |
 | `ui_view_state` | Read / Write | Emits `{page: "mortgage", subview, monthly_overpayment_pence?, lump_sum_overpayment_pence?}` (or `home`/`profile`). |
 | `target_agent` | Write | Stages `everyday_banking_agent` or `savings_agent` on cross-spoke pivots. |
 | `unclear_count` | Read / Write | Shared 2-strike non-terminating unclear counter. |

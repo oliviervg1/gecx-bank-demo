@@ -59,7 +59,7 @@ E = r"(?![A-Za-z0-9_.-])"
 patterns = (
     B + r"cxas(?:-eval)?\s+push" + E,
     B + r"push\.sh" + E,
-    B + r"manage_ces_app\.py" + E + r".*?" + B + r"pr-eval" + E,
+    B + r"manage_ces_app\.py" + E + r".*?" + B + r"(?:push|pr-eval)" + E,
 )
 matched = any(re.search(p, cmd, flags=re.DOTALL) for p in patterns)
 print("yes" if matched else "no")

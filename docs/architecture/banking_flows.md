@@ -8,10 +8,10 @@ Cloudbank covers four interconnected retail banking domains plus three immediate
 
 | Persona | Profile | Current Account | Savings Pot | Mortgage / Home Buying | Flagged November Anomaly |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Chloe** | Homeowner | `£2,840.50` | `Home Emergency Pot` (`£4,850` / `£10,000` at `4.50% AER`) | `£214,500` at `4.20%` (`220` mo, `£21,450` ERC-free left) | Netflix `£45.00` on 21 Nov (was `£17.99`) |
-| **David** | Remortgager | `£4,120.80` | `Family Holiday Fund` (`£10,800` / `£18,000` at `4.75% AER`) | `£158,200` at `3.95%` (`120` mo, `£13,620` ERC-free left) | PureGym Family `£62.00` on 22 Nov (was `£38.00`) |
-| **Tom** | First-Time Buyer (Rents) | `£1,650.25` | `First Home Deposit` (`£14,200` / `£35,000` at `4.65% AER`) | Renter (`£42,000` income → `£189,000` `4.5×` borrowing) | Adobe Creative Cloud `£199.00` on 22 Nov (was `£54.99`) |
-| **Sarah** | Pre-Retirement | `£6,490.10` | `Retirement Bridge Pot` (`£21,500` / `£25,000` at `4.40% AER`) | `£96,500` at `3.85%` (`90` mo, `£3,650` ERC-free left) | Aviva Home Insurance `£96.00` on 23 Nov (was `£48.00`) |
+| **Chloe** | Homeowner | `£4,250.75` | `Home Emergency Pot` (`£4,850` / `£10,000` at `4.50% AER`, `£200/mo`) | `£214,500` at `4.20%` (`220` mo, `£21,450` ERC-free left) | Netflix `£45.00` on 21 Nov (was `£17.99`) |
+| **David** | Remortgager | `£6,820.40` | `Family Reserve Pot` (`£12,400` / `£18,000` at `4.25% AER`, `£300/mo`) | `£148,200` at `3.90%` (`120` mo, `£13,620` ERC-free left) | PureGym Family `£62.00` on 22 Nov (was `£38.00`) |
+| **Tom** | First-Time Buyer (Rents) | `£1,840.50` | `First Home Deposit` (`£14,200` / `£35,000` at `4.75% AER`, `£350/mo`) | Renter (`£42,000` income → `£189,000` `4.5×` borrowing) | Adobe Creative Cloud `£199.00` on 22 Nov (was `£54.99`) |
+| **Sarah** | Pre-Retirement | `£9,340.15` | `Retirement Emergency Reserve` (`£21,500` / `£25,000` at `4.50% AER`, `£400/mo`) | `£96,500` at `4.05%` (`90` mo, `£3,650` ERC-free left) | Aviva Home Insurance `£96.00` on 23 Nov (was `£48.00`) |
 
 ---
 
@@ -89,7 +89,7 @@ flowchart TD
 
     In(["Mortgage or Home-Buying Request"]):::entry --> Mtg["assist_mortgages(query_type, monthly_overpayment, lump_sum_overpayment)"]:::ctrl
     Mtg --> HasMtg{"Customer has active<br/>mortgage in snapshot?"}
-    HasMtg -->|"No (Tom — Renter)"| Rent["Compute 4.5x income max borrowing + First Home Deposit gap<br/>Emit ui_view_state(page=mortgage) + offer Savings pivot"]:::state
+    HasMtg -->|"No (Tom — Renter)"| Rent["Compute 4.5x income max borrowing + First Home Deposit gap<br/>Emit ui_view_state(page=mortgage, subview=overview) + offer Savings pivot"]:::state
     Rent -->|"Accepts deposit projection"| ToSav["Stage target_agent = savings_agent"]:::route
     HasMtg -->|"Yes — summary / next_payment / allowance"| Summary["Emit ui_view_state(page=mortgage, subview=summary)<br/>Report balance, rate, next payment, or remaining 10% ERC-free cap"]:::state
     HasMtg -->|"Yes — overpayment_projection"| Overpay["Amortise baseline vs overpaid (min(12, months) year-1 ERC check)<br/>Emit subview=overpay + indicative illustration note"]:::state

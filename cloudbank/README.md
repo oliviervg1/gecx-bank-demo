@@ -39,7 +39,7 @@ flowchart TD
 | `agents/root_agent/` | `route_banking_intent` | `end_session` | Greeting, `Home`/`Profile` navigation, capability summary, 2-strike unclear recovery, domain classification, farewell. | `everyday_banking_agent`, `savings_agent`, `mortgage_agent` |
 | `agents/everyday_banking_agent/` | `assist_everyday_banking` | `search_help`, `end_session` | Current account balance, 3-month spending, category/vendor drilldown, subscriptions, anomaly check (`yes`/`no`), UK cancellation search + savings redirect offer. | `savings_agent`, `mortgage_agent` |
 | `agents/savings_agent/` | `assist_savings` | `end_session` | Savings pot balance, AER vs gross rate, monthly contribution, compound goal projections (consuming `handoff_context.freed_monthly_pence`). | `everyday_banking_agent`, `mortgage_agent` |
-| `agents/mortgage_agent/` | `assist_mortgages` | `end_session` | Mortgage summary, next payment, 10% ERC-free allowance, overpayment amortisation savings, integer-bisection fixed-rate renewals, renter readiness (`mortgage: null`). | `everyday_banking_agent`, `savings_agent` |
+| `agents/mortgage_agent/` | `assist_mortgages` | `end_session` | Mortgage summary, next payment, 10% ERC-free allowance, overpayment amortisation savings, integer-bisection fixed-rate renewals, renter readiness (`accounts.mortgage` omitted). | `everyday_banking_agent`, `savings_agent` |
 
 See [`docs/tools/README.md`](../docs/tools/README.md) for line-linked specifications of all four Python controllers.
 
@@ -97,7 +97,7 @@ All `OBJECT` variables declare `{"type": "OBJECT", "required": []}` with no `pro
 | `router_state` | `OBJECT` | `route_banking_intent` | `route_banking_intent` | `{last_intent, topic_hint}` recorded on hub classification. |
 | `everyday_state` | `OBJECT` | `assist_everyday_banking` | `assist_everyday_banking` | Tracks `pending_anomaly_vendor`, `anomaly_status`, `pending_redirect_offer`, `last_discussed_subscription`. |
 | `savings_state` | `OBJECT` | `assist_savings` | `assist_savings` | Tracks `last_extra_monthly_pence` and `last_custom_target_pence`. |
-| `mortgage_state` | `OBJECT` | `assist_mortgages` | `assist_mortgages` | Tracks `last_subview`, `last_monthly_overpayment_pence`, `last_lump_sum_overpayment_pence`. |
+| `mortgage_state` | `OBJECT` | `assist_mortgages` | `assist_mortgages` | Tracks `last_subview`, `monthly_overpayment_pence`, `lump_sum_overpayment_pence`, `pending_savings_pivot`. |
 | `pass_turn_id` / `pass_count` | `STRING` | `capture_utterance` | `capture_utterance` | Per-invocation loop guard (`_MAX_PASSES = 8`). |
 | `last_user_utterance` | `STRING` | `capture_utterance` | Diagnostics | Latest cleaned caller utterance (`≤ 500` chars). |
 | `call_complete` | `STRING` | All 4 controllers, callbacks | `capture_utterance`, `release_line` | `""` → `"true"` (farewell staged) → `"released"` (`end_session` emitted). |

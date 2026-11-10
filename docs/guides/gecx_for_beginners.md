@@ -47,9 +47,9 @@ Because the language model only speaks numbers returned by the calculator, the f
 You can switch between four fictional UK customers at the top of the screen at any time:
 
 - **Chloe (Homeowner):** Spots a `£45.00` Netflix plan hike in November, checks how to cancel it, sees that redirecting `£45/mo` reaches her `£10,000` Home Emergency Pot `4 months` sooner (`June 2028`), and compares overpaying her mortgage by `£200/mo` (`£17,849.18` interest saved).
-- **David (Remortgager):** Reviews family spending, checks a `£62.00` gym charge, and compares `2-year` (`3.89%` / `4.15%`) vs `5-year` fixed mortgage renewal payments.
-- **Tom (First-Time Buyer, Rents):** Has no mortgage yet — explores his indicative `£189,000` borrowing power alongside his `First Home Deposit` pot (`£14,200` of `£35,000`), and sees what redirecting a `£199/mo` software subscription saves.
-- **Sarah (Pre-Retirement):** Tests the `10%` annual fee-free mortgage overpayment boundary (`£3,650` remaining this year) — seeing both an overpayment that triggers an Early Repayment Charge warning (`£400/mo`) and one that lands right on the fee-free limit (`£250/mo + £650` lump sum).
+- **David (Remortgager):** Reviews family spending, checks a `£62.00` gym charge, and compares `2-year` (`4.15%`) vs `5-year` (`3.75%`) fixed mortgage renewal payments on his `£148,200` mortgage.
+- **Tom (First-Time Buyer, Rents):** Has no mortgage yet — explores his indicative `£189,000` borrowing power alongside his `First Home Deposit` pot (`£14,200` of `£35,000` at `4.75% AER`), and sees what redirecting a `£199/mo` software subscription saves.
+- **Sarah (Pre-Retirement):** Tests the `10%` annual fee-free mortgage overpayment boundary (`£3,650` remaining this year on her `£96,500` mortgage at `4.05%`) — seeing both an overpayment that triggers an Early Repayment Charge warning (`£400/mo`) and one that lands right on the fee-free limit (`£250/mo + £650` lump sum).
 
 ---
 

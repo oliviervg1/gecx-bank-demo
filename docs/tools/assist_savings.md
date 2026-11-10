@@ -71,7 +71,8 @@ def assist_savings(
 | `customer_snapshot` | Read | Reads `savings` (`name`, `balance_pence`, `gross_rate_bps`, `aer_bps`, `monthly_contribution_pence`, `goal_target_pence`). |
 | `handoff_context` | Read / Write | Reads optional `{vendor, freed_monthly_pence}` and clears to `{}` on entry. |
 | `demo_date` / `first_name` | Read | Computes completion month/year from statement date and personalises farewells. |
-| `savings_state` | Read / Write | Tracks `last_extra_monthly_pence`, `last_custom_target_pence`, `pivot_hop_turn`, and `pivot_hop_count`. |
+| `pass_count` | Read | Bounds cross-spoke pivots (`int(pass_count) > 4` stops ping-pong loops). |
+| `savings_state` | Read / Write | Tracks `last_extra_monthly_pence` and `last_custom_target_pence`. |
 | `ui_view_state` | Read / Write | Emits `{page: "savings", extra_monthly_pence, custom_target_pence?}` (or `home`/`profile`). |
 | `target_agent` | Write | Stages `everyday_banking_agent` or `mortgage_agent` on cross-spoke pivots. |
 | `unclear_count` | Read / Write | Shared 2-strike non-terminating unclear counter. |
