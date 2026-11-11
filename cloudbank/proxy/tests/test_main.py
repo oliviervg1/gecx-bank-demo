@@ -316,14 +316,23 @@ def test_inbound_frame_errors_and_session_cap(monkeypatch: pytest.MonkeyPatch) -
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text(json.dumps({"type": "audio", "data": "AAAA"}))
         assert "expected start frame" in _recv_error_payload(ws)["message"]
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1008
 
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text("x" * (main.MAX_CLIENT_FRAME_BYTES + 1))
         assert "too large" in _recv_error_payload(ws)["message"]
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1008
 
     monkeypatch.setattr(main, "_active_sessions", main._MAX_CONCURRENT_SESSIONS)
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         assert "too many active sessions" in _recv_error_payload(ws)["message"]
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1008
 
 
 def test_start_frame_timeout_releases_session_slot(
@@ -336,6 +345,9 @@ def test_start_frame_timeout_releases_session_slot(
     monkeypatch.setenv("PROXY_START_TIMEOUT_SECONDS", "0.05")
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         err = _recv_error_payload(ws)
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1008
     assert "timed out waiting for start frame" in err["message"]
     assert main._active_sessions == 0
 
@@ -350,6 +362,7 @@ def test_ws_session_sanitizes_session_id_and_uses_configured_eu_location(
     assert "/locations/eu/apps/" in real_resource
 
     captured_urls: list[str] = []
+    captured_headers: list[dict[str, str]] = []
     captured_upstream_frames: list[dict[str, Any]] = []
 
     class CapturingUpstream:
@@ -371,8 +384,9 @@ def test_ws_session_sanitizes_session_id_and_uses_configured_eu_location(
         async def close(self) -> None:
             pass
 
-    def fake_connect(url: str, **_kwargs: Any) -> CapturingUpstream:
+    def fake_connect(url: str, **kwargs: Any) -> CapturingUpstream:
         captured_urls.append(url)
+        captured_headers.append(dict(kwargs.get("additional_headers") or {}))
         return CapturingUpstream()
 
     async def ok_token() -> str:
@@ -396,6 +410,8 @@ def test_ws_session_sanitizes_session_id_and_uses_configured_eu_location(
         ready = json.loads(ws.receive_text())
 
     assert captured_urls[-1].endswith("/BidiRunSession/locations/eu")
+    assert captured_headers[-1]["Authorization"] == "Bearer tok-eu"
+    assert captured_headers[-1]["x-goog-user-project"] == real_resource.split("/")[1]
     session_path = captured_upstream_frames[0]["config"]["session"]
     assert "victim" not in session_path and ".." not in session_path
     tail_uuid = session_path.rsplit("/", 1)[-1]
@@ -457,6 +473,9 @@ def test_config_auth_and_upstream_errors_reported_safely(
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text(valid_start)
         assert _recv_error_payload(ws)["message"] == "server authentication error"
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1011
 
     async def ok_token() -> str:
         return "tok-1"
@@ -490,6 +509,21 @@ def test_config_auth_and_upstream_errors_reported_safely(
     with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
         ws.send_text(valid_start)
         assert "upstream closed" in _recv_error_payload(ws)["message"]
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1011
+
+    monkeypatch.setattr(
+        main.websockets,
+        "connect",
+        lambda *_a, **_kw: (_ for _ in ()).throw(OSError("connection refused")),
+    )
+    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+        ws.send_text(valid_start)
+        assert _recv_error_payload(ws)["message"] == "could not reach upstream"
+        with pytest.raises(WebSocketDisconnect) as close_exc:
+            ws.receive_text()
+        assert close_exc.value.code == 1011
 
     # Full-stack F4-1 check: held ServerEnd still arrives over /ws/agent when upstream
     # drops with ConnectionClosedError after farewell audio + endSession before turnCompleted.

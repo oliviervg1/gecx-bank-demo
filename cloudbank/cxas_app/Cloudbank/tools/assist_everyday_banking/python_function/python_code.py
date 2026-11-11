@@ -1,5 +1,6 @@
 import logging
 from typing import Literal
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -770,21 +771,50 @@ def _handle_cancel_subscription(
     }
 
 
+def _unwrap_search_response(resp: object) -> dict | None:
+    """Unwrap live CXAS SearchToolResponse (.ok/.text/.json()) or toolFakeConfig dict."""
+    if isinstance(resp, dict):
+        return resp
+    if resp is None:
+        return None
+    if not resp.ok or not resp.text:  # type: ignore[attr-defined]
+        return None
+    body = resp.json()  # type: ignore[attr-defined]
+    return body if isinstance(body, dict) else None
+
+
 def _lookup_cancellation_guidance(vendor: str) -> str:
-    """Invoke wrapped tools.search_help and extract joined answer text safely."""
+    """Invoke wrapped tools.search_help and extract snippet text from googleSearchTool."""
     try:
-        resp = tools.search_help({"query": f"how to cancel {vendor} subscription UK"})
+        raw_resp = tools.search_help({"query": f"how to cancel {vendor} subscription UK"})
+        resp = _unwrap_search_response(raw_resp)
     except Exception:
         logger.exception("search_help invocation failed")
         return ""
-    if not isinstance(resp, dict) or resp.get("status") == "error" or resp.get("isError"):
+    if resp is None or resp.get("status") == "error" or resp.get("isError"):
         return ""
-    answers = resp.get("answer") or resp.get("results") or []
-    if isinstance(answers, str):
-        return answers.strip()
-    if isinstance(answers, list):
-        return " ".join(str(item).strip() for item in answers if str(item).strip())
-    return ""
+    snippets = resp.get("snippets")
+    if not isinstance(snippets, list):
+        return ""
+
+    first_word = vendor.strip().split()[0].lower() if vendor.strip() else ""
+    vendor_slug = "".join(ch for ch in first_word if ch.isalnum())
+    preferred: list[str] = []
+    others: list[str] = []
+    for item in snippets:
+        if not isinstance(item, dict):
+            continue
+        text = str(item.get("text") or "").strip()
+        if not text:
+            continue
+        host = urlsplit(str(item.get("url") or "")).netloc.lower()
+        if "youtube.com" in host or "youtu.be" in host:
+            continue
+        if vendor_slug and vendor_slug in host:
+            preferred.append(text)
+        else:
+            others.append(text)
+    return " ".join((preferred + others)[:2])
 
 
 def _handle_category(

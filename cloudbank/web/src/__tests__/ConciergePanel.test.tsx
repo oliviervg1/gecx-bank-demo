@@ -203,7 +203,12 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
         htmls: ['<div class="chip">how to cancel Netflix UK</div>'],
         webSearchQueries: ['how to cancel Netflix subscription UK'],
         citations: [
+          { title: 'youtube.com', uri: 'https://www.youtube.com/shorts/BgZfIYTa-cA' },
+          { title: 'thenational.scot', uri: 'https://www.thenational.scot/cancel-netflix/' },
+          { title: 'subsorted.co.uk', uri: 'https://subsorted.co.uk/cancel-netflix.html' },
           { title: 'Netflix Help Centre', uri: 'https://help.netflix.com/cancel' },
+          { title: 'Duplicate Netflix', uri: 'https://help.netflix.com/en/node/407' },
+          { title: 'emma-app.com', uri: 'https://emma-app.com/how-to-cancel/netflix' },
           { title: 'Evil URI', uri: 'javascript:alert(1)' },
         ],
       })
@@ -229,7 +234,15 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     expect(iframe?.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox')
     // Duplicate webSearchQueries pill is suppressed when sandboxed htmls chip is present.
     expect(screen.queryByText('how to cancel Netflix subscription UK')).toBeNull()
-    expect(screen.getByText('Netflix Help Centre')).toBeInTheDocument()
+    // Citations are capped at 3, deduplicated by domain, and prefer the vendor's own domain first.
+    const citationLinks = Array.from(
+      screen.getByTestId('search-suggestions-block').querySelectorAll('a'),
+    )
+    expect(citationLinks).toHaveLength(3)
+    expect(citationLinks[0]).toHaveTextContent('Netflix Help Centre')
+    expect(screen.queryByText('Duplicate Netflix')).toBeNull()
+    expect(screen.queryByText('youtube.com')).toBeNull()
+    expect(screen.queryByText('emma-app.com')).toBeNull()
     expect(screen.queryByText('Evil URI')).toBeNull()
 
     // 4. Savings projection sync (extra_monthly_pence + custom_target_pence + Savings pill)

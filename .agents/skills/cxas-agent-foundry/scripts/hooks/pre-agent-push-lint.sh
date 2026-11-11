@@ -57,100 +57,95 @@ if isinstance(data, dict):
         cmd = args["command"]
 
 
+_B = r"(?<![A-Za-z0-9_.-])"
+_E = r"(?![A-Za-z0-9_.-])"
+_PUSH_PATTERNS = (
+    re.compile(_B + r"cxas(?:-eval)?\s+push(?:-eval)?" + _E, re.DOTALL),
+    re.compile(_B + r"push\.sh" + _E, re.DOTALL),
+    re.compile(
+        _B + r"manage_ces_app\.py" + _E + r".*?" + _B + r"(?:push|pr-eval|provision-sandbox)" + _E,
+        re.DOTALL,
+    ),
+)
+_SAFE_READONLY_CMDS = frozenset(
+    {
+        "cat",
+        "less",
+        "head",
+        "tail",
+        "grep",
+        "rg",
+        "ls",
+        "wc",
+        "diff",
+        "stat",
+        "file",
+        "chmod",
+        "shellcheck",
+    }
+)
+_SAFE_GIT_SUBCMDS = frozenset(
+    {
+        "add",
+        "blame",
+        "check-ignore",
+        "checkout",
+        "commit",
+        "diff",
+        "grep",
+        "log",
+        "ls-files",
+        "mv",
+        "reset",
+        "restore",
+        "rm",
+        "show",
+        "status",
+    }
+)
+
+
+def _has_push_pattern(text: str) -> bool:
+    return any(p.search(text) for p in _PUSH_PATTERNS)
+
+
 def _is_env_assignment(tok: str) -> bool:
     return bool(re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tok))
 
 
-def _segment_invokes_push(tokens: list[str]) -> bool:
-    idx = 0
-    n = len(tokens)
-    while idx < n:
-        tok = tokens[idx]
-        if _is_env_assignment(tok):
-            idx += 1
-            continue
-        base = os.path.basename(tok)
-        if base in ("env", "time", "nohup", "command"):
-            idx += 1
-            while idx < n and (tokens[idx].startswith("-") or _is_env_assignment(tokens[idx])):
-                idx += 1
-            continue
-        if base in ("bash", "sh"):
-            if idx + 1 < n and tokens[idx + 1] == "-n":
-                return False
-            idx += 1
-            while idx < n and tokens[idx].startswith("-"):
-                if tokens[idx] == "-c" and idx + 1 < n:
-                    return _command_invokes_push(tokens[idx + 1])
-                idx += 1
-            continue
-        if base == "uv":
-            idx += 1
-            if idx < n and tokens[idx] == "run":
-                idx += 1
-                while idx < n and tokens[idx].startswith("-"):
-                    flag = tokens[idx]
-                    idx += 1
-                    if flag in ("--directory", "--project", "--python", "--with") and idx < n:
-                        idx += 1
-                continue
-            return False
-        if base in ("python", "python3") or re.match(r"^python3\.\d+$", base):
-            idx += 1
-            while idx < n and tokens[idx].startswith("-"):
-                if tokens[idx] in ("-c", "-m"):
-                    return False
-                idx += 1
-            continue
-        break
-
-    if idx >= n:
+def _is_exempt_readonly_segment(seg: str) -> bool:
+    if "$" in seg:
         return False
-
-    head_base = os.path.basename(tokens[idx])
-    rest = tokens[idx + 1 :]
-    if head_base == "push.sh":
+    try:
+        tokens = shlex.split(seg, comments=True, posix=True)
+    except ValueError:
+        return False
+    while tokens and _is_env_assignment(tokens[0]):
+        tokens = tokens[1:]
+    if not tokens:
         return True
-    if head_base in ("cxas", "cxas-eval"):
-        return any(t in ("push", "push-eval") for t in rest)
-    if head_base == "manage_ces_app.py":
-        return any(t in ("push", "pr-eval") for t in rest)
+    head = os.path.basename(tokens[0])
+    if head in _SAFE_READONLY_CMDS:
+        return True
+    if head == "git" and len(tokens) >= 2 and tokens[1] in _SAFE_GIT_SUBCMDS:
+        return True
+    if head in ("bash", "sh") and len(tokens) == 3 and tokens[1] == "-n":
+        return True
     return False
 
 
-def _fallback_regex_match(command: str) -> bool:
-    B = r"(?<![A-Za-z0-9_.-])"
-    E = r"(?![A-Za-z0-9_.-])"
-    patterns = (
-        B + r"cxas(?:-eval)?\s+push(?:-eval)?" + E,
-        B + r"push\.sh" + E,
-        B + r"manage_ces_app\.py" + E + r".*?" + B + r"(?:push|pr-eval)" + E,
-    )
-    return any(re.search(p, command, flags=re.DOTALL) for p in patterns)
-
-
 def _command_invokes_push(command: str) -> bool:
-    try:
-        lexer = shlex.shlex(command, posix=True, punctuation_chars=";&|()")
-        lexer.whitespace_split = True
-        raw_tokens = list(lexer)
-    except ValueError:
-        return _fallback_regex_match(command)
-
-    separators = {";", "&", "&&", "|", "||", "(", ")"}
-    segment: list[str] = []
-    for tok in raw_tokens:
-        if set(tok) <= set(";&|()"):
-            if segment and _segment_invokes_push(segment):
-                return True
-            segment = []
-        elif tok in separators:
-            if segment and _segment_invokes_push(segment):
-                return True
-            segment = []
-        else:
-            segment.append(tok)
-    return bool(segment and _segment_invokes_push(segment))
+    if not _has_push_pattern(command):
+        return False
+    segments = re.split(r"[\r\n;&|()`]+", command)
+    saw_matching_segment = False
+    for seg in segments:
+        if not _has_push_pattern(seg):
+            continue
+        saw_matching_segment = True
+        if not _is_exempt_readonly_segment(seg):
+            return True
+    return not saw_matching_segment
 
 
 print("yes" if _command_invokes_push(cmd) else "no")
