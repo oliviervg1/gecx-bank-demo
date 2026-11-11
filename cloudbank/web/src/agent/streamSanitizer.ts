@@ -15,13 +15,17 @@ const AGENT_TOKEN_RE = /\{@AGENT:\s*[a-zA-Z0-9_]+\}/gi
 // Genuine banking, regulatory, payment-rail, and geographic acronyms preserved in uppercase.
 const PRESERVED_ACRONYMS = new Set([
   'AER',
+  'AI',
   'APR',
   'APRC',
   'ASOS',
   'ATM',
   'BACS',
   'CHAPS',
+  'CX',
+  'EE',
   'ERC',
+  'EU',
   'FCA',
   'FSCS',
   'GBP',
@@ -29,11 +33,14 @@ const PRESERVED_ACRONYMS = new Set([
   'HMRC',
   'HSBC',
   'IBAN',
+  'ID',
   'IKEA',
   'ISA',
   'LIBOR',
   'LISA',
   'LTV',
+  'NI',
+  'PA',
   'PAYE',
   'PIN',
   'SEPA',
@@ -41,19 +48,21 @@ const PRESERVED_ACRONYMS = new Set([
   'SONIA',
   'SVR',
   'SWIFT',
+  'TV',
   'UK',
+  'US',
   'VAT',
 ])
 
 const ALL_CAPS_STRESS_TOKEN_RE =
-  /(?<![A-Za-z0-9])([A-Z]+(?:-[A-Z]+)+|[A-Z]{4,})(['’]S)?(?![A-Za-z0-9])/g
+  /(?<![A-Za-z0-9])([A-Z]+(?:-[A-Z]+)+|[A-Z]{2,})(['’]S)?(?![A-Za-z0-9])/g
 
 function normalizeCapsStressWords(text: string): string {
   return text.replace(
     ALL_CAPS_STRESS_TOKEN_RE,
     (match: string, base: string, possessive: string | undefined, offset: number, full: string) => {
       const lettersOnly = base.replace(/-/g, '')
-      if (lettersOnly.length < 4) return match
+      if (lettersOnly.length < 2) return match
       if (PRESERVED_ACRONYMS.has(base)) {
         return possessive ? `${base}${possessive.toLowerCase()}` : match
       }
