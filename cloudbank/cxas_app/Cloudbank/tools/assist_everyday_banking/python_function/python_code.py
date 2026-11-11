@@ -143,14 +143,29 @@ def _dispatch_everyday(
     ):
         return _handle_redirect_offer_reply(confirmed, everyday)
 
+    pending_anom = str(everyday.get("pending_anomaly_vendor") or "")
     effective = query
     if not effective:
-        if confirmed in ("yes", "no") and everyday.get("pending_anomaly_vendor"):
-            effective = "anomaly_followup"
-        elif category:
+        if category:
             effective = "category"
+        elif vendor_name and (not pending_anom or not _vendors_equal(vendor_name, pending_anom)):
+            effective = "vendor"
+        elif confirmed in ("yes", "no") and pending_anom:
+            effective = "anomaly_followup"
         elif vendor_name:
             effective = "vendor"
+
+    deferred_vendor = ""
+    if (
+        effective in ("balance", "overview", "category", "vendor", "trend", "subscriptions")
+        and confirmed == "yes"
+        and pending_anom
+        and not (vendor_name and _vendors_equal(vendor_name, pending_anom))
+    ):
+        deferred_vendor = pending_anom
+        everyday["anomaly_status"] = "confirmed"
+        everyday["pending_anomaly_vendor"] = ""
+        context.state["everyday_state"] = everyday
 
     handlers = {
         "balance": lambda: _handle_balance(snapshot, anchor_year, anchor_month),
@@ -165,7 +180,9 @@ def _dispatch_everyday(
         "vendor": lambda: _handle_vendor(
             snapshot, everyday, vendor_name, period, anchor_year, anchor_month
         ),
-        "trend": lambda: _handle_trend(snapshot, anchor_year, anchor_month),
+        "trend": lambda: _handle_trend(
+            snapshot, everyday, category, vendor_name, anchor_year, anchor_month
+        ),
         "subscriptions": lambda: _handle_subscriptions(
             snapshot, everyday, period, anchor_year, anchor_month
         ),
@@ -174,7 +191,15 @@ def _dispatch_everyday(
     if handler is None:
         return _handle_empty_or_unclear(snapshot, everyday)
     context.state["unclear_count"] = "0"
-    return handler()
+    result = handler()
+    if deferred_vendor:
+        return {
+            "agent_action": (
+                f"Of course, we can come back to {deferred_vendor} whenever you are ready. "
+                f"{result['agent_action']}"
+            )
+        }
+    return result
 
 
 def _normalize_snapshot(raw: dict) -> dict:
@@ -896,14 +921,14 @@ def _handle_vendor(
 
     period_rows = [t for t in matched if t["month_offset"] == offset]
     period_total = sum(t["amount_pence"] for t in period_rows)
-    three_month_total = sum(t["amount_pence"] for t in matched)
 
+    everyday["last_discussed_vendor"] = canonical
     if any(t["category"] == "subscriptions" for t in matched) and period_total > 0:
         everyday["last_discussed_subscription"] = {
             "vendor": canonical,
             "monthly_pence": period_total,
         }
-        context.state["everyday_state"] = everyday
+    context.state["everyday_state"] = everyday
 
     _emit_ui_view(
         {"page": "spending", "view": "vendor", "period": period_key, "vendor": canonical}
@@ -913,30 +938,84 @@ def _handle_vendor(
     return {
         "agent_action": (
             f"At {canonical}, you spent {_format_gbp(period_total)} across {len(period_rows)} "
-            f"{tx_word} in {month_name}, and {_format_gbp(three_month_total)} in total over the last three months."
+            f"{tx_word} in {month_name}."
         )
     }
 
 
-def _handle_trend(snapshot: dict, anchor_year: int, anchor_month: int) -> dict:
-    """Compare total spending across the trailing three calendar months."""
+def _format_trend_direction(totals: list[int], prev_month_name: str) -> str:
+    """Format month-on-month direction clause for a 3-month series."""
+    diff = totals[0] - totals[1]
+    if diff > 0:
+        return f"up {_format_gbp(diff)} from {prev_month_name}"
+    if diff < 0:
+        return f"down {_format_gbp(abs(diff))} from {prev_month_name}"
+    return f"unchanged from {prev_month_name}"
+
+
+def _handle_trend(
+    snapshot: dict,
+    everyday: dict,
+    category: str,
+    vendor_name: str,
+    anchor_year: int,
+    anchor_month: int,
+) -> dict:
+    """Compare overall, category, or merchant spending across the trailing three months."""
     txns = snapshot["transactions"]
+    names = [_month_name_for_offset(anchor_year, anchor_month, m) for m in (0, 1, 2)]
+
+    if vendor_name:
+        canonical, matched = _match_vendor_rows(txns, vendor_name)
+        if not matched:
+            return _handle_vendor(snapshot, everyday, vendor_name, "this_month", anchor_year, anchor_month)
+        totals = [
+            sum(t["amount_pence"] for t in matched if t["month_offset"] == m)
+            for m in (0, 1, 2)
+        ]
+        three_month_total = sum(totals)
+        direction = _format_trend_direction(totals, names[1])
+        everyday["last_discussed_vendor"] = canonical
+        context.state["everyday_state"] = everyday
+        _emit_ui_view(
+            {"page": "spending", "view": "trend", "period": "this_month", "vendor": canonical}
+        )
+        return {
+            "agent_action": (
+                f"Over the past three months at {canonical}, your spending went from "
+                f"{_format_gbp(totals[2])} in {names[2]} to {_format_gbp(totals[1])} in {names[1]}, "
+                f"and {_format_gbp(totals[0])} in {names[0]}, totaling {_format_gbp(three_month_total)} ({direction})."
+            )
+        }
+
+    if category and category in _CATEGORY_LABELS:
+        label = _CATEGORY_LABELS[category]
+        totals = [
+            sum(
+                t["amount_pence"]
+                for t in txns
+                if t["month_offset"] == m and t["category"] == category and t["amount_pence"] > 0
+            )
+            for m in (0, 1, 2)
+        ]
+        three_month_total = sum(totals)
+        direction = _format_trend_direction(totals, names[1])
+        _emit_ui_view(
+            {"page": "spending", "view": "trend", "period": "this_month", "category": category}
+        )
+        return {
+            "agent_action": (
+                f"Over the past three months on {label}, your spending went from "
+                f"{_format_gbp(totals[2])} in {names[2]} to {_format_gbp(totals[1])} in {names[1]}, "
+                f"and {_format_gbp(totals[0])} in {names[0]}, totaling {_format_gbp(three_month_total)} ({direction})."
+            )
+        }
+
     totals = [
         sum(t["amount_pence"] for t in txns if t["month_offset"] == m and t["amount_pence"] > 0)
         for m in (0, 1, 2)
     ]
-    names = [_month_name_for_offset(anchor_year, anchor_month, m) for m in (0, 1, 2)]
-    diff = totals[0] - totals[1]
-    direction = (
-        f"up {_format_gbp(diff)} from {names[1]}"
-        if diff > 0
-        else (
-            f"down {_format_gbp(abs(diff))} from {names[1]}"
-            if diff < 0
-            else f"unchanged from {names[1]}"
-        )
-    )
-
+    direction = _format_trend_direction(totals, names[1])
     _emit_ui_view({"page": "spending", "view": "trend", "period": "this_month"})
     return {
         "agent_action": (

@@ -5,7 +5,7 @@ import { usePersona } from '../../personas/PersonaProvider'
 import { SpendingHeader } from './SpendingHeader'
 import type { Transaction } from '../../data/fixture'
 import { formatGBPFromPence } from '../../util/currency'
-import { bucketByMonth } from '../../util/spendingViews'
+import { bucketByMonth, matchVendorRows } from '../../util/spendingViews'
 
 const EMPTY: Transaction[] = []
 const BAR_PRIMARY = '#0a4d35'
@@ -27,15 +27,28 @@ export function MonthlyTrendView({ category, vendor }: Props) {
   const { demoDate } = usePersona()
   const transactions = fixture?.transactions ?? EMPTY
 
+  const canonicalVendor = useMemo(() => {
+    if (!vendor) return undefined
+    const matched = matchVendorRows(transactions, vendor)
+    return matched.canonical || vendor
+  }, [transactions, vendor])
+
   const buckets = useMemo(
-    () => bucketByMonth(transactions, { category, vendor, excludeIncome: true }, demoDate),
-    [transactions, category, vendor, demoDate],
+    () => bucketByMonth(transactions, { category, vendor: canonicalVendor, excludeIncome: true }, demoDate),
+    [transactions, category, canonicalVendor, demoDate],
   )
-  const breadcrumb = vendor
-    ? `Trend › ${vendor}`
-    : category
-      ? `Trend › ${prettyCategory(category)}`
-      : undefined
+
+  const scopeLabel = canonicalVendor ?? (category ? prettyCategory(category) : undefined)
+  const breadcrumb = scopeLabel ? `Trend › ${scopeLabel}` : undefined
+  const threeMonthTotalPence = buckets.reduce((sum, b) => sum + b.total_pence, 0)
+  const prevMonthName = buckets[1]?.monthName ?? 'last month'
+  const deltaPence = (buckets[2]?.total_pence ?? 0) - (buckets[1]?.total_pence ?? 0)
+  const deltaLabel =
+    deltaPence > 0
+      ? `+${formatGBPFromPence(deltaPence)} vs ${prevMonthName}`
+      : deltaPence < 0
+        ? `${formatGBPFromPence(deltaPence)} vs ${prevMonthName}`
+        : `Unchanged vs ${prevMonthName}`
 
   const data = buckets.map((b) => ({
     name: b.label,
@@ -46,6 +59,20 @@ export function MonthlyTrendView({ category, vendor }: Props) {
   return (
     <div className="pb-6">
       <SpendingHeader breadcrumb={breadcrumb} showPeriodSelector={false} />
+
+      {scopeLabel && (
+        <div className="py-4 border-b border-brand-divider">
+          <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium">
+            Three-Month Total · {scopeLabel}
+          </div>
+          <div className="flex items-baseline justify-between mt-1">
+            <div className="text-[28px] font-bold text-brand-text leading-none tabular-nums">
+              {formatGBPFromPence(threeMonthTotalPence)}
+            </div>
+            <div className="text-[13px] text-brand-muted tabular-nums">{deltaLabel}</div>
+          </div>
+        </div>
+      )}
 
       <div className="py-4 border-b border-brand-divider">
         <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium mb-2">
