@@ -250,7 +250,7 @@ jobs:
 
       - name: Install Playwright Chromium
         working-directory: cloudbank/web
-        run: npx playwright install --with-deps chromium
+        run: npx playwright install chromium
 
       - name: Build production web bundle
         working-directory: cloudbank/web
