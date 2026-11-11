@@ -1,35 +1,37 @@
 # `assist_mortgages` Specification
 
 - **Owning Agent:** `mortgage_agent`
-- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L1-L628) (entrypoint & thin dispatcher at [`#L29-L134`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L29-L134))
+- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py) (thin entrypoint `assist_mortgages` delegating to `_dispatch_mortgage`)
 - **Manifest:** [assist_mortgages.json](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/assist_mortgages.json)
 
 ## 1. Overview & Architectural Principles
 
-`assist_mortgages` handles mortgage balance and rate summaries, next payment dates, 10% annual ERC-free overpayment allowances, monthly and lump-sum overpayment amortisation projections, fixed-rate renewal comparisons, and first-time buyer borrowing/deposit readiness for renters (`accounts.mortgage` omitted in the fixture, normalised to `snapshot["mortgage"] = None`).
+`assist_mortgages` handles mortgage balance and rate summaries, next payment dates, 10% annual ERC-free overpayment allowances, monthly and lump-sum overpayment amortisation projections, fixed-rate renewal comparisons, and first-time buyer borrowing and deposit readiness for renters (`accounts.mortgage` omitted in the fixture, normalised to `snapshot["mortgage"] = None`).
 
 Core invariants:
-- **Exact amortisation & integer bisection:** Uses `_simulate_mortgage` (`_half_up(bal * rate_bps, 120_000)` monthly interest, cap `600` months) for overpayment savings and `_renewal_payment_pence` integer bisection over the identical kernel for 2-year and 5-year fixed renewal deals.
-- **Year-one ERC allowance accuracy:** Clamps year-one monthly overpayments by `min(12, projected.months)` and checks strict inequality (`first_year > remaining_allowance`) so exact-boundary overpayments remain ERC-free.
-- **Mandatory indicative-illustration note:** Appends `"These figures are an indicative illustration only and not personalised mortgage advice."` directly inside `agent_action` on every overpayment, renewal-rate, and renter-borrowing response.
-- **Renter readiness (`mortgage is None`):** Computes `4.5×` annual income max borrowing (`_half_up(annual_income_pence * 45, 10)`), deposit progress, and stages `pending_savings_pivot = True` so a follow-up `"yes"` pivots cleanly to `savings_agent`.
+- Exact amortisation, zero-balance & negative-amortisation guards: uses `_simulate_mortgage` (`_half_up(bal * rate_bps, 120_000)` monthly interest, cap `600` months) with a negative-amortisation guard when a scheduled payment does not cover monthly interest, and `_renewal_payment_pence` integer bisection (`0` when `balance_pence <= 0`) for 2-year and 5-year fixed renewal deals.
+- Year-one ERC allowance accuracy: clamps year-one monthly overpayments by `min(12, projected.months)` and checks strict inequality (`first_year > remaining_allowance`) so exact-boundary overpayments remain ERC-free.
+- Mandatory indicative-illustration note: appends `"These figures are an indicative illustration only and not personalised mortgage advice."` directly inside `agent_action` on every overpayment, renewal-rate, and renter-borrowing response.
+- Renter readiness & `confirm_pivot`: when `mortgage is None`, computes `4.5×` annual income max borrowing (`_half_up(annual_income_pence * 45, 10)`), deposit progress, and sets `pending_savings_pivot = "FIRST_HOME"`. A follow-up `confirm_pivot="yes"` (or `switch_intent="SAVINGS"`) pivots to `savings_agent`, `confirm_pivot="no"` clears `pending_savings_pivot` cleanly without re-asking, and unmatched turns increment `unclear_count` (clearing `pending_savings_pivot` on Strike 2).
 
 ## 2. Complete Workflow Flowchart
 
 ```mermaid
 flowchart TD
-    Entry["assist_mortgages(query_type, monthly_overpayment, lump_sum_overpayment, switch_intent)"] --> ClearHO["Capture & clear handoff_context = {}<br/>Convert pound floats via _to_pence()"]
-    ClearHO --> Switch{"switch_intent != ''?"}
-    Switch -->|"EVERYDAY_BANKING / SAVINGS"| Stage["Stage target_agent (with per-invocation loop guard)"]
-    Switch -->|"NAVIGATE_HOME / NAVIGATE_PROFILE / CAPABILITIES / FAREWELL"| LocalNav["Handle navigation / capabilities / farewell locally"]
-    Switch -->|"Empty"| Norm["Normalise customer_snapshot & inspect mortgage"]
-    Norm --> HasMtg{"snapshot.mortgage<br/>present?"}
-    HasMtg -->|"No (Tom — Renter)"| Renter["_handle_renter_guidance()<br/>4.5x income + deposit gap + illustration note"]
+    Entry["assist_mortgages(query_type, monthly_overpayment, lump_sum_overpayment, confirm_pivot, switch_intent)"] --> Switch{"switch_intent != ''?"}
+    Switch -->|"EVERYDAY_BANKING / SAVINGS"| Stage["Preserve handoff_context and stage target_agent (with loop guard)"]
+    Switch -->|"NAVIGATE_HOME / NAVIGATE_PROFILE / CAPABILITIES / FAREWELL"| LocalNav["_handle_switch_intent() locally + clear pending_savings_pivot"]
+    Switch -->|"Empty"| PivotReply{"pending_savings_pivot and confirm_pivot in (yes, no)?"}
+    PivotReply -->|"yes"| ToSav["Clear pending_savings_pivot and stage savings_agent"]
+    PivotReply -->|"no"| Decline["Clear pending_savings_pivot and offer general banking help"]
+    PivotReply -->|"Otherwise"| Consume["Capture & clear handoff_context = {}, convert floats via _to_pence()"]
+    Consume --> HasMtg{"snapshot.mortgage present?"}
+    HasMtg -->|"No (Tom, Renter)"| Renter["_handle_renter_guidance(): 4.5x income + deposit gap + arm pending_savings_pivot"]
     HasMtg -->|"Yes"| Mode{"Effective query_type"}
     Mode -->|"summary / next_payment / overpayment_allowance"| Sum["Emit ui_view_state(page=mortgage, subview=overview)"]
-    Mode -->|"overpayment_projection"| Overpay["_handle_overpayment_projection()<br/>_project_overpayment() + ERC check + subview=overpay"]
-    Mode -->|"rate_options"| Rates["_handle_rate_options()<br/>_renewal_payment_pence() bisection + subview=rates"]
-    Mode -->|"Empty / Unclear"| Unclear["_handle_unclear() (re-ask renter offer or 2-strike ladder)"]
+    Mode -->|"overpayment_projection"| Overpay["_handle_overpayment_projection(): _project_overpayment() + ERC check + subview=overpay"]
+    Mode -->|"rate_options"| Rates["_handle_rate_options(): _renewal_payment_pence() bisection + subview=rates"]
+    Mode -->|"Empty / Unclear"| Unclear["_handle_unclear(): increment unclear_count, clear pending on Strike 2"]
 ```
 
 ## 3. Tool Signature & Parameters
@@ -46,6 +48,7 @@ def assist_mortgages(
     ] = "",
     monthly_overpayment: float = 0.0,
     lump_sum_overpayment: float = 0.0,
+    confirm_pivot: Literal["", "yes", "no"] = "",
     switch_intent: Literal[
         "",
         "EVERYDAY_BANKING",
@@ -63,29 +66,30 @@ def assist_mortgages(
 | `query_type` | `Literal[...]` | No (default `""`) | Specific mortgage request (`"summary"`, `"next_payment"`, `"overpayment_allowance"`, `"overpayment_projection"`, or `"rate_options"`). |
 | `monthly_overpayment` | `float` | No (default `0.0`) | Proposed extra monthly overpayment in pounds spoken by the caller, or `0.0` when omitted. |
 | `lump_sum_overpayment` | `float` | No (default `0.0`) | Proposed one-off lump-sum overpayment in pounds spoken by the caller, or `0.0` when omitted. |
+| `confirm_pivot` | `Literal["", "yes", "no"]` | No (default `""`) | `"yes"` to accept the First Home Deposit savings projection offer for renters, `"no"` to decline cleanly, or `""` otherwise. |
 | `switch_intent` | `Literal[...]` | No (default `""`) | Cross-product pivot or local navigation (`"EVERYDAY_BANKING"`, `"SAVINGS"`, `"NAVIGATE_HOME"`, `"NAVIGATE_PROFILE"`, `"CAPABILITIES"`, `"FAREWELL"`). |
 
 ## 4. Sub-Flow Details & Session State Reads/Writes
 
-### Helper Index
+### Helper Index ([python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py))
 
-- [`_half_up` / `_to_pence`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L137-L148): Exact integer half-up division and clamped model-float-to-pence conversion.
-- [`_simulate_mortgage` / `_renewal_payment_pence` / `_project_overpayment`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L151-L242): Month-by-month amortisation loop, integer bisection solver for fixed-rate renewal deals, and ERC-aware overpayment comparator.
-- [`_normalize_snapshot` .. `_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L245-L368): Snapshot normalisation, `demo_date` & payment-day helpers, duration/currency/rate formatters, and monotonic `ui_view_state` writer.
-- [`_handle_summary` / `_handle_next_payment` / `_handle_allowance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L371-L428): Mortgage balance, current deal rate, next Direct Debit date/amount, and remaining 10% annual fee-free allowance.
-- [`_handle_overpayment_projection`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L431-L498), [`_handle_rate_options`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L501-L528), and [`_handle_renter_guidance`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L531-L553): Overpayment projection, 2-year vs 5-year fixed renewal comparison, and first-time buyer readiness.
-- [`_handle_switch_intent`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L556-L603) & [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py#L606-L628): Local navigation, guarded cross-spoke pivots, and 2-strike unclear recovery.
+- `_half_up` and `_to_pence`: exact integer half-up division and clamped model-float-to-pence conversion.
+- `_simulate_mortgage`, `_renewal_payment_pence`, and `_project_overpayment`: month-by-month amortisation loop, zero-balance-safe integer bisection solver for fixed-rate renewal deals, and ERC-aware overpayment comparator with negative-amortisation protection.
+- `_normalize_snapshot`, `_parse_demo_date`, `_format_gbp`, `_format_bps`, `_format_months_duration`, `_next_payment_label`, `_format_iso_month_year`, and `_emit_ui_view`: snapshot normalisation, `datetime.date` validation and month-length clamping, duration/currency/rate formatters, and monotonic `ui_view_state` writer.
+- `_handle_summary`, `_handle_next_payment`, and `_handle_allowance`: mortgage balance, current deal rate, next Direct Debit date/amount, and remaining 10% annual fee-free allowance.
+- `_format_overpayment_reply`, `_handle_overpayment_projection`, `_handle_rate_options`, and `_handle_renter_guidance`: overpayment projection, 2-year vs 5-year fixed renewal comparison, and first-time buyer readiness.
+- `_handle_switch_intent` and `_handle_unclear`: spoke-local navigation with pending-flag cleanup, guarded cross-spoke pivots, and bounded 2-strike unclear recovery.
 
 ### Session State Reads & Writes
 
 | Variable | Direction | Purpose |
 | :--- | :--- | :--- |
 | `customer_snapshot` | Read | Reads `mortgage` (when homeowner) or `user.annual_income_pence` + `savings` (when renter). |
-| `handoff_context` | Read / Write | Consumes optional `freed_monthly_pence` for default monthly overpayment and clears to `{}` on entry. |
-| `demo_date` / `first_name` | Read | Resolves next monthly payment date and personalises farewells. |
+| `handoff_context` | Read / Write | Preserved across `switch_intent` hops; consumed for default monthly overpayment and cleared to `{}` on local turns. |
+| `demo_date` / `first_name` | Read | Resolves clamped next monthly payment date and personalises farewells. |
 | `pass_count` | Read | Bounds cross-spoke pivots (`int(pass_count) > 4` stops ping-pong loops). |
 | `mortgage_state` | Read / Write | Tracks `last_subview`, `monthly_overpayment_pence`, `lump_sum_overpayment_pence`, and `pending_savings_pivot`. |
 | `ui_view_state` | Read / Write | Emits `{page: "mortgage", subview, monthly_overpayment_pence?, lump_sum_overpayment_pence?}` (or `home`/`profile`). |
 | `target_agent` | Write | Stages `everyday_banking_agent` or `savings_agent` on cross-spoke pivots. |
-| `unclear_count` | Read / Write | Shared 2-strike non-terminating unclear counter. |
+| `unclear_count` | Read / Write | Shared 2-strike non-terminating unclear counter (incremented on unmatched pending turns as well). |
 | `call_complete` / `escalation_reason` | Write | Set on `switch_intent="FAREWELL"`. |
