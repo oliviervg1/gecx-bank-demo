@@ -1,19 +1,21 @@
-"""Bidirectional frame relay between the browser and CES BidiRunSession.
+"""Bidirectional frame relay between the browser and CX Agent Studio (GECX) BidiRunSession.
 
 Responsibilities:
-1. Send initial ``BidiSessionClientMessage.config`` and validated seed
-   ``realtimeInput.variables`` to CES, then emit ``ServerReady(sessionId=...)``.
-2. Relay browser ``audio`` and ``text`` frames to CES ``realtimeInput``.
-3. Stream a 10-second ``16 kHz`` ``LINEAR16`` silence keepalive so CES does not
-   drop quiet turns, while enforcing a separate ``max_idle_seconds`` (default
-   ``900`` seconds) inactivity timeout that emits ``ServerSessionExpired``.
-4. Extract and deduplicate 3-tier ``ui_view_state`` updates across
-   ``sessionOutput.payload`` (Tier 1 ``partial`` & Tier 2 final) and
-   ``sessionOutput.diagnosticInfo.messages[].chunks[].updatedVariables`` on
-   ``turnCompleted=True`` (Tier 3 fallback), keyed by ``(session_id, trunc(seq))``.
-5. Forward ``ServerSearchSuggestions``, ``ServerTurnDiagnostics``,
-   ``ServerTurnComplete``, ``ServerGoAway``, and drain trailing farewell audio
-   before emitting ``ServerEnd``.
+1. Send initial `BidiSessionClientMessage.config` and server-owned seed
+   `realtimeInput.variables` on new sessions (skipping variable re-seeding on
+   resumed sessions), then emit `ServerReady(sessionId=...)`.
+2. Relay browser `audio` and `text` frames to `BidiRunSession` `realtimeInput`.
+3. Stream a 10-second `16 kHz` `LINEAR16` silence keepalive so upstream does not
+   drop quiet turns, while enforcing a separate `max_idle_seconds` (default
+   `900` seconds) inactivity timeout that emits `ServerSessionExpired`.
+4. Extract and deduplicate 3-tier `ui_view_state` updates across
+   `sessionOutput.payload` (Tier 1 `partial` and Tier 2 final) and
+   `sessionOutput.diagnosticInfo.messages[].chunks[].updatedVariables` on
+   `turnCompleted=True` (Tier 3 fallback), tracked monotonically via `_max_ui_seq`
+   (initialized from `start.lastUiSeq` when resuming after `GoAway`).
+5. Forward `ServerSearchSuggestions`, `ServerTurnDiagnostics`,
+   `ServerTurnComplete`, `ServerGoAway`, and drain trailing farewell audio
+   before emitting `ServerEnd`.
 """
 from __future__ import annotations
 
@@ -25,7 +27,7 @@ import json
 import logging
 import math
 import time
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal, Protocol
@@ -35,6 +37,8 @@ import jsonschema
 from .protocol import (
     MAX_CLIENT_FRAME_BYTES,
     AudioFrame,
+    BinaryFrameError,
+    BrowserDisconnectError,
     ClientStart,
     ClientStop,
     ClientText,
@@ -74,23 +78,40 @@ _UI_INT_FIELDS = frozenset(
 )
 
 
+def _pick(mapping: Mapping[str, Any], camel: str, snake: str) -> Any:
+    """Return `mapping[camel]` if present and non-None, else `mapping.get(snake)`."""
+    val = mapping.get(camel)
+    return val if val is not None else mapping.get(snake)
+
+
+def _has_any(mapping: Mapping[str, Any], *keys: str) -> bool:
+    """Return True when at least one key is present in `mapping`."""
+    return any(key in mapping for key in keys)
+
+
+def _unwrap_exception_group(eg: BaseExceptionGroup[Exception]) -> Exception:
+    """Select the primary leaf exception from a TaskGroup ExceptionGroup."""
+    leaves: list[Exception] = []
+
+    def _collect(group: BaseExceptionGroup[Exception]) -> None:
+        for exc in group.exceptions:
+            if isinstance(exc, BaseExceptionGroup):
+                _collect(exc)
+            else:
+                leaves.append(exc)
+
+    _collect(eg)
+    for exc in leaves:
+        if isinstance(exc, BinaryFrameError):
+            return exc
+    return leaves[0]
+
+
 @functools.lru_cache(maxsize=1)
 def _ui_view_validator() -> jsonschema.Draft7Validator:
     schema = json.loads(_UI_VIEW_SCHEMA_PATH.read_text(encoding="utf-8"))
     jsonschema.Draft7Validator.check_schema(schema)
     return jsonschema.Draft7Validator(schema)
-
-
-def _drain_exceptions(tasks: list[asyncio.Task[None]]) -> list[BaseException]:
-    """Retrieve exceptions from all completed non-cancelled tasks in order."""
-    errors: list[BaseException] = []
-    for task in tasks:
-        if not task.done() or task.cancelled():
-            continue
-        exc = task.exception()
-        if exc is not None:
-            errors.append(exc)
-    return errors
 
 
 def _normalize_ui_view_state(raw: Any) -> tuple[int, dict[str, Any]] | None:
@@ -134,12 +155,13 @@ def _normalize_ui_view_state(raw: Any) -> tuple[int, dict[str, Any]] | None:
     return seq_int, cleaned
 
 
-class _BrowserSocket(Protocol):
+class BrowserSocket(Protocol):
     async def receive_text(self) -> str: ...
     async def send_text(self, raw: str) -> None: ...
+    async def close(self) -> None: ...
 
 
-class _UpstreamSocket(Protocol):
+class UpstreamSocket(Protocol):
     async def send(self, raw: str) -> None: ...
     def __aiter__(self) -> AsyncIterator[str]: ...
     async def close(self) -> None: ...
@@ -147,8 +169,8 @@ class _UpstreamSocket(Protocol):
 
 @dataclass
 class Relay:
-    browser: _BrowserSocket
-    upstream: _UpstreamSocket
+    browser: BrowserSocket
+    upstream: UpstreamSocket
     app_resource: str
     session_id: str
     persona_variables: dict[str, Any] | None = None
@@ -156,51 +178,59 @@ class Relay:
     max_idle_seconds: float = 900.0
 
     ended_cleanly: bool = field(default=False, init=False)
-    _emitted_ui_keys: set[tuple[str, int]] = field(default_factory=set, init=False)
     _max_ui_seq: int = field(default=0, init=False)
     _turn_in_progress: bool = field(default=False, init=False)
     _pending_end_session: bool = field(default=False, init=False)
     _end_emitted: bool = field(default=False, init=False)
+    _closing: asyncio.Event = field(default_factory=asyncio.Event, init=False)
+    _tasks: list[asyncio.Task[None]] = field(default_factory=list, init=False)
     _last_activity_monotonic: float = field(default_factory=time.monotonic, init=False)
     _last_upstream_send_monotonic: float = field(
         default_factory=time.monotonic, init=False
     )
 
+    def _stop_siblings(self) -> None:
+        self._closing.set()
+        current = asyncio.current_task()
+        for task in self._tasks:
+            if task is not current and not task.done():
+                task.cancel()
+
     async def run(self, *, start: ClientStart) -> None:
         now = time.monotonic()
+        self._closing = asyncio.Event()
+        self._tasks = []
         self._last_activity_monotonic = now
         self._last_upstream_send_monotonic = now
 
+        is_resume = bool(start.sessionId)
+        self._max_ui_seq = (start.lastUiSeq or 0) if is_resume else 0
+
         await self._send_initial_config()
-        if self.persona_variables is not None:
+        if not is_resume and self.persona_variables is not None:
             await self._send_upstream(
                 {"realtimeInput": {"variables": self.persona_variables}}
             )
-        log.info("relay starting for persona=%s session=%s", start.persona, self.session_id)
+        log.info(
+            "relay starting for persona=%s session=%s resume=%s",
+            start.persona,
+            self.session_id,
+            is_resume,
+        )
         await self.browser.send_text(
             serialize_server_msg(ServerReady(sessionId=self.session_id))
         )
 
-        browser_pump = asyncio.create_task(self._pump_browser_to_upstream())
-        upstream_pump = asyncio.create_task(self._pump_upstream_to_browser())
-        keepalive_task = asyncio.create_task(self._keepalive_loop())
-        idle_task = asyncio.create_task(self._idle_watchdog_loop())
-        tasks = [upstream_pump, browser_pump, keepalive_task, idle_task]
         try:
-            _done, pending = await asyncio.wait(
-                tasks, return_when=asyncio.FIRST_COMPLETED
-            )
-            for task in pending:
-                task.cancel()
-            if pending:
-                await asyncio.gather(*pending, return_exceptions=True)
-            errors = _drain_exceptions(tasks)
-            if errors:
-                raise errors[0]
-        finally:
-            for task in tasks:
-                if not task.done():
-                    task.cancel()
+            async with asyncio.TaskGroup() as tg:
+                self._tasks.append(tg.create_task(self._pump_upstream_to_browser()))
+                self._tasks.append(tg.create_task(self._pump_browser_to_upstream()))
+                self._tasks.append(tg.create_task(self._keepalive_loop()))
+                self._tasks.append(tg.create_task(self._idle_watchdog_loop()))
+        except BaseExceptionGroup as eg:
+            if isinstance(eg, ExceptionGroup):
+                raise _unwrap_exception_group(eg) from None
+            raise
 
     async def _send_upstream(self, payload: dict[str, Any]) -> None:
         await self.upstream.send(json.dumps(payload))
@@ -224,44 +254,53 @@ class Relay:
 
     async def _keepalive_loop(self) -> None:
         """Send 100ms 16 kHz LINEAR16 silence every keepalive_interval_seconds when quiet."""
-        try:
-            while True:
-                await asyncio.sleep(self.keepalive_interval_seconds)
+        while not self._closing.is_set():
+            try:
+                async with asyncio.timeout(self.keepalive_interval_seconds):
+                    await self._closing.wait()
+                    return
+            except TimeoutError:
                 elapsed = time.monotonic() - self._last_upstream_send_monotonic
                 if elapsed >= self.keepalive_interval_seconds * 0.9:
                     await self._send_upstream(
                         {"realtimeInput": {"audio": SILENCE_100MS_16KHZ_B64}}
                     )
-        except asyncio.CancelledError:
-            pass
 
     async def _idle_watchdog_loop(self) -> None:
         """Close idle sessions cleanly with ServerSessionExpired after max_idle_seconds."""
-        try:
-            while True:
-                remaining = self.max_idle_seconds - (
-                    time.monotonic() - self._last_activity_monotonic
+        while not self._closing.is_set():
+            remaining = self.max_idle_seconds - (
+                time.monotonic() - self._last_activity_monotonic
+            )
+            if remaining <= 0:
+                self.ended_cleanly = True
+                await self.browser.send_text(
+                    serialize_server_msg(ServerSessionExpired())
                 )
-                if remaining <= 0:
-                    self.ended_cleanly = True
-                    await self.browser.send_text(
-                        serialize_server_msg(ServerSessionExpired())
-                    )
-                    close_browser = getattr(self.browser, "close", None)
-                    if callable(close_browser):
-                        await close_browser()
-                    await self.upstream.close()
+                await self.browser.close()
+                await self.upstream.close()
+                self._stop_siblings()
+                return
+            try:
+                async with asyncio.timeout(remaining):
+                    await self._closing.wait()
                     return
-                await asyncio.sleep(min(remaining, 1.0))
-        except asyncio.CancelledError:
-            pass
+            except TimeoutError:
+                continue
 
     async def _pump_browser_to_upstream(self) -> None:
         try:
-            while True:
-                raw = await self.browser.receive_text()
-                if len(raw) > MAX_CLIENT_FRAME_BYTES:
-                    log.warning("dropping oversized client frame (%d bytes)", len(raw))
+            while not self._closing.is_set():
+                try:
+                    raw = await self.browser.receive_text()
+                except BrowserDisconnectError:
+                    self.ended_cleanly = True
+                    break
+                if len(raw.encode("utf-8")) > MAX_CLIENT_FRAME_BYTES:
+                    log.warning(
+                        "dropping oversized client frame (%d utf-8 bytes)",
+                        len(raw.encode("utf-8")),
+                    )
                     continue
                 try:
                     msg = parse_client_msg(raw)
@@ -279,10 +318,9 @@ class Relay:
                     await self._send_upstream({"realtimeInput": {"text": msg.text}})
                 elif isinstance(msg, ClientStart):
                     pass
-        except asyncio.CancelledError:
-            pass
         finally:
             await self.upstream.close()
+            self._stop_siblings()
 
     async def _pump_upstream_to_browser(self) -> None:
         try:
@@ -293,11 +331,12 @@ class Relay:
                     log.warning("dropping non-JSON upstream frame")
                     continue
 
-                if (
-                    "sessionOutput" in frame
-                    or "session_output" in frame
-                    or "recognitionResult" in frame
-                    or "recognition_result" in frame
+                if _has_any(
+                    frame,
+                    "sessionOutput",
+                    "session_output",
+                    "recognitionResult",
+                    "recognition_result",
                 ):
                     self._last_activity_monotonic = time.monotonic()
 
@@ -309,6 +348,7 @@ class Relay:
                 self._end_emitted = True
                 with contextlib.suppress(Exception):
                     await self.browser.send_text(serialize_server_msg(ServerEnd()))
+            self._stop_siblings()
 
     def _maybe_emit_ui_state(
         self, raw_state: Any, tier: Literal[1, 2, 3]
@@ -317,24 +357,18 @@ class Relay:
         if parsed is None:
             return None
         seq_int, cleaned = parsed
-        dedup_key = (self.session_id, seq_int)
-        if seq_int <= self._max_ui_seq or dedup_key in self._emitted_ui_keys:
+        if seq_int <= self._max_ui_seq:
             return None
         self._max_ui_seq = seq_int
-        self._emitted_ui_keys.add(dedup_key)
         return ServerUiState(state=cleaned, tier=tier)
 
     def _translate_upstream(self, frame: dict[str, Any]) -> Iterator[ServerMsg]:
-        so = frame.get("sessionOutput") or frame.get("session_output")
-        has_end_session = ("endSession" in frame) or ("end_session" in frame)
+        so = _pick(frame, "sessionOutput", "session_output")
+        has_end_session = _has_any(frame, "endSession", "end_session")
 
         if isinstance(so, dict):
-            turn_completed = bool(
-                so.get("turnCompleted") or so.get("turn_completed")
-            )
-            raw_turn_idx = so.get("turnIndex")
-            if raw_turn_idx is None:
-                raw_turn_idx = so.get("turn_index")
+            turn_completed = bool(_pick(so, "turnCompleted", "turn_completed"))
+            raw_turn_idx = _pick(so, "turnIndex", "turn_index")
             turn_idx = (
                 int(raw_turn_idx)
                 if isinstance(raw_turn_idx, (int, float))
@@ -367,7 +401,7 @@ class Relay:
             if search_msg is not None:
                 yield search_msg
 
-            diag = so.get("diagnosticInfo") or so.get("diagnostic_info")
+            diag = _pick(so, "diagnosticInfo", "diagnostic_info")
             if turn_completed and isinstance(diag, dict):
                 diag_msg, latest_tier3_ui, diag_ended = _extract_turn_diagnostics(
                     diag, turn_idx
@@ -381,7 +415,7 @@ class Relay:
                 if diag_msg is not None:
                     yield diag_msg
 
-            if "endSession" in so or "end_session" in so:
+            if _has_any(so, "endSession", "end_session"):
                 has_end_session = True
 
             if turn_completed:
@@ -393,18 +427,18 @@ class Relay:
                     self.ended_cleanly = True
                     yield ServerEnd()
 
-        rr = frame.get("recognitionResult") or frame.get("recognition_result")
+        rr = _pick(frame, "recognitionResult", "recognition_result")
         if isinstance(rr, dict):
             transcript = rr.get("transcript", "")
             if isinstance(transcript, str) and transcript:
-                is_final = bool(rr.get("isFinal") or rr.get("is_final"))
+                is_final = bool(_pick(rr, "isFinal", "is_final"))
                 yield ServerTranscript(text=transcript, isFinal=is_final)
 
-        if "interruptionSignal" in frame or "interruption_signal" in frame:
+        if _has_any(frame, "interruptionSignal", "interruption_signal"):
             self._turn_in_progress = False
             yield ServerInterrupt()
 
-        if "goAway" in frame or "go_away" in frame:
+        if _has_any(frame, "goAway", "go_away"):
             yield ServerGoAway(sessionId=self.session_id)
 
         if has_end_session and not self._end_emitted:
@@ -419,7 +453,7 @@ class Relay:
 
 
 def _extract_search_suggestions(so: dict[str, Any]) -> ServerSearchSuggestions | None:
-    gss = so.get("googleSearchSuggestions") or so.get("google_search_suggestions")
+    gss = _pick(so, "googleSearchSuggestions", "google_search_suggestions")
     cit = so.get("citations")
 
     htmls: list[str] = []
@@ -430,19 +464,17 @@ def _extract_search_suggestions(so: dict[str, Any]) -> ServerSearchSuggestions |
         for h in gss.get("htmls") or []:
             if isinstance(h, str) and h.strip():
                 htmls.append(h)
-        raw_queries = (
-            gss.get("webSearchQueries") or gss.get("web_search_queries") or []
-        )
+        raw_queries = _pick(gss, "webSearchQueries", "web_search_queries") or []
         for q in raw_queries:
             if isinstance(q, str) and q.strip():
                 queries.append(q)
 
     if isinstance(cit, dict):
-        chunks = cit.get("citedChunks") or cit.get("cited_chunks") or []
+        chunks = _pick(cit, "citedChunks", "cited_chunks") or []
         for item in chunks:
             if isinstance(item, dict):
                 citations.append(item)
-        inline = cit.get("inlineCitations") or cit.get("inline_citations") or []
+        inline = _pick(cit, "inlineCitations", "inline_citations") or []
         for item in inline:
             if isinstance(item, dict):
                 citations.append(item)
@@ -470,7 +502,7 @@ def _extract_turn_diagnostics(
         for chunk in message.get("chunks") or []:
             if not isinstance(chunk, dict):
                 continue
-            xfer = chunk.get("agentTransfer") or chunk.get("agent_transfer")
+            xfer = _pick(chunk, "agentTransfer", "agent_transfer")
             if isinstance(xfer, dict):
                 safe_xfer = {
                     k: v
@@ -480,17 +512,16 @@ def _extract_turn_diagnostics(
                 }
                 if safe_xfer:
                     transfers.append(safe_xfer)
-            tc = chunk.get("toolCall") or chunk.get("tool_call")
+            tc = _pick(chunk, "toolCall", "tool_call")
             if isinstance(tc, dict):
                 tc_name = str(
-                    tc.get("displayName")
-                    or tc.get("display_name")
+                    _pick(tc, "displayName", "display_name")
                     or tc.get("tool")
                     or ""
                 )
                 if tc_name == "end_session" or tc_name.endswith("/tools/end_session"):
                     saw_end_session = True
-            uv = chunk.get("updatedVariables") or chunk.get("updated_variables")
+            uv = _pick(chunk, "updatedVariables", "updated_variables")
             if isinstance(uv, dict):
                 if "ui_view_state" in uv:
                     latest_ui_view = uv["ui_view_state"]

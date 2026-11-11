@@ -2,19 +2,22 @@
 from __future__ import annotations
 
 import asyncio
-import copy
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import pytest
 
-FIXTURES_DIR = Path(__file__).resolve().parents[2] / "web" / "src" / "fixtures"
+from proxy import main
+
+SHARED_DIR = Path(__file__).resolve().parents[2] / "shared"
+PERSONAS_DIR = SHARED_DIR / "personas"
 DEFAULT_ORIGIN = "http://localhost:5173"
 
 
 class FakeUpstream:
-    """In-memory stand-in for a CES BidiRunSession WebSocket."""
+    """In-memory stand-in for a CX Agent Studio (GECX) BidiRunSession WebSocket."""
 
     def __init__(self) -> None:
         self._to_proxy: asyncio.Queue[str | None] = asyncio.Queue()
@@ -52,28 +55,23 @@ def fake_upstream() -> FakeUpstream:
 
 
 @pytest.fixture(autouse=True)
-def _fast_start_timeout_for_mutation_runs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Keep un-sent start-frame waits fast in tests so broken-gate mutants fail in <100ms."""
+def _isolated_proxy_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Keep start-frame waits fast and isolate in-memory session state per test."""
     monkeypatch.setenv("PROXY_START_TIMEOUT_SECONDS", "0.08")
+    main._session_personas.clear()
+    main._session_persona_timestamps.clear()
+    main._active_session_count = 0
+    main._get_session_semaphore()
+    yield
+    main._session_personas.clear()
+    main._session_persona_timestamps.clear()
+    main._active_session_count = 0
+    main._get_session_semaphore()
 
 
 @pytest.fixture(scope="session")
 def persona_snapshots() -> dict[str, dict[str, Any]]:
     return {
-        pid: json.loads((FIXTURES_DIR / f"{pid}.json").read_text(encoding="utf-8"))
+        pid: json.loads((PERSONAS_DIR / f"{pid}.json").read_text(encoding="utf-8"))
         for pid in ("chloe", "david", "tom", "sarah")
-    }
-
-
-def make_seed_variables(
-    snapshots: dict[str, dict[str, Any]],
-    persona: str = "chloe",
-) -> dict[str, Any]:
-    snap = copy.deepcopy(snapshots[persona])
-    return {
-        "persona_id": persona,
-        "first_name": snap["user"]["first_name"],
-        "demo_date": "2026-11-24",
-        "time_of_day": "afternoon",
-        "customer_snapshot": snap,
     }
