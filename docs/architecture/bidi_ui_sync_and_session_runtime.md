@@ -58,7 +58,7 @@ All WebSocket, microphone, audio-playback, reconnect, and persona transitions li
 | **3** | Text or silent turn with zero audio chunks | Transitions `thinking -> ready` (or `'capturing'` in `'continuous'` mode) on `turn_complete`; guarded by a `15,000 ms` `THINKING_WATCHDOG` timer. |
 | **4** | `ServerEnd` (`end_session` on farewell) | Enters `drainingFarewell` while TTS plays (`relay.py` also flushes held `ServerEnd` on upstream close), transitioning to `ended` once `PLAYER_DRAINED` completes; pressing PTT during drain flushes audio and starts a fresh session. |
 | **5** | Normal WebSocket close after `ServerEnd` | Treated as expected completion (`ended`), never triggering an error state. |
-| **6** | `ServerGoAway` before upstream deadline | Reconnects resuming the same `sessionId` and `lastUiSeq` with bounded exponential backoff + jitter (capped at 3 attempts) and a `10 s` `CONNECTING` socket timeout. |
+| **6** | `ServerGoAway` before upstream deadline | Reconnects resuming the same `sessionId` and `lastUiSeq` with bounded exponential backoff + jitter (capped at 3 attempts) and a `10 s` `WS_CONNECT_TIMEOUT_MS` socket timeout. |
 | **7** | Stale events from a superseded WebSocket | Dropped via monotonically increasing `connectionEpoch`. |
 | **8** | React 19 `StrictMode` double-mount | Deferred macrotask teardown reuses the single initial socket without duplicate handshakes. |
 | **9** | Microphone permission blocked (`NotAllowedError`) | Keeps the open WebSocket alive, displays calm microphone-permission guidance in `ConciergePanel` with live text input active, and retries mic capture cleanly on the next press. |

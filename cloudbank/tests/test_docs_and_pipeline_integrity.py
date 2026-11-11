@@ -58,16 +58,6 @@ ALLOWED_EXTERNAL_IDENTIFIERS = frozenset(
     }
 )
 
-# Pre-Stage-2 identifiers present in docs/ only before feat/remediate-ci-docs merges.
-_PRE_DOCS_MERGE_IDENTIFIERS = frozenset(
-    {
-        "C018",
-        "ExternalResponse",
-        "QrsGoogleSearchTool",
-        "manage_ces_app",
-    }
-)
-
 _EXCLUDED_CORPUS_DIRS = frozenset(
     {
         ".git",
@@ -226,13 +216,6 @@ def test_docs_backticked_identifiers_and_links_exist_in_non_test_codebase() -> N
             code_chunks.append(path.read_text(encoding="utf-8", errors="ignore"))
     code_corpus = "\n".join(code_chunks)
 
-    docs_merged = (REPO_ROOT / "Makefile").is_file()
-    allowed = (
-        ALLOWED_EXTERNAL_IDENTIFIERS
-        if docs_merged
-        else (ALLOWED_EXTERNAL_IDENTIFIERS | _PRE_DOCS_MERGE_IDENTIFIERS)
-    )
-
     md_files = [
         REPO_ROOT / "README.md",
         CLOUDBANK_ROOT / "README.md",
@@ -248,27 +231,26 @@ def test_docs_backticked_identifiers_and_links_exist_in_non_test_codebase() -> N
         text = md.read_text(encoding="utf-8")
         for match in ident_re.finditer(text):
             ident = match.group(1)
-            if ident in allowed:
+            if ident in ALLOWED_EXTERNAL_IDENTIFIERS:
                 continue
             if ident not in code_corpus:
                 unknown_identifiers.append((str(md.relative_to(REPO_ROOT)), ident))
 
-        if docs_merged:
-            for match in link_re.finditer(text):
-                raw = match.group(1).strip()
-                if raw.startswith(("http://", "https://", "#")):
-                    continue
-                path_part, _, anchor = raw.partition("#")
-                target = (md.parent / path_part).resolve()
-                assert target.exists(), f"Broken relative link {raw!r} in {md}"
-                if anchor:
-                    m = re.fullmatch(r"L(\d+)(?:-L(\d+))?", anchor)
-                    if m is not None:
-                        start, end = int(m.group(1)), int(m.group(2) or m.group(1))
-                        lines = target.read_text(encoding="utf-8").splitlines()
-                        assert 1 <= start <= end <= len(lines), (
-                            f"Out-of-range anchor {raw!r} (file has {len(lines)} lines) in {md}"
-                        )
+        for match in link_re.finditer(text):
+            raw = match.group(1).strip()
+            if raw.startswith(("http://", "https://", "#")):
+                continue
+            path_part, _, anchor = raw.partition("#")
+            target = (md.parent / path_part).resolve()
+            assert target.exists(), f"Broken relative link {raw!r} in {md}"
+            if anchor:
+                m = re.fullmatch(r"L(\d+)(?:-L(\d+))?", anchor)
+                if m is not None:
+                    start, end = int(m.group(1)), int(m.group(2) or m.group(1))
+                    lines = target.read_text(encoding="utf-8").splitlines()
+                    assert 1 <= start <= end <= len(lines), (
+                        f"Out-of-range anchor {raw!r} (file has {len(lines)} lines) in {md}"
+                    )
 
     assert not unknown_identifiers, (
         f"Docs reference identifiers absent from non-test codebase: {unknown_identifiers}"
