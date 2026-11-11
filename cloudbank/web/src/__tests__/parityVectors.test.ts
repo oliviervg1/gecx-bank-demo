@@ -204,15 +204,6 @@ describe('parity_vectors.json: savings_projections', () => {
 })
 
 describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal_edges', () => {
-  const vectorFileHasEarlyExit = Boolean(
-    (parityVectors as { kernels?: { simulate_mortgage?: string } }).kernels?.simulate_mortgage?.includes(
-      'interest >= monthly_payment_pence',
-    ) ||
-      parityVectors.mortgage_simulation_edges.some(
-        (e) => e.id === 'edge_non_amortizing_capped_at_600' && e.expected.total_interest_pence === 33333,
-      ),
-  )
-
   it.each(parityVectors.mortgage_overpayments)(
     'matches mortgage overpayment vector $id',
     (row) => {
@@ -235,33 +226,7 @@ describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal
         row.monthly_overpayment_pence,
         row.lump_sum_overpayment_pence,
       )
-      const expectedBaselinePaidOff =
-        'baseline_paid_off' in row.expected ? row.expected.baseline_paid_off : true
-      const expectedPaidOff = 'paid_off' in row.expected ? row.expected.paid_off : true
-
-      const expectedBaselineInterest =
-        !vectorFileHasEarlyExit && row.id.startsWith('edge_non_amortizing_')
-          ? 40000
-          : row.expected.baseline_interest_pence
-      const expectedProjectedInterest =
-        !vectorFileHasEarlyExit && row.id === 'edge_non_amortizing_both_capped_at_600'
-          ? 40000
-          : row.expected.projected_interest_pence
-
-      expect(res).toEqual({
-        baseline_months: row.expected.baseline_months,
-        projected_months: row.expected.projected_months,
-        months_saved: row.expected.months_saved,
-        baseline_interest_pence: expectedBaselineInterest,
-        projected_interest_pence: expectedProjectedInterest,
-        interest_saved_pence: row.expected.interest_saved_pence,
-        remaining_allowance_pence: row.expected.remaining_allowance_pence,
-        first_year_overpayment_pence: row.expected.first_year_overpayment_pence,
-        exceeds_allowance: row.expected.exceeds_allowance,
-        excess_over_allowance_pence: row.expected.excess_over_allowance_pence,
-        baseline_paid_off: expectedBaselinePaidOff,
-        paid_off: expectedPaidOff,
-      })
+      expect(res).toEqual(row.expected)
     },
   )
 
@@ -274,16 +239,7 @@ describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal
         row.monthly_payment_pence,
         row.max_months,
       )
-      const expected =
-        !vectorFileHasEarlyExit && row.id === 'edge_non_amortizing_capped_at_600'
-          ? {
-              months: 600,
-              total_interest_pence: 33333,
-              ending_balance_pence: 10033332,
-              paid_off: false,
-            }
-          : row.expected
-      expect(res).toEqual(expected)
+      expect(res).toEqual(row.expected)
     },
   )
 

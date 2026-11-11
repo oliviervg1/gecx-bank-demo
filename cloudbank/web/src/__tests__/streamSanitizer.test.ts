@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import compositeV2Tags from '../../../shared/composite_v2_tags.json'
 import globalInstructionRaw from '../../../cxas_app/Cloudbank/global_instruction.txt?raw'
 import {
   COMPOSITE_AUDIO_TAG_WORDS,
@@ -88,15 +89,7 @@ describe('streamSanitizer', () => {
       ).toBe('Clean output.')
     }
 
-    const sharedVocabModules = import.meta.glob<{ words?: string[] }>(
-      '../../../shared/composite_v2_tags.json',
-      { eager: true, import: 'default' },
-    )
-    for (const mod of Object.values(sharedVocabModules)) {
-      for (const word of mod.words ?? []) {
-        expect(COMPOSITE_AUDIO_TAG_WORDS.has(word), `Missing shared tag word: ${word}`).toBe(true)
-      }
-    }
+    expect([...COMPOSITE_AUDIO_TAG_WORDS].sort()).toEqual(compositeV2Tags.words)
   })
 
   it('strips both closed and unclosed <untrusted_web_snippet> bodies completely', () => {

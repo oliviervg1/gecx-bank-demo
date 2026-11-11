@@ -2,7 +2,7 @@ import logging
 import math
 from datetime import date
 from typing import Any, Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -1281,17 +1281,43 @@ def _is_official_vendor_help_url(
     raw_url: str, allowed_hosts: tuple[str, ...]
 ) -> bool:
     """Return True strictly when raw_url is HTTPS on an exact official vendor help host."""
-    parsed = urlsplit(raw_url.strip())
-    if parsed.scheme.lower() != "https" or parsed.username or parsed.password:
+    candidate = (raw_url or "").strip()
+    if (
+        not candidate
+        or len(candidate) > 2048
+        or any(ord(ch) <= 0x20 or ord(ch) == 0x7F for ch in candidate)
+    ):
         return False
-    clean_host = (parsed.hostname or "").lower().rstrip(".")
-    if not clean_host or clean_host not in allowed_hosts:
+    try:
+        parsed = urlsplit(candidate)
+        port = parsed.port
+    except ValueError:
+        return False
+    if (
+        parsed.scheme.lower() != "https"
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        return False
+    hostname = parsed.hostname
+    if not hostname or hostname.endswith("."):
+        return False
+    clean_host = hostname.lower()
+    if clean_host not in allowed_hosts:
+        return False
+    raw_path = parsed.path or "/"
+    unquoted_path = unquote(raw_path)
+    if (
+        "\\" in unquoted_path
+        or ".." in raw_path.split("/")
+        or ".." in unquoted_path.split("/")
+    ):
         return False
     required_prefixes = _HOST_REQUIRED_PATH_PREFIXES.get(clean_host)
     if required_prefixes:
-        norm_path = parsed.path or "/"
         if not any(
-            norm_path == prefix or norm_path.startswith(f"{prefix}/")
+            raw_path == prefix or raw_path.startswith(f"{prefix}/")
             for prefix in required_prefixes
         ):
             return False

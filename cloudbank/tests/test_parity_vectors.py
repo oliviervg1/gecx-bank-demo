@@ -208,10 +208,7 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
             row["monthly_overpayment_pence"],
             row["lump_sum_overpayment_pence"],
         )
-        for key, val in row["expected"].items():
-            assert res[key] == val, f"{row['id']}:{key}"
-        assert res["baseline_paid_off"] == row["expected"].get("baseline_paid_off", True)
-        assert res["paid_off"] == row["expected"].get("paid_off", True)
+        assert res == row["expected"], row["id"]
 
     for persona, ren_exp in parity_vectors["mortgage_renewals"].items():
         p_state = make_seeded_state(persona, struct_fixtures)

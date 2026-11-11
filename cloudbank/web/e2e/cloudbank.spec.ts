@@ -340,8 +340,11 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
     await page.getByRole('tab', { name: 'Fixed Rates' }).click()
     await expectZeroAxeViolations(page, 'Split Workbench - Mortgage Fixed Rates (Homeowner)')
 
-    // Switch persona to Tom (Renter) and scan Renter Borrowing Readiness view
+    // Switch persona to Tom (Renter): resets to Tom's Home, then open Mortgage Renter Readiness view
     await page.locator('button[data-persona-id="tom"]').click()
+    await expect(page.getByRole('heading', { name: 'Accounts Overview' })).toBeVisible()
+    await expectZeroAxeViolations(page, 'Split Workbench - Home (Tom Renter)')
+    await primaryNav.getByRole('button', { name: 'Mortgage' }).click()
     await expect(page.getByTestId('renter-readiness-view')).toBeVisible()
     await expectZeroAxeViolations(page, 'Split Workbench - Mortgage Renter Readiness (Tom)')
 

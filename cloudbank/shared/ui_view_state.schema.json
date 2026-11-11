@@ -61,7 +61,10 @@
       "type": "object",
       "propertyNames": {
         "minLength": 1,
-        "maxLength": 120
+        "maxLength": 120,
+        "not": {
+          "pattern": "[<>\\u0000-\\u001f\\u007f]"
+        }
       },
       "additionalProperties": {
         "type": "string",

@@ -91,10 +91,10 @@ def test_audio_ceiling_enforces_64kib_on_client_and_allows_larger_server_tts() -
     assert protocol._MAX_AUDIO_B64_LEN == 87_384
 
     root_schema = json.loads(WS_PROTOCOL_SCHEMA_PATH.read_text(encoding="utf-8"))
-    defs = root_schema.get("definitions") or root_schema.get("$defs") or {}
+    defs = root_schema["definitions"]
     schema_max = defs["ClientAudio"]["properties"]["data"]["maxLength"]
-    # Tolerates pre-merge 1048576 and post-merge 87384 in ws_protocol.schema.json
-    assert schema_max in (87_384, 1_048_576)
+    assert schema_max == 87_384
+    assert defs["ui_view_state"] == {"$ref": "ui_view_state.schema.json"}
 
     # Exact 64 KiB (65,536 bytes -> 87,384 base64 chars) client audio succeeds
     exact_64k_b64 = base64.b64encode(b"\x01\x00" * 32_768).decode("ascii")
@@ -182,6 +182,27 @@ def test_every_server_msg_round_trips_and_validates_against_ws_protocol_schema()
                 "type": "ui_state",
                 "state": {"seq": 2, "page": "savings", "extra_monthly_pence": 4500},
                 "tier": 3,
+            },
+        ),
+        (
+            ServerUiState(
+                state={
+                    "seq": 3,
+                    "page": "spending",
+                    "view": "overview",
+                    "anomaly_by_vendor": {"Netflix": "unrecognised"},
+                },
+                tier=1,
+            ),
+            {
+                "type": "ui_state",
+                "state": {
+                    "seq": 3,
+                    "page": "spending",
+                    "view": "overview",
+                    "anomaly_by_vendor": {"Netflix": "unrecognised"},
+                },
+                "tier": 1,
             },
         ),
         (

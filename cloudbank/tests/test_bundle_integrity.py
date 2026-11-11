@@ -107,6 +107,34 @@ def test_composite_v2_auditor_and_shared_tag_vocabulary_cover_all_prompts() -> N
     assert audit_result["overall_status"] == "PASSED", audit_result
     assert audit_result["total_issues"] == 0
 
+    # Cross-layer parity: audit_agent, relay.py, and streamSanitizer.ts use the exact same vocabulary
+    assert audit_agent.load_tag_vocabulary() == word_set
+    relay_src = (
+        CLOUDBANK_DIR / "proxy" / "src" / "proxy" / "relay.py"
+    ).read_text(encoding="utf-8")
+    relay_tree = ast.parse(relay_src, filename="relay.py")
+    relay_fallback_words: set[str] | None = None
+    for node in relay_tree.body:
+        if (
+            isinstance(node, ast.AnnAssign)
+            and isinstance(node.target, ast.Name)
+            and node.target.id == "_FALLBACK_COMPOSITE_TAG_WORDS"
+            and isinstance(node.value, ast.Call)
+            and node.value.args
+            and isinstance(node.value.args[0], ast.Set)
+        ):
+            relay_fallback_words = {
+                elt.value
+                for elt in node.value.args[0].elts
+                if isinstance(elt, ast.Constant) and isinstance(elt.value, str)
+            }
+    assert relay_fallback_words == word_set
+    sanitizer_ts = (
+        CLOUDBANK_DIR / "web" / "src" / "agent" / "streamSanitizer.ts"
+    ).read_text(encoding="utf-8")
+    assert "../../../shared/composite_v2_tags.json" in sanitizer_ts
+    assert "new Set(compositeV2Tags.words)" in sanitizer_ts
+
 
 def test_official_help_hosts_and_search_help_fake_mode_contracts() -> None:
     """Verify exact HTTPS help host allowlist and search_help enableFakeMode platform contract."""
@@ -152,6 +180,39 @@ def test_official_help_hosts_and_search_help_fake_mode_contracts() -> None:
         "/gp/help",
         "/hz/contact-us",
     ]
+
+    # Cross-layer parity: assist_everyday_banking enforces the exact same host + Amazon path rules as relay.py
+    state = make_seeded_state("chloe", {pid: json.loads((SHARED_DIR / "personas" / f"{pid}.json").read_text(encoding="utf-8")) for pid in PERSONA_IDS})
+    eb_ns = load_controller_namespace("assist_everyday_banking", state)
+    assert eb_ns["_VENDOR_OFFICIAL_HOSTS"] == {
+        k: tuple(v) for k, v in vendors.items()
+    }
+    assert eb_ns["_HOST_REQUIRED_PATH_PREFIXES"] == {
+        k: tuple(v) for k, v in hosts_cfg["path_prefixes"].items()
+    }
+    all_official_hosts = tuple(sorted({h for hl in vendors.values() for h in hl}))
+    check_url = eb_ns["_is_official_vendor_help_url"]
+    for allowed_url in (
+        "https://help.netflix.com/en/node/407",
+        "https://support.spotify.com/uk/article/close-account/",
+        "https://www.amazon.co.uk/gp/help/customer/display.html",
+        "https://www.amazon.co.uk/hz/contact-us/foresight/hubgateway",
+    ):
+        assert check_url(allowed_url, all_official_hosts) is True, allowed_url
+    for rejected_url in (
+        "https://www.thenational.scot/news/cancel-netflix/",
+        "https://community.spotify.com/t5/Accounts/Cancel/td-p/1",
+        "http://help.netflix.com/en/node/407",
+        "https://help.netflix.com:8443/en/node/407",
+        "https://user:pass@help.netflix.com/en/node/407",
+        "https://@help.netflix.com/en/node/407",
+        "https://help.netflix.com./en/node/407",
+        "https://www.amazon.co.uk/dp/B08N5WRWNW",
+        "https://www.amazon.co.uk/gp/helpful-reviews",
+        "https://www.amazon.co.uk/gp/help/../dp/B08N5WRWNW",
+        "https://www.amazon.co.uk/gp/help/%2e%2e/dp/B08N5WRWNW",
+    ):
+        assert check_url(rejected_url, all_official_hosts) is False, rejected_url
 
     # Verified CXAS platform contract: ToolFakeConfig.enable_fake_mode = true is the
     # per-tool opt-in required for RunEvaluationRequest.config.tool_call_behaviour = FAKE

@@ -344,6 +344,24 @@ def test_official_citation_allowlist_and_outbound_text_sanitizer(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    # 0. Built-in fallback constants match shared JSON contracts 1:1
+    shared_tags = json.loads(relay_mod._COMPOSITE_TAGS_PATH.read_text(encoding="utf-8"))
+    assert relay_mod._FALLBACK_COMPOSITE_TAG_WORDS == frozenset(shared_tags["words"])
+    assert relay_mod._composite_tag_words() == frozenset(shared_tags["words"])
+
+    shared_hosts = json.loads(
+        relay_mod._OFFICIAL_HELP_HOSTS_PATH.read_text(encoding="utf-8")
+    )
+    expected_hosts = frozenset(
+        h for hosts in shared_hosts["vendors"].values() for h in hosts
+    )
+    expected_prefixes = {
+        k: tuple(v) for k, v in shared_hosts["path_prefixes"].items()
+    }
+    assert relay_mod._FALLBACK_OFFICIAL_HELP_HOSTS == expected_hosts
+    assert relay_mod._DEFAULT_RESTRICTED_HOST_PATHS == expected_prefixes
+    assert relay_mod._official_help_allowlist() == (expected_hosts, expected_prefixes)
+
     # 1. Exact HTTPS official vendor help hosts allowed
     for allowed_url in (
         "https://help.netflix.com/en/node/407",

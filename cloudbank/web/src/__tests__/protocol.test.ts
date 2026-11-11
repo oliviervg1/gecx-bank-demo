@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import Ajv from 'ajv'
-import Ajv2020 from 'ajv/dist/2020'
 import uiViewStateSchema from '../../../shared/ui_view_state.schema.json'
 import wsProtocolSchema from '../../../shared/ws_protocol.schema.json'
 import {
@@ -15,25 +14,15 @@ import {
 import { buildClientStart } from '../agent/sessionVariables'
 
 function createProtocolValidators() {
-  const schemaDialect = String((wsProtocolSchema as { $schema?: string }).$schema ?? '')
-  const ajv = schemaDialect.includes('2020-12')
-    ? new Ajv2020({ allErrors: true, strict: false })
-    : new Ajv({ allErrors: true, strict: false })
+  const ajv = new Ajv({ allErrors: true, strict: false })
 
   ajv.addSchema(uiViewStateSchema)
   ajv.addSchema(wsProtocolSchema)
 
-  const wsId =
-    (wsProtocolSchema as { $id?: string }).$id ??
-    'https://cloudbank.example.com/schemas/ws_protocol.schema.json'
-
+  const wsId = wsProtocolSchema.$id
   const validateRoot = ajv.getSchema(wsId)
-  const validateClient =
-    ajv.getSchema(`${wsId}#/definitions/ClientMsg`) ??
-    ajv.getSchema(`${wsId}#/$defs/ClientMsg`)
-  const validateServer =
-    ajv.getSchema(`${wsId}#/definitions/ServerMsg`) ??
-    ajv.getSchema(`${wsId}#/$defs/ServerMsg`)
+  const validateClient = ajv.getSchema(`${wsId}#/definitions/ClientMsg`)
+  const validateServer = ajv.getSchema(`${wsId}#/definitions/ServerMsg`)
 
   if (!validateRoot || !validateClient || !validateServer) {
     throw new Error('Failed to compile ws_protocol.schema.json validators with Ajv')
@@ -129,10 +118,20 @@ describe('protocol.ts: validated with Ajv against shared/ws_protocol.schema.json
       PureGym: 'confirmed',
     })
 
-    if ('anomaly_by_vendor' in (uiViewStateSchema as { properties?: Record<string, unknown> }).properties!) {
-      const uiFrame = { type: 'ui_state', tier: 1, state: parsed }
-      expect(validateServer(uiFrame), ajv.errorsText(validateServer.errors)).toBe(true)
-    }
+    expect(wsProtocolSchema.definitions.ClientAudio.properties.data.maxLength).toBe(87_384)
+    expect(wsProtocolSchema.definitions.ui_view_state).toEqual({
+      $ref: 'ui_view_state.schema.json',
+    })
+
+    const uiFrame = { type: 'ui_state', tier: 1, state: parsed }
+    expect(validateServer(uiFrame), ajv.errorsText(validateServer.errors)).toBe(true)
+    expect(
+      validateServer({
+        type: 'ui_state',
+        tier: 1,
+        state: { seq: 4, page: 'spending', anomaly_by_vendor: { '<script>': 'confirmed' } },
+      }),
+    ).toBe(false)
 
     expect(() =>
       parseUiViewStatePayload({

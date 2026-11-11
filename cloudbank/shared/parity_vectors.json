@@ -362,7 +362,9 @@
         "remaining_allowance_pence": 2145000,
         "first_year_overpayment_pence": 240000,
         "exceeds_allowance": false,
-        "excess_over_allowance_pence": 0
+        "excess_over_allowance_pence": 0,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
@@ -380,7 +382,9 @@
         "remaining_allowance_pence": 2145000,
         "first_year_overpayment_pence": 620000,
         "exceeds_allowance": false,
-        "excess_over_allowance_pence": 0
+        "excess_over_allowance_pence": 0,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
@@ -398,7 +402,9 @@
         "remaining_allowance_pence": 1362000,
         "first_year_overpayment_pence": 240000,
         "exceeds_allowance": false,
-        "excess_over_allowance_pence": 0
+        "excess_over_allowance_pence": 0,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
@@ -416,7 +422,9 @@
         "remaining_allowance_pence": 365000,
         "first_year_overpayment_pence": 365000,
         "exceeds_allowance": false,
-        "excess_over_allowance_pence": 0
+        "excess_over_allowance_pence": 0,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
@@ -434,7 +442,9 @@
         "remaining_allowance_pence": 365000,
         "first_year_overpayment_pence": 480000,
         "exceeds_allowance": true,
-        "excess_over_allowance_pence": 115000
+        "excess_over_allowance_pence": 115000,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
@@ -452,7 +462,9 @@
         "remaining_allowance_pence": 365000,
         "first_year_overpayment_pence": 9200000,
         "exceeds_allowance": true,
-        "excess_over_allowance_pence": 8835000
+        "excess_over_allowance_pence": 8835000,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
@@ -470,7 +482,9 @@
         "remaining_allowance_pence": 365000,
         "first_year_overpayment_pence": 9650000,
         "exceeds_allowance": true,
-        "excess_over_allowance_pence": 9285000
+        "excess_over_allowance_pence": 9285000,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
@@ -488,7 +502,9 @@
         "remaining_allowance_pence": 365000,
         "first_year_overpayment_pence": 9650000,
         "exceeds_allowance": true,
-        "excess_over_allowance_pence": 9285000
+        "excess_over_allowance_pence": 9285000,
+        "baseline_paid_off": true,
+        "paid_off": true
       }
     },
     {
