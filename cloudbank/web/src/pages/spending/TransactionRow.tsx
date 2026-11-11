@@ -5,6 +5,7 @@ import { IconBadge } from '../../components/IconBadge'
 import { iconForCategory, type SpendingCategory } from '../../components/iconForCategory'
 import { formatGBPFromPence } from '../../util/currency'
 import { shortMonthForOffset } from '../../util/demoClock'
+import { prefersReducedMotion } from '../../util/motion'
 import { usePersona } from '../../personas/PersonaProvider'
 
 function formatSignedAmount(amountPence: number): string {
@@ -35,8 +36,16 @@ export function TransactionRow({
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
-    if (autoScroll && highlighted && ref.current && typeof ref.current.scrollIntoView === 'function') {
-      ref.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+    if (
+      autoScroll &&
+      highlighted &&
+      ref.current &&
+      typeof ref.current.scrollIntoView === 'function'
+    ) {
+      ref.current.scrollIntoView({
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+        block: 'center',
+      })
     }
   }, [autoScroll, highlighted])
 
@@ -44,7 +53,7 @@ export function TransactionRow({
   const styled = iconForCategory((isIncome ? 'income' : category) as SpendingCategory)
   const tone = highlighted ? 'gold' : styled.tone
   const wrapperClass = highlighted
-    ? 'px-3 -mx-3 rounded-lg bg-[#fcf9f2] border border-brand-gold/50 transition-colors'
+    ? 'px-3 -mx-3 rounded-lg bg-[#fcf9f2] border border-brand-gold-text/45 transition-colors'
     : 'transition-colors'
 
   const dateLabel = `${day} ${shortMonthForOffset(demoDate, month_offset)}`
@@ -58,14 +67,14 @@ export function TransactionRow({
     <div className="text-right tabular-nums">
       <div
         className={
-          'text-[15px] font-semibold ' +
+          'text-[0.9375rem] font-semibold ' +
           (isIncome ? 'text-brand-green' : 'text-brand-text')
         }
       >
         {formatSignedAmount(amount_pence)}
       </div>
       {statusBadge && (
-        <div className="text-[11px] font-medium text-brand-gold">{statusBadge}</div>
+        <div className="text-[0.6875rem] font-medium text-brand-gold-text">{statusBadge}</div>
       )}
     </div>
   )

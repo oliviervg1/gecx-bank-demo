@@ -1,29 +1,42 @@
 import { describe, it, expect } from 'vitest'
-import { buildSessionVariables } from '../agent/sessionVariables'
-import { allFixtures } from '../data/fixture'
+import { buildClientStart } from '../agent/sessionVariables'
+import { ALL_PERSONAS } from '../personas/personas'
 
-describe('buildSessionVariables — 5-key CLIENT_SEEDABLE_VARIABLES contract', () => {
-  it.each(allFixtures())(
-    'builds exact 5 keys for %s with customer_snapshot identical verbatim to fixture',
-    (personaId, fixture) => {
-      const vars = buildSessionVariables(personaId, fixture, {
+describe('buildClientStart: lean server-owned persona handshake contract', () => {
+  it.each(ALL_PERSONAS)(
+    'builds lean ClientStart for %s without client-seeded customer_snapshot or first_name',
+    (personaId) => {
+      const start = buildClientStart(personaId, {
         demoDate: '2026-11-24',
         timeOfDay: 'afternoon',
       })
-      expect(Object.keys(vars).sort()).toEqual([
-        'customer_snapshot',
-        'demo_date',
-        'first_name',
-        'persona_id',
-        'time_of_day',
-      ])
-      expect(vars.persona_id).toBe(personaId)
-      expect(vars.first_name).toBe(fixture.user.first_name)
-      expect(vars.demo_date).toBe('2026-11-24')
-      expect(vars.time_of_day).toBe('afternoon')
-      // customer_snapshot must be the exact verbatim fixture object!
-      expect(vars.customer_snapshot).toBe(fixture)
-      expect(vars.customer_snapshot).toEqual(fixture)
+      expect(start).toEqual({
+        type: 'start',
+        persona: personaId,
+        timeOfDay: 'afternoon',
+        demoDate: '2026-11-24',
+      })
+      expect(start).not.toHaveProperty('variables')
+      expect(start).not.toHaveProperty('customer_snapshot')
     },
   )
+
+  it('falls back to pinned demoDate when invalid date string is passed and attaches lastUiSeq only when resuming', () => {
+    const invalidDate = buildClientStart('david', {
+      demoDate: '2026-02-30',
+      timeOfDay: 'morning',
+      lastUiSeq: 9,
+    })
+    expect(invalidDate.demoDate).toBe('2026-11-24')
+    expect(invalidDate).not.toHaveProperty('lastUiSeq')
+
+    const resumed = buildClientStart('david', {
+      demoDate: '2026-11-24',
+      timeOfDay: 'morning',
+      sessionId: 'sess-42',
+      lastUiSeq: 9,
+    })
+    expect(resumed.sessionId).toBe('sess-42')
+    expect(resumed.lastUiSeq).toBe(9)
+  })
 })

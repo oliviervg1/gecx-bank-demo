@@ -36,16 +36,22 @@ function visualFor(
   if (phase === 'connecting') {
     return {
       label: 'Connecting…',
-      icon: <Sparkles size={16} aria-hidden="true" className="animate-pulse" />,
+      icon: (
+        <Sparkles
+          size={16}
+          aria-hidden="true"
+          className="animate-pulse motion-reduce:animate-none"
+        />
+      ),
       className: 'bg-brand-green text-white opacity-75',
       onClick: null,
     }
   }
   if (phase === 'paused') {
     return {
-      label: 'Session paused — hold to talk',
-      icon: <PauseCircle size={16} aria-hidden="true" className="text-brand-gold" />,
-      className: 'bg-white border border-brand-divider text-brand-text',
+      label: pushToTalk ? 'Session paused · Hold to talk' : 'Session paused · Resume',
+      icon: <PauseCircle size={16} aria-hidden="true" className="text-brand-gold-text" />,
+      className: 'bg-white border border-brand-border-strong text-brand-text',
       onClick: pushToTalk ? null : actions.reconnect,
     }
   }
@@ -53,7 +59,7 @@ function visualFor(
     return {
       label: 'Microphone off',
       icon: <MicOff size={16} aria-hidden="true" />,
-      className: 'bg-white border border-brand-divider text-brand-muted',
+      className: 'bg-white border border-brand-border-strong text-brand-muted',
       onClick: pushToTalk ? null : actions.startMic,
     }
   }
@@ -61,7 +67,8 @@ function visualFor(
     return {
       label: 'Reconnect',
       icon: <RefreshCw size={16} aria-hidden="true" />,
-      className: 'bg-white border border-brand-divider text-brand-text hover:border-brand-green',
+      className:
+        'bg-white border border-brand-border-strong text-brand-text hover:border-brand-green',
       onClick: actions.reconnect,
     }
   }
@@ -69,14 +76,26 @@ function visualFor(
     if (pushToTalk) {
       return {
         label: 'Release to send',
-        icon: <Mic size={16} aria-hidden="true" className="animate-pulse" />,
+        icon: (
+          <Mic
+            size={16}
+            aria-hidden="true"
+            className="animate-pulse motion-reduce:animate-none"
+          />
+        ),
         className: 'bg-brand-gold text-brand-text',
         onClick: null,
       }
     }
     return {
       label: 'Listening',
-      icon: <AudioLines size={16} aria-hidden="true" className="animate-pulse" />,
+      icon: (
+        <AudioLines
+          size={16}
+          aria-hidden="true"
+          className="animate-pulse motion-reduce:animate-none"
+        />
+      ),
       className: 'bg-brand-green text-white',
       onClick: actions.stopMic,
     }
@@ -84,7 +103,13 @@ function visualFor(
   if (phase === 'thinking') {
     return {
       label: 'Thinking…',
-      icon: <Sparkles size={16} aria-hidden="true" className="text-brand-gold animate-pulse" />,
+      icon: (
+        <Sparkles
+          size={16}
+          aria-hidden="true"
+          className="text-brand-gold animate-pulse motion-reduce:animate-none"
+        />
+      ),
       className: 'bg-brand-green text-white',
       onClick: null,
     }
@@ -92,7 +117,12 @@ function visualFor(
   if (phase === 'agentSpeaking' || phase === 'drainingFarewell') {
     return {
       label: 'Speaking',
-      icon: <span aria-hidden="true" className="inline-block w-2 h-2 rounded-full bg-brand-gold animate-pulse" />,
+      icon: (
+        <span
+          aria-hidden="true"
+          className="inline-block w-2 h-2 rounded-full bg-brand-gold animate-pulse motion-reduce:animate-none"
+        />
+      ),
       className: 'bg-brand-green text-white',
       onClick: pushToTalk ? null : actions.stopMic,
     }
@@ -121,19 +151,22 @@ function tooltipFor(
   }
   if (phase === 'paused') {
     return pushToTalk
-      ? 'Hold this button or the Spacebar to resume'
+      ? 'Hold or select this button, or hold the Spacebar, to resume'
       : 'Select to resume your concierge session'
   }
   if (pushToTalk) {
-    return 'Hold this button or the Spacebar to talk'
+    return phase === 'capturing'
+      ? 'Release, click, or press Enter to send'
+      : 'Hold or click this button, or hold the Spacebar, to talk'
   }
-  return undefined
+  return phase === 'capturing' ? 'Select to stop listening' : 'Select to start listening'
 }
 
 export function ConciergePill() {
   const agent = useAgent()
   const phase = resolvePhase(agent.phase, agent.connState, agent.micState)
   const micDenied = Boolean(agent.micDenied) || agent.micState === 'muted'
+  const isCapturing = phase === 'capturing'
   const holdable =
     agent.pushToTalk && phase !== 'connecting' && !(phase === 'error' && !micDenied)
 
@@ -141,6 +174,9 @@ export function ConciergePill() {
     enabled: holdable,
     onBegin: agent.beginTalking,
     onEnd: agent.endTalking,
+    allowClickToggle: true,
+    isCapturing,
+    canClickStart: phase !== 'agentSpeaking' && phase !== 'drainingFarewell',
   })
 
   const v = visualFor(phase, agent.micState, micDenied, agent.pushToTalk, {
@@ -151,25 +187,30 @@ export function ConciergePill() {
     reconnect: agent.reconnect,
   })
 
-  const holdProps = holdable ? hold : {}
+  const { onClick: holdClick, ...pointerHoldProps } = hold
+  const effectiveOnClick = holdable ? holdClick : (v.onClick ?? undefined)
+  const exposePressedState =
+    holdable ||
+    (!agent.pushToTalk && phase !== 'connecting' && phase !== 'error' && phase !== 'paused')
 
   return (
     <button
       type="button"
       data-concierge-pill="true"
-      onClick={v.onClick ?? undefined}
-      disabled={v.onClick === null && !holdable}
+      aria-pressed={exposePressedState ? isCapturing : undefined}
+      onClick={effectiveOnClick}
+      disabled={effectiveOnClick === undefined && !holdable}
       style={holdable ? { touchAction: 'none' } : undefined}
       title={tooltipFor(phase, agent.micState, micDenied, agent.pushToTalk)}
-      {...holdProps}
+      {...(holdable ? pointerHoldProps : {})}
       className={
-        'inline-flex items-center gap-1.5 px-3 py-1.5 rounded-full ' +
-        'text-[13px] font-semibold leading-none transition-colors select-none ' +
+        'min-h-9 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full ' +
+        'text-[0.8125rem] font-semibold leading-none transition-colors select-none ' +
         v.className
       }
     >
       {v.icon}
-      <span aria-live="polite">{v.label}</span>
+      <span>{v.label}</span>
     </button>
   )
 }

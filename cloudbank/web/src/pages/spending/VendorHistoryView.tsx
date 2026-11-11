@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { useFixture } from '../../data/useFixture'
 import { usePersona } from '../../personas/PersonaProvider'
-import { useSpendingView } from '../../agent/SpendingViewProvider'
+import { useBankingViewState } from '../../agent/BankingViewStateProvider'
 import { TransactionRow } from './TransactionRow'
 import { SpendingHeader } from './SpendingHeader'
 import type { Transaction } from '../../data/fixture'
@@ -17,7 +17,7 @@ interface Props {
 export function VendorHistoryView({ vendor }: Props) {
   const fixture = useFixture()
   const { demoDate } = usePersona()
-  const { period } = useSpendingView()
+  const { period } = useBankingViewState()
   const transactions = fixture?.transactions ?? EMPTY
 
   const {
@@ -35,14 +35,14 @@ export function VendorHistoryView({ vendor }: Props) {
       <SpendingHeader breadcrumb={canonicalVendor} />
 
       <div className="py-4 border-b border-brand-divider">
-        <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium">
+        <div className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium">
           {monthName} · {canonicalVendor}
         </div>
         <div className="flex items-baseline justify-between mt-1">
-          <div className="text-[28px] font-bold text-brand-text leading-none tabular-nums">
+          <div className="text-[1.75rem] font-bold text-brand-text leading-none tabular-nums">
             {formatGBPFromPence(periodTotalPence)}
           </div>
-          <div className="text-[13px] text-brand-muted tabular-nums">
+          <div className="text-[0.8125rem] text-brand-muted tabular-nums">
             {periodRows.length} {periodRows.length === 1 ? 'visit' : 'visits'} in {monthName}
           </div>
         </div>
@@ -50,7 +50,7 @@ export function VendorHistoryView({ vendor }: Props) {
 
       <div className="mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider">
         {periodRows.length === 0 ? (
-          <div className="py-6 text-center text-[13px] text-brand-muted">
+          <div className="py-6 text-center text-[0.8125rem] text-brand-muted">
             No transactions at this merchant in {monthName}.
           </div>
         ) : (

@@ -1,5 +1,11 @@
 import '@testing-library/jest-dom/vitest'
+import { afterEach } from 'vitest'
+import { cleanup } from '@testing-library/react'
 import { MotionGlobalConfig } from 'framer-motion'
+
+afterEach(() => {
+  cleanup()
+})
 
 // Skip WAAPI animations in unit tests so happy-dom v21's Animation.cancel()
 // does not emit unhandled AbortError promise rejections on rapid test teardowns.
@@ -7,8 +13,8 @@ MotionGlobalConfig.skipAnimations = true
 
 // happy-dom does not ship a WebSocket implementation. The AgentProvider opens
 // a WS in its mount effect, so tests that render it would otherwise crash with
-// `WebSocket is not a constructor`. A no-op stub is enough — we don't exercise
-// any network behaviour in the JS-DOM tier.
+// `WebSocket is not a constructor`. A no-op stub is sufficient because we do
+// not exercise network behaviour in the unit-test tier.
 class WebSocketStub {
   static readonly CONNECTING = 0
   static readonly OPEN = 1
@@ -28,9 +34,8 @@ class WebSocketStub {
 }
 ;(globalThis as unknown as { WebSocket: typeof WebSocketStub }).WebSocket = WebSocketStub
 
-// happy-dom also does not ship the Web Audio API. AgentProvider eagerly
-// constructs an AudioPlayer (which `new AudioContext(...)`s) on mount, so
-// rendering it under test would crash without a stub.
+// happy-dom also does not ship the Web Audio API. AgentProvider constructs
+// an AudioPlayer on mount, so rendering it under test requires a stub.
 class AudioContextStub {
   currentTime = 0
   state: 'running' | 'suspended' | 'closed' = 'running'

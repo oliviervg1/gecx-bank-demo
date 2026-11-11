@@ -1,17 +1,22 @@
-// Hold-to-talk input handling: pointer on the pill, plus the spacebar for
-// presenting from a laptop.
+// Hold-to-talk and accessible toggle-to-talk input handling: pointer press-and-hold,
+// Spacebar hold-to-talk for laptop presentations, and Click / Enter toggle-to-talk
+// for screen readers, switch controls, voice control, and quick taps.
 //
-// The dominant concern here is not ergonomics, it is a mic that gets stuck
-// open. That is precisely the failure push-to-talk exists to prevent, so every
-// way a hold can end without a matching "up" event is handled: the pointer
-// leaving the element, the tab losing focus, the window being hidden, a lost
-// keyup, and a hold that simply never ends.
+// Every way a hold or latched toggle can end without a matching release event is
+// guarded: secondary mouse buttons ignored, pointer leaving the element, tab losing
+// focus, window being hidden, unmount mid-hold, and a 30-second safety watchdog.
 
-import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  type MouseEvent as ReactMouseEvent,
+  type PointerEvent as ReactPointerEvent,
+} from 'react'
 
-// A hold longer than this is assumed to be a lost event rather than a very
-// long sentence. Generous — a rambling demo question is well under this.
+// A hold or toggle longer than this is force-released so a mic never stays open indefinitely.
 export const MAX_HOLD_MS = 30_000
+export const TAP_LATCH_THRESHOLD_MS = 220
 
 const INTERACTIVE_SELECTOR =
   'button, a[href], summary, [role="button"], [role="tab"], [role="link"], [role="menuitem"]'
@@ -30,12 +35,16 @@ interface Options {
   enabled: boolean
   onBegin: () => void | Promise<void>
   onEnd: () => void
+  allowClickToggle?: boolean
+  isCapturing?: boolean
+  canClickStart?: boolean
 }
 
 export interface HoldHandlers {
   onPointerDown: (e: ReactPointerEvent<HTMLElement>) => void
   onPointerUp: (e: ReactPointerEvent<HTMLElement>) => void
   onPointerCancel: (e: ReactPointerEvent<HTMLElement>) => void
+  onClick?: (e: ReactMouseEvent<HTMLElement>) => void
 }
 
 function isTypingTarget(target: EventTarget | null): boolean {
@@ -72,18 +81,33 @@ function shouldIgnoreSpacebarTarget(
   return isFocusVisible(interactive)
 }
 
-export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandlers {
+export function useHoldToTalk({
+  enabled,
+  onBegin,
+  onEnd,
+  allowClickToggle = false,
+  isCapturing = false,
+  canClickStart = true,
+}: Options): HoldHandlers {
   const holdingRef = useRef(false)
   const watchdogRef = useRef<number | null>(null)
+  const tapReleaseTimerRef = useRef<number | null>(null)
+  const pointerDownAtRef = useRef<number | null>(null)
+  const closingToggleOnPointerRef = useRef(false)
+  const suppressNextClickRef = useRef(false)
   const pointerFocusedRef = useRef<Element | null>(null)
-  // Keep the latest callbacks in refs so the global listeners below can be
-  // installed once instead of being torn down and re-added on every render.
+
   const onBeginRef = useRef(onBegin)
   const onEndRef = useRef(onEnd)
+  const isCapturingRef = useRef(isCapturing)
   useEffect(() => {
     onBeginRef.current = onBegin
     onEndRef.current = onEnd
-  }, [onBegin, onEnd])
+    isCapturingRef.current = isCapturing
+    if (!isCapturing && pointerDownAtRef.current === null && tapReleaseTimerRef.current === null) {
+      holdingRef.current = false
+    }
+  }, [onBegin, onEnd, isCapturing])
 
   const clearWatchdog = useCallback(() => {
     if (watchdogRef.current !== null) {
@@ -92,30 +116,42 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
     }
   }, [])
 
-  const release = useCallback(() => {
-    if (!holdingRef.current) return
-    holdingRef.current = false
-    clearWatchdog()
-    onEndRef.current()
-  }, [clearWatchdog])
+  const clearTapReleaseTimer = useCallback(() => {
+    if (tapReleaseTimerRef.current !== null) {
+      clearTimeout(tapReleaseTimerRef.current)
+      tapReleaseTimerRef.current = null
+    }
+  }, [])
 
-  const press = useCallback(() => {
-    if (holdingRef.current) return
-    holdingRef.current = true
+  const armWatchdog = useCallback(() => {
     clearWatchdog()
     watchdogRef.current = window.setTimeout(() => {
       watchdogRef.current = null
-      // Force-release rather than trusting an "up" that never came.
-      if (holdingRef.current) {
+      if (holdingRef.current || isCapturingRef.current) {
         holdingRef.current = false
         onEndRef.current()
       }
     }, MAX_HOLD_MS)
-    void onBeginRef.current()
   }, [clearWatchdog])
 
-  // Spacebar, plus the global escape hatches. Installed once; `enabled` is
-  // read through a ref-free closure because the effect re-runs when it flips.
+  const release = useCallback(() => {
+    clearTapReleaseTimer()
+    pointerDownAtRef.current = null
+    closingToggleOnPointerRef.current = false
+    if (!holdingRef.current && !isCapturingRef.current) return
+    holdingRef.current = false
+    clearWatchdog()
+    onEndRef.current()
+  }, [clearTapReleaseTimer, clearWatchdog])
+
+  const press = useCallback(() => {
+    clearTapReleaseTimer()
+    if (holdingRef.current) return
+    holdingRef.current = true
+    armWatchdog()
+    void onBeginRef.current()
+  }, [armWatchdog, clearTapReleaseTimer])
+
   useEffect(() => {
     if (!enabled) return
 
@@ -133,9 +169,9 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
         return
       }
       if (e.code !== 'Space' && e.key !== ' ') return
-      if (e.repeat) return // auto-repeat, not a new press
+      if (e.repeat) return
       if (shouldIgnoreSpacebarTarget(e.target, pointerFocusedRef.current)) return
-      e.preventDefault() // otherwise the page scrolls
+      e.preventDefault()
       press()
     }
     const onKeyUp = (e: KeyboardEvent) => {
@@ -146,7 +182,6 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
       e.preventDefault()
       release()
     }
-    // Alt-tabbing away mid-hold must not leave the mic live.
     const onBlur = () => release()
     const onVisibility = () => {
       if (document.hidden) release()
@@ -165,33 +200,83 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
       document.removeEventListener('visibilitychange', onVisibility)
-      // Unmounting mid-hold counts as a release.
       release()
     }
   }, [enabled, press, release])
 
-  useEffect(() => clearWatchdog, [clearWatchdog])
+  useEffect(
+    () => () => {
+      clearTapReleaseTimer()
+      clearWatchdog()
+    },
+    [clearTapReleaseTimer, clearWatchdog],
+  )
 
-  return {
+  const handlers: HoldHandlers = {
     onPointerDown: (e) => {
       if (!enabled) return
-      // Capture so a pointer dragged off the pill still delivers its up event
-      // here rather than to whatever is underneath.
+      // Ignore secondary/middle mouse buttons so right-click context menus never lock the mic open.
+      if (typeof e.button === 'number' && e.button !== 0) return
+
       try {
         e.currentTarget.setPointerCapture(e.pointerId)
       } catch {
         /* unsupported */
       }
+
+      if (allowClickToggle && (holdingRef.current || isCapturingRef.current)) {
+        closingToggleOnPointerRef.current = true
+        pointerDownAtRef.current = Date.now()
+        return
+      }
+
+      closingToggleOnPointerRef.current = false
+      pointerDownAtRef.current = Date.now()
       press()
     },
     onPointerUp: (e) => {
       if (!enabled) return
+      if (typeof e.button === 'number' && e.button !== 0) return
+
       try {
         e.currentTarget.releasePointerCapture(e.pointerId)
       } catch {
         /* already gone */
       }
-      release()
+
+      if (!allowClickToggle) {
+        release()
+        return
+      }
+
+      const downAt = pointerDownAtRef.current
+      pointerDownAtRef.current = null
+      if (downAt === null) {
+        return
+      }
+
+      if (closingToggleOnPointerRef.current) {
+        closingToggleOnPointerRef.current = false
+        suppressNextClickRef.current = true
+        release()
+        return
+      }
+
+      const heldMs = Date.now() - downAt
+      if (heldMs >= TAP_LATCH_THRESHOLD_MS) {
+        suppressNextClickRef.current = true
+        release()
+        return
+      }
+
+      // Quick tap (< 220ms): if released on the button, onClick will fire synchronously
+      // and cancel this fallback timer to latch toggle-to-talk open; if dragged off the
+      // button (no click), this timer immediately releases the mic on the next tick.
+      clearTapReleaseTimer()
+      tapReleaseTimerRef.current = window.setTimeout(() => {
+        tapReleaseTimerRef.current = null
+        release()
+      }, 0)
     },
     onPointerCancel: (e) => {
       if (!enabled) return
@@ -203,4 +288,35 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
       release()
     },
   }
+
+  if (allowClickToggle) {
+    handlers.onClick = (e) => {
+      if (!enabled) return
+      if (suppressNextClickRef.current) {
+        suppressNextClickRef.current = false
+        return
+      }
+      // If a quick pointer tap just completed on the pill, cancel the fallback release so
+      // capture stays latched open until the user clicks/presses Enter again.
+      if (tapReleaseTimerRef.current !== null) {
+        clearTapReleaseTimer()
+        holdingRef.current = true
+        armWatchdog()
+        return
+      }
+      // Synthetic click from keyboard Enter, screen reader, switch control, or voice control.
+      if (holdingRef.current || isCapturingRef.current) {
+        release()
+        return
+      }
+      // During agent speech, plain pointer clicks do not barge in accidentally, while keyboard
+      // Enter and assistive-technology synthetic clicks (detail === 0) can still toggle barge-in.
+      if (!canClickStart && e.detail > 0) {
+        return
+      }
+      press()
+    }
+  }
+
+  return handlers
 }

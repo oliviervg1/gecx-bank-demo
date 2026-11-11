@@ -92,6 +92,9 @@ export function renewalPaymentPence(
   rateBps: number,
   termRemainingMonths: number,
 ): number {
+  if (balancePence <= 0) {
+    return 0
+  }
   let low = halfUp(balancePence * rateBps, 120_000) + 1
   let high = balancePence + low
   while (low < high) {

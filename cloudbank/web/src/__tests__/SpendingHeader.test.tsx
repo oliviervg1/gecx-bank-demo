@@ -3,10 +3,10 @@ import { fireEvent, render, screen } from '@testing-library/react'
 import { useEffect } from 'react'
 import { SpendingHeader } from '../pages/spending/SpendingHeader'
 import {
-  SpendingViewProvider,
-  useSpendingView,
+  BankingViewStateProvider,
+  useBankingViewState,
   type SpendingViewState,
-} from '../agent/SpendingViewProvider'
+} from '../agent/BankingViewStateProvider'
 import { PersonaProvider } from '../personas/PersonaProvider'
 
 function Harness({
@@ -16,7 +16,7 @@ function Harness({
   breadcrumb?: string
   startView?: SpendingViewState
 }) {
-  const { view, setView } = useSpendingView()
+  const { view, period, setView } = useBankingViewState()
   useEffect(() => {
     if (startView) setView(startView)
   }, [setView, startView])
@@ -24,6 +24,7 @@ function Harness({
     <>
       <SpendingHeader breadcrumb={breadcrumb} />
       <div data-testid="current-view">{view}</div>
+      <div data-testid="current-period">{period}</div>
     </>
   )
 }
@@ -31,18 +32,30 @@ function Harness({
 function renderWith(breadcrumb?: string, startView?: SpendingViewState) {
   return render(
     <PersonaProvider initialDemoDate="2026-11-24">
-      <SpendingViewProvider>
+      <BankingViewStateProvider>
         <Harness breadcrumb={breadcrumb} startView={startView} />
-      </SpendingViewProvider>
+      </BankingViewStateProvider>
     </PersonaProvider>,
   )
 }
 
 describe('SpendingHeader', () => {
-  it('shows "Spending" without a back chevron when no breadcrumb is given', () => {
+  it('shows "Spending" heading without a back chevron when no breadcrumb is given and supports arrow-key view tabs and month toggles', () => {
     renderWith()
-    expect(screen.getByText('Spending')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Spending' })).toBeInTheDocument()
     expect(screen.queryByLabelText('Back to Spending overview')).toBeNull()
+
+    const overviewTab = screen.getByRole('tab', { name: 'Overview' })
+    const subscriptionsTab = screen.getByRole('tab', { name: 'Subscriptions' })
+    expect(overviewTab).toHaveAttribute('aria-selected', 'true')
+    fireEvent.keyDown(overviewTab, { key: 'ArrowRight' })
+    expect(subscriptionsTab).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByTestId('current-view').textContent).toBe('subscriptions')
+
+    const octBtn = screen.getByRole('button', { name: 'Oct' })
+    fireEvent.click(octBtn)
+    expect(octBtn).toHaveAttribute('aria-pressed', 'true')
+    expect(screen.getByTestId('current-period').textContent).toBe('last_month')
   })
 
   it('shows breadcrumb and back chevron when breadcrumb is provided', () => {

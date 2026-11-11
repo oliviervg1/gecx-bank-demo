@@ -1,30 +1,49 @@
-// Builds the exact 5-key CLIENT_SEEDABLE_VARIABLES payload for ClientStart.
-// customer_snapshot is passed verbatim from the active persona fixture.
+// Builds the lean ClientStart WebSocket handshake frame.
+// Persona financial snapshots are loaded server-side by cloudbank/proxy from
+// cloudbank/shared/personas/*.json and are never transmitted from the browser.
 
-import type { CustomerSnapshot } from '../data/fixture'
-import { DEFAULT_PINNED_DEMO_DATE, resolveTimeOfDay } from '../util/demoClock'
-import type { PersonaId, SeedVariables } from './protocol'
+import {
+  DEFAULT_PINNED_DEMO_DATE,
+  isValidIsoCalendarDate,
+  resolveTimeOfDay,
+} from '../util/demoClock'
+import type { ClientStartMsg, PersonaId, TimeOfDay } from './protocol'
 
-export function buildSessionVariables(
-  personaId: PersonaId,
-  fixture: CustomerSnapshot,
-  opts: {
-    demoDate?: string
-    timeOfDay?: 'morning' | 'afternoon' | 'evening'
-    now?: Date
-  } = {},
-): SeedVariables {
-  const firstName = fixture.user.first_name.trim()
-  if (!firstName) {
-    throw new Error(`Invalid customer_snapshot for ${personaId}: missing user.first_name`)
-  }
-  const demoDate = opts.demoDate ?? DEFAULT_PINNED_DEMO_DATE
+export interface BuildClientStartOptions {
+  demoDate?: string
+  timeOfDay?: TimeOfDay
+  now?: Date
+  sessionId?: string | null
+  lastUiSeq?: number | null
+}
+
+export function buildClientStart(
+  persona: PersonaId,
+  opts: BuildClientStartOptions = {},
+): ClientStartMsg {
+  const demoDate =
+    opts.demoDate && isValidIsoCalendarDate(opts.demoDate)
+      ? opts.demoDate
+      : DEFAULT_PINNED_DEMO_DATE
   const timeOfDay = opts.timeOfDay ?? resolveTimeOfDay(opts.now)
-  return {
-    persona_id: personaId,
-    first_name: firstName,
-    demo_date: demoDate,
-    time_of_day: timeOfDay,
-    customer_snapshot: fixture,
+
+  const msg: ClientStartMsg = {
+    type: 'start',
+    persona,
+    timeOfDay,
+    demoDate,
   }
+
+  if (typeof opts.sessionId === 'string' && opts.sessionId.length > 0) {
+    msg.sessionId = opts.sessionId
+    if (
+      typeof opts.lastUiSeq === 'number' &&
+      Number.isFinite(opts.lastUiSeq) &&
+      opts.lastUiSeq >= 0
+    ) {
+      msg.lastUiSeq = Math.trunc(opts.lastUiSeq)
+    }
+  }
+
+  return msg
 }

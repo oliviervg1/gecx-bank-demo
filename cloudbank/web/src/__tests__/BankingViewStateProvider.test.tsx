@@ -1,13 +1,16 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { act, fireEvent, render, screen } from '@testing-library/react'
-import { SpendingViewProvider, useSpendingView } from '../agent/SpendingViewProvider'
+import {
+  BankingViewStateProvider,
+  useBankingViewState,
+} from '../agent/BankingViewStateProvider'
 import { PageProvider, usePage } from '../pages/PageProvider'
 
-let captured: ReturnType<typeof useSpendingView> | null = null
+let captured: ReturnType<typeof useBankingViewState> | null = null
 let capturedPage: string | null = null
 
 function Probe() {
-  captured = useSpendingView()
+  captured = useBankingViewState()
   capturedPage = usePage().page
   return null
 }
@@ -17,20 +20,31 @@ function renderWithProvider() {
   capturedPage = null
   return render(
     <PageProvider>
-      <SpendingViewProvider>
+      <BankingViewStateProvider>
         <Probe />
-      </SpendingViewProvider>
+      </BankingViewStateProvider>
     </PageProvider>,
   )
 }
 
-describe('SpendingViewProvider & unified ui_view_state sync', () => {
+describe('BankingViewStateProvider & unified ui_view_state sync', () => {
+  it('throws when useBankingViewState is used outside BankingViewStateProvider', () => {
+    function BareProbe() {
+      useBankingViewState()
+      return null
+    }
+    const spy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    expect(() => render(<BareProbe />)).toThrow(/useBankingViewState/i)
+    spy.mockRestore()
+  })
+
   it('defaults to overview and this_month with zeroed calculators', () => {
     renderWithProvider()
     expect(captured?.view).toBe('overview')
     expect(captured?.period).toBe('this_month')
     expect(captured?.extraMonthlyPence).toBe(0)
     expect(captured?.monthlyOverpaymentPence).toBe(0)
+    expect(captured?.navigationAnnouncement).toBe('')
   })
 
   it('updates view, category, vendor, and direction via setView', async () => {
@@ -50,13 +64,13 @@ describe('SpendingViewProvider & unified ui_view_state sync', () => {
     expect(captured?.direction).toBe('back')
   })
 
-  it('synchronizes page, calculators, and anomaly_status via applyServerUiState and resets cleanly', async () => {
+  it('synchronizes page, calculators, anomaly_status, and polite navigation announcements via applyServerUiState', async () => {
     renderWithProvider()
     await act(async () => {
       captured?.applyServerUiState({
         seq: 1,
         page: 'spending',
-        view: 'overview',
+        view: 'subscriptions',
         period: 'last_month',
         highlight_vendor: 'Netflix',
         anomaly_status: 'confirmed',
@@ -66,6 +80,7 @@ describe('SpendingViewProvider & unified ui_view_state sync', () => {
     expect(captured?.period).toBe('last_month')
     expect(captured?.highlightVendor).toBe('Netflix')
     expect(captured?.anomalyStatus).toBe('confirmed')
+    expect(captured?.navigationAnnouncement).toBe('Showing Spending: Subscriptions')
 
     await act(async () => {
       captured?.applyServerUiState({
@@ -78,6 +93,7 @@ describe('SpendingViewProvider & unified ui_view_state sync', () => {
     expect(capturedPage).toBe('savings')
     expect(captured?.extraMonthlyPence).toBe(4500)
     expect(captured?.customTargetPence).toBe(1500000)
+    expect(captured?.navigationAnnouncement).toBe('Showing Savings')
 
     await act(async () => {
       captured?.resetUiState()
@@ -85,11 +101,12 @@ describe('SpendingViewProvider & unified ui_view_state sync', () => {
     expect(capturedPage).toBe('home')
     expect(captured?.extraMonthlyPence).toBe(0)
     expect(captured?.anomalyStatus).toBe('')
+    expect(captured?.navigationAnnouncement).toBe('')
   })
 })
 
 function DirectionProbe() {
-  const { view, setView, direction } = useSpendingView()
+  const { view, setView, direction } = useBankingViewState()
   return (
     <div>
       <span data-testid="view">{view}</span>
@@ -100,12 +117,12 @@ function DirectionProbe() {
   )
 }
 
-describe('SpendingViewProvider direction', () => {
+describe('BankingViewStateProvider direction', () => {
   it('tracks forward into subview and back into overview', () => {
     render(
-      <SpendingViewProvider>
+      <BankingViewStateProvider>
         <DirectionProbe />
-      </SpendingViewProvider>,
+      </BankingViewStateProvider>,
     )
     act(() => {
       fireEvent.click(screen.getByText('drill'))

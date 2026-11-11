@@ -3,10 +3,12 @@
     "composite": true,
     "module": "ESNext",
     "moduleResolution": "Bundler",
+    "verbatimModuleSyntax": true,
+    "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "strict": true,
     "emitDeclarationOnly": true,
-    "outDir": "./.tsbuild"
+    "outDir": "./.tsbuild/node"
   },
   "include": ["vite.config.ts", "vitest.config.ts"]
 }

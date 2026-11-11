@@ -1,37 +1,17 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest'
+import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
 import { MotionConfig } from 'framer-motion'
 import { SpendingPage } from '../pages/SpendingPage'
 import { PersonaProvider } from '../personas/PersonaProvider'
 import {
-  SpendingViewProvider,
-  useSpendingView,
+  BankingViewStateProvider,
+  useBankingViewState,
   type SpendingViewState,
-} from '../agent/SpendingViewProvider'
-
-const originalGetBoundingClientRect = Element.prototype.getBoundingClientRect
-beforeAll(() => {
-  Element.prototype.getBoundingClientRect = function () {
-    return {
-      width: 400,
-      height: 240,
-      top: 0,
-      left: 0,
-      bottom: 240,
-      right: 400,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    } as DOMRect
-  }
-})
-afterAll(() => {
-  Element.prototype.getBoundingClientRect = originalGetBoundingClientRect
-})
+} from '../agent/BankingViewStateProvider'
 
 let setView: ((next: SpendingViewState) => void) | null = null
 function SetViewProbe() {
-  setView = useSpendingView().setView
+  setView = useBankingViewState().setView
   return null
 }
 
@@ -40,10 +20,10 @@ function renderSpending() {
   return render(
     <MotionConfig reducedMotion="always">
       <PersonaProvider initialDemoDate="2026-11-24">
-        <SpendingViewProvider>
+        <BankingViewStateProvider>
           <SetViewProbe />
           <SpendingPage />
-        </SpendingViewProvider>
+        </BankingViewStateProvider>
       </PersonaProvider>
     </MotionConfig>,
   )

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { formatBps, formatGBP, formatGBPFromPence, formatPence } from '../util/currency'
+import { formatBps, formatGBPFromPence, formatPence } from '../util/currency'
 
 describe('currency & basis-point formatters', () => {
   it('formats integer pence without floating-point drift', () => {
@@ -17,10 +17,5 @@ describe('currency & basis-point formatters', () => {
     expect(formatBps(441)).toBe('4.41%')
     expect(formatBps(389)).toBe('3.89%')
     expect(formatBps(4057)).toBe('40.57%')
-  })
-
-  it('formats legacy pound amounts', () => {
-    expect(formatGBP(1245.5)).toBe('1,245.50')
-    expect(formatGBP(-3200)).toBe('-3,200.00')
   })
 })

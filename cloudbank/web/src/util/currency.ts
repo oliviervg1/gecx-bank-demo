@@ -4,7 +4,7 @@ function groupThousands(digits: string): string {
   let out = ''
   for (let i = 0; i < digits.length; i++) {
     if (i > 0 && (digits.length - i) % 3 === 0) out += ','
-    out += digits[i]
+    out += digits.charAt(i)
   }
   return out
 }
@@ -40,13 +40,4 @@ export function formatBps(rateBps: number): string {
   const whole = (absBps - frac) / 100
   const fracStr = frac < 10 ? `0${frac}` : `${frac}`
   return `${rateBps < 0 ? '-' : ''}${whole}.${fracStr}%`
-}
-
-/**
- * Legacy pound-float formatter retained for display helpers receiving whole/decimal pounds.
- */
-export function formatGBP(pounds: number): string {
-  const sign = pounds < 0 ? -1 : 1
-  const absPence = Math.floor(Math.abs(pounds) * 100 + 0.5)
-  return formatPence(sign * absPence)
 }

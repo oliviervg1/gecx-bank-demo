@@ -1,6 +1,9 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
-import audioWorkletSource from '../../public/audio-worklet.js?raw'
 import { createAudioCapture, SILENCE_100MS_B64 } from '../agent/audio'
+import {
+  createPcmCaptureProcessorClass,
+  type AudioWorkletProcessorLike,
+} from '../agent/pcmCaptureWorklet'
 
 interface FakeTrack {
   enabled: boolean
@@ -86,28 +89,46 @@ function decode(b64: string): Int16Array {
   return new Int16Array(bytes.buffer)
 }
 
-describe('createAudioCapture — hardware-rate context, real 48 kHz worklet, and flush ordering', () => {
-  it('W-1: creates AudioContext at native hardware rate (no forced 16 kHz) and cleans up stream/context if createMediaStreamSource throws', async () => {
+describe('createAudioCapture: hardware-rate context, bundled TS worklet, abort leak guard, and flush ordering', () => {
+  it('creates AudioContext at native hardware rate and cleans up stream/context if createMediaStreamSource throws', async () => {
     const sent: string[] = []
     const cap = await createAudioCapture((b64) => sent.push(b64), { startMuted: true })
-    // Must NOT pass { sampleRate: 16000 }, which crashes Firefox when mic is 44.1/48 kHz!
     expect(lastAudioContextOptions).toBeUndefined()
+    expect(cap.isMuted()).toBe(true)
     cap.stop()
 
-    // Simulate Firefox MediaStreamSource graph error: tracks and context must be cleaned up!
     tracks = [{ enabled: true, stop: vi.fn() }]
     contextClosed = false
     mediaSourceThrow = new Error('Connecting AudioNodes from AudioContexts with different sample-rate')
     await expect(createAudioCapture(() => {})).rejects.toThrow(/different sample-rate/)
-    expect(tracks[0].stop).toHaveBeenCalledTimes(1)
+    expect(tracks[0]!.stop).toHaveBeenCalledTimes(1)
     expect(contextClosed).toBe(true)
   })
 
-  it('W-1 end-to-end: 48,000 Hz AudioContext + real public/audio-worklet.js yields exact 1,600-sample 16 kHz PCM16 frames', async () => {
-    let realProcessor: {
-      port: { onmessage: ((ev: { data: unknown }) => void) | null }
-      process: (inputs: Float32Array[][]) => boolean
-    } | null = null
+  it('stops tracks immediately if AbortSignal aborts while getUserMedia is pending (zero mic leak)', async () => {
+    let resolveGum!: (v: unknown) => void
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: () =>
+          new Promise((resolve) => {
+            resolveGum = resolve
+          }),
+      },
+    })
+
+    const abortCtrl = new AbortController()
+    const pending = createAudioCapture(() => {}, { signal: abortCtrl.signal })
+    abortCtrl.abort()
+    resolveGum({ getTracks: () => tracks, getAudioTracks: () => tracks })
+
+    await expect(pending).rejects.toMatchObject({ name: 'AbortError' })
+    expect(tracks[0]!.stop).toHaveBeenCalledTimes(1)
+  })
+
+  it('48,000 Hz AudioContext + bundled TS PcmCaptureProcessor yields exact 1,600-sample 16 kHz PCM16 frames with transferable buffers', async () => {
+    let realProcessor: AudioWorkletProcessorLike | null = null
+    const transfers: Array<Transferable[] | undefined> = []
 
     class RealWorkletNodeStub {
       port = {
@@ -120,27 +141,25 @@ describe('createAudioCapture — hardware-rate context, real 48 kHz worklet, and
       }
       constructor() {
         const selfPort = this.port
-        class BaseAudioWorkletProcessor {
+        class BaseAudioWorkletProcessor implements AudioWorkletProcessorLike {
           port = {
             onmessage: null as ((ev: { data: unknown }) => void) | null,
-            postMessage: (data: Float32Array | { type: 'flushed'; samples: Float32Array }) => {
-              selfPort.onmessage?.({ data })
+            postMessage: (
+              data: unknown,
+              transfer?: Transferable[],
+            ) => {
+              transfers.push(transfer)
+              selfPort.onmessage?.({
+                data: data as Float32Array | { type: 'flushed'; samples: Float32Array },
+              })
             },
           }
+          process(): boolean {
+            return true
+          }
         }
-        const factory = new Function(
-          'AudioWorkletProcessor',
-          'sampleRate',
-          'registerProcessor',
-          audioWorkletSource,
-        )
-        factory(
-          BaseAudioWorkletProcessor,
-          48000,
-          (_name: string, Ctor: new () => typeof realProcessor) => {
-            realProcessor = new Ctor()
-          },
-        )
+        const Ctor = createPcmCaptureProcessorClass(BaseAudioWorkletProcessor, () => 48000)
+        realProcessor = new Ctor()
       }
       disconnect() {}
     }
@@ -151,12 +170,14 @@ describe('createAudioCapture — hardware-rate context, real 48 kHz worklet, and
     const cap = await createAudioCapture((b64) => frames.push(b64))
     expect(realProcessor).not.toBeNull()
 
-    // Feed 9,600 samples at 48 kHz (200 ms) in 128-sample blocks -> must emit 2 chunks of 1,600 samples (16 kHz).
     for (let i = 0; i < 9600 / 128; i++) {
       realProcessor!.process([[new Float32Array(128).fill(0.5)]])
     }
 
     expect(frames).toHaveLength(2)
+    expect(transfers).toHaveLength(2)
+    expect(transfers[0]).toHaveLength(1)
+    expect(transfers[0]?.[0]).toBeInstanceOf(ArrayBuffer)
     for (const b64 of frames) {
       const pcm = decode(b64)
       expect(pcm).toHaveLength(1600)
@@ -171,7 +192,6 @@ describe('createAudioCapture — hardware-rate context, real 48 kHz worklet, and
       const sent: string[] = []
       const cap = await createAudioCapture((b64) => sent.push(b64))
 
-      // Simulate real cross-thread AudioWorklet port delivering 'flushed' 5ms AFTER postMessage('flush').
       workletPort!.postMessage.mockImplementation((msg: { type?: string }) => {
         if (msg?.type === 'flush') {
           setTimeout(() => {
@@ -184,14 +204,12 @@ describe('createAudioCapture — hardware-rate context, real 48 kHz worklet, and
 
       cap.flushAndSendTrailingSilence()
       expect(workletPort!.postMessage).toHaveBeenCalledWith({ type: 'flush' })
-      // Before 'flushed' arrives at t=5ms, NO silence frame has jumped ahead of the speech tail!
       expect(sent).toHaveLength(0)
 
       vi.advanceTimersByTime(5)
-      // At t=5ms: sent[0] is the 80-sample speech tail, sent[1] is the first 100ms silence frame!
       expect(sent).toHaveLength(2)
-      expect(decode(sent[0])).toHaveLength(80)
-      expect(decode(sent[0])[0]).toBeGreaterThan(8000)
+      expect(decode(sent[0]!)).toHaveLength(80)
+      expect(decode(sent[0]!)[0]).toBeGreaterThan(8000)
       expect(sent[1]).toBe(SILENCE_100MS_B64)
 
       vi.advanceTimersByTime(300)

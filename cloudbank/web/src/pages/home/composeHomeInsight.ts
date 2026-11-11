@@ -3,6 +3,7 @@ import type { SpendingSummary } from '../../hooks/useSpendingSummary'
 import { formatGBPFromPence } from '../../util/currency'
 import { formatDayOrdinal } from '../../util/dates'
 import { DEFAULT_PINNED_DEMO_DATE, monthNameForOffset } from '../../util/demoClock'
+import { vendorsEqual } from '../../util/spendingViews'
 
 interface MortgageNextPayment {
   next_payment: { amount_pence: number; day_of_month: number }
@@ -21,7 +22,10 @@ function average(nums: number[]): number {
   return nums.reduce((a, b) => a + b, 0) / nums.length
 }
 
-function buildAnomalyLead(transactions: Transaction[] | undefined, monthName: string): string | null {
+function buildAnomalyLead(
+  transactions: Transaction[] | undefined,
+  monthName: string,
+): string | null {
   if (!transactions || transactions.length === 0) return null
   const anom = transactions.find(
     (t) => t.month_offset === 0 && t.amount_pence > 0 && t.is_anomaly === true,
@@ -31,12 +35,12 @@ function buildAnomalyLead(transactions: Transaction[] | undefined, monthName: st
     (t) =>
       t.month_offset === 1 &&
       t.amount_pence > 0 &&
-      t.vendor.trim().toLowerCase() === anom.vendor.trim().toLowerCase(),
+      vendorsEqual(t.vendor, anom.vendor),
   )
   if (prior && prior.amount_pence !== anom.amount_pence) {
-    return `${anom.vendor} charged ${formatGBPFromPence(anom.amount_pence)} on ${anom.day} ${monthName}, up from ${formatGBPFromPence(prior.amount_pence)} last month — ask your concierge to check or cancel it.`
+    return `${anom.vendor} charged ${formatGBPFromPence(anom.amount_pence)} on ${anom.day} ${monthName}, up from ${formatGBPFromPence(prior.amount_pence)} last month; ask your concierge to check or cancel it.`
   }
-  return `${anom.vendor} charged ${formatGBPFromPence(anom.amount_pence)} on ${anom.day} ${monthName} and is flagged for review — ask your concierge to check it.`
+  return `${anom.vendor} charged ${formatGBPFromPence(anom.amount_pence)} on ${anom.day} ${monthName} and is flagged for review; ask your concierge to check it.`
 }
 
 export function composeHomeInsight({

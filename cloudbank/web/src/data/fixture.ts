@@ -6,10 +6,10 @@
 // rounding drift. Every fixture is validated against
 // `cloudbank/shared/customer_snapshot.schema.json` in both Vitest and Pytest.
 
-import chloeFixture from '../fixtures/chloe.json'
-import davidFixture from '../fixtures/david.json'
-import tomFixture from '../fixtures/tom.json'
-import sarahFixture from '../fixtures/sarah.json'
+import chloeFixture from '../../../shared/personas/chloe.json'
+import davidFixture from '../../../shared/personas/david.json'
+import tomFixture from '../../../shared/personas/tom.json'
+import sarahFixture from '../../../shared/personas/sarah.json'
 
 import { ALL_PERSONAS, type Persona } from '../personas/personas'
 
@@ -67,7 +67,7 @@ export interface MortgageRenewalOption {
   rate_bps: number
 }
 
-// Not every persona has a mortgage — Tom rents. Pages and controllers handle
+// Not every persona has a mortgage (Tom rents). Pages and controllers handle
 // its absence gracefully.
 export interface Mortgage {
   balance_pence: number

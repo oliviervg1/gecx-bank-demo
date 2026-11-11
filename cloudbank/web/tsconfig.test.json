@@ -1,0 +1,13 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "composite": true,
+    "rootDir": "..",
+    "noEmit": false,
+    "emitDeclarationOnly": true,
+    "outDir": "./.tsbuild/test",
+    "types": ["vite/client", "vitest/globals", "@testing-library/jest-dom"]
+  },
+  "include": ["src", "../shared/**/*.json"],
+  "exclude": []
+}

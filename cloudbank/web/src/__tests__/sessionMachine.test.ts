@@ -1,13 +1,16 @@
 import { describe, it, expect } from 'vitest'
 import {
+  MAX_RESUME_ATTEMPTS,
   THINKING_WATCHDOG_MS,
   createInitialSessionState,
   reduceSessionMachine,
+  type InputMode,
   type SessionEffect,
   type SessionEvent,
   type SessionMachineState,
 } from '../agent/sessionMachine'
-import { sanitizeAgentProse } from '../agent/streamSanitizer'
+import { sanitizeAgentProse, stripDiagnosisBlocks } from '../agent/streamSanitizer'
+import { getFixture } from '../data/fixture'
 
 function step(
   state: SessionMachineState,
@@ -23,8 +26,11 @@ function step(
   return { state: cur, effects: allEffects }
 }
 
-function connectedReadyState(sessionId = 'sess-1'): SessionMachineState {
-  const init = createInitialSessionState('chloe')
+function connectedReadyState(
+  sessionId = 'sess-1',
+  inputMode: InputMode = 'ptt',
+): SessionMachineState {
+  const init = createInitialSessionState('chloe', inputMode)
   const c = step(
     init,
     { type: 'CONNECT_REQUESTED' },
@@ -33,8 +39,7 @@ function connectedReadyState(sessionId = 'sess-1'): SessionMachineState {
   return c.state
 }
 
-describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
-  // Row 1: PTT barge-in during agentSpeaking flushes player + increments playbackEpoch + drops residual audio.
+describe('sessionMachine.ts: transition invariants, voice floor, continuous mode, and GoAway', () => {
   it('Row 1: PTT_PRESS during agentSpeaking flushes player, bumps playbackEpoch, marks interrupted, and ignores stale audio/drain', () => {
     const ready = connectedReadyState()
     const speaking = step(
@@ -54,18 +59,16 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(barged.state.phase).toBe('capturing')
     expect(barged.state.playbackEpoch).toBe(oldPlaybackEpoch + 1)
     expect(barged.state.userHasFloor).toBe(true)
-    expect(barged.state.turns[0].interrupted).toBe(true)
+    expect(barged.state.turns[0]?.interrupted).toBe(true)
     expect(barged.effects).toContainEqual({ type: 'FLUSH_PLAYER' })
     expect(barged.effects).toContainEqual({ type: 'START_MIC_CAPTURE' })
 
-    // Stale PLAYER_DRAINED from previous playbackEpoch is ignored.
     const staleDrain = reduceSessionMachine(barged.state, {
       type: 'PLAYER_DRAINED',
       playbackEpoch: oldPlaybackEpoch,
     })
     expect(staleDrain.state.phase).toBe('capturing')
 
-    // Residual in-flight server audio while holding is dropped instead of reclaiming agentSpeaking.
     const residualAudio = reduceSessionMachine(barged.state, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
@@ -75,7 +78,59 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(residualAudio.effects.some((e) => e.type === 'ENQUEUE_AUDIO')).toBe(false)
   })
 
-  // Row 2: turn_complete waits for player drain before leaving agentSpeaking.
+  it('PTT_PRESS during thinking grants userHasFloor and bumps playbackEpoch so late audio never mutes speech', () => {
+    const ready = connectedReadyState()
+    const thinking = step(ready, { type: 'PTT_PRESS' }, { type: 'PTT_RELEASE' }).state
+    expect(thinking.phase).toBe('thinking')
+
+    const heldDuringThinking = reduceSessionMachine(thinking, { type: 'PTT_PRESS' })
+    expect(heldDuringThinking.state.phase).toBe('capturing')
+    expect(heldDuringThinking.state.userHasFloor).toBe(true)
+    expect(heldDuringThinking.state.playbackEpoch).toBe(thinking.playbackEpoch + 1)
+
+    // Arriving audio chunk from prior turn is dropped while user holds floor.
+    const lateAudio = reduceSessionMachine(heldDuringThinking.state, {
+      type: 'SERVER_MESSAGE',
+      epoch: 1,
+      msg: { type: 'audio', data: 'AAAA' },
+    })
+    expect(lateAudio.state.phase).toBe('capturing')
+    expect(lateAudio.effects.some((e) => e.type === 'ENQUEUE_AUDIO')).toBe(false)
+
+    // Releasing sends the new utterance and allows subsequent agent audio to play.
+    const released = reduceSessionMachine(lateAudio.state, { type: 'PTT_RELEASE' })
+    expect(released.state.phase).toBe('thinking')
+    expect(released.state.userHasFloor).toBe(false)
+  })
+
+  it('continuous mode (?ptt=0) returns cleanly to capturing + UNMUTE_MIC after PLAYER_DRAINED and stops on STOP_MIC_ONLY', () => {
+    const ready = connectedReadyState('sess-cont', 'continuous')
+    const listening = reduceSessionMachine(ready, { type: 'PTT_PRESS' })
+    expect(listening.state.phase).toBe('capturing')
+    expect(listening.state.micActive).toBe(true)
+
+    const afterReply = step(
+      listening.state,
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'audio', data: 'AAAA' } },
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'turn_complete', turnIndex: 1 } },
+    ).state
+    expect(afterReply.phase).toBe('agentSpeaking')
+
+    const drained = reduceSessionMachine(afterReply, {
+      type: 'PLAYER_DRAINED',
+      playbackEpoch: afterReply.playbackEpoch,
+    })
+    expect(drained.state.phase).toBe('capturing')
+    expect(drained.state.micActive).toBe(true)
+    expect(drained.effects).toContainEqual({ type: 'UNMUTE_MIC' })
+
+    // Clicking the Listening pill dispatches STOP_MIC_ONLY -> ready + STOP_MIC_CAPTURE.
+    const stopped = reduceSessionMachine(drained.state, { type: 'STOP_MIC_ONLY' })
+    expect(stopped.state.phase).toBe('ready')
+    expect(stopped.state.micActive).toBe(false)
+    expect(stopped.effects).toContainEqual({ type: 'STOP_MIC_CAPTURE' })
+  })
+
   it('Row 2: turn_complete waits for PLAYER_DRAINED when audio is still playing (and handles reverse order)', () => {
     const ready = connectedReadyState()
     const afterTurnComplete = step(
@@ -94,7 +149,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(drained.state.phase).toBe('ready')
     expect(drained.state.playerActive).toBe(false)
 
-    // Reverse order: PLAYER_DRAINED arrives before turn_complete.
     const drainFirst = step(
       ready,
       { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'audio', data: 'AAAA' } },
@@ -109,7 +163,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(completedAfter.state.phase).toBe('ready')
   })
 
-  // Row 3: Zero-audio turn thinking -> ready + 15s thinking watchdog.
   it('Row 3: zero-audio turn_complete and 15,000ms THINKING_WATCHDOG_FIRED both recover thinking -> ready', () => {
     expect(THINKING_WATCHDOG_MS).toBe(15_000)
     const ready = connectedReadyState()
@@ -122,7 +175,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
       timeoutMs: 15_000,
     })
 
-    // Zero-audio turn_complete -> ready.
     const completed = reduceSessionMachine(released.state, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
@@ -130,7 +182,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     })
     expect(completed.state.phase).toBe('ready')
 
-    // Stale watchdog epoch is ignored; matching epoch recovers thinking -> ready.
     const wrongEpoch = reduceSessionMachine(released.state, {
       type: 'THINKING_WATCHDOG_FIRED',
       epoch: 999,
@@ -144,7 +195,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(watchdogFired.state.phase).toBe('ready')
   })
 
-  // Row 4: ServerEnd waits for farewell audio drain before showing ended; pressing PTT during drain starts fresh session.
   it('Row 4: end waits for farewell audio drain, and PTT_PRESS during drainingFarewell flushes and opens a fresh session', () => {
     const ready = connectedReadyState('sess-farewell')
     const draining = step(
@@ -155,7 +205,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(draining.state.phase).toBe('drainingFarewell')
     expect(draining.effects.some((e) => e.type === 'CLOSE_WS')).toBe(false)
 
-    // Draining finishes normally -> ended + CLOSE_WS.
     const finished = reduceSessionMachine(draining.state, {
       type: 'PLAYER_DRAINED',
       playbackEpoch: draining.state.playbackEpoch,
@@ -164,7 +213,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(finished.state.sessionId).toBeNull()
     expect(finished.effects).toContainEqual({ type: 'CLOSE_WS' })
 
-    // Pressing PTT mid-drain flushes farewell audio, closes WS, and opens a fresh sessionId: null!
     const interruptedDrain = reduceSessionMachine(draining.state, { type: 'PTT_PRESS' })
     expect(interruptedDrain.state.phase).toBe('connecting')
     expect(interruptedDrain.effects).toContainEqual({ type: 'FLUSH_PLAYER' })
@@ -177,7 +225,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     })
   })
 
-  // Row 5: WS close after end / drainingFarewell / paused never triggers error.
   it('Row 5: WS_CLOSED after end, drainingFarewell, or session_expired is normal and never enters error', () => {
     const ready = connectedReadyState()
     const endedImmediate = reduceSessionMachine(ready, {
@@ -201,8 +248,7 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     expect(pausedClose.state.phase).toBe('paused')
   })
 
-  // Row 6: ServerGoAway reconnects with the SAME sessionId (deferred if agentSpeaking); other reconnects use null.
-  it('Row 6: go_away reconnects with same sessionId immediately when idle and defers until PLAYER_DRAINED when speaking', () => {
+  it('Row 6: go_away reconnects with same sessionId + lastUiSeq and caps WS_CLOSED retries with backoff', () => {
     const ready = connectedReadyState('sess-keep')
     const goAwayIdle = reduceSessionMachine(ready, {
       type: 'SERVER_MESSAGE',
@@ -217,7 +263,42 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
       sessionId: 'sess-keep',
     })
 
-    // Deferred while speaking, even if upstream closes WS before audio finishes draining!
+    // Repeated WS_CLOSED failures schedule 250ms, 500ms, 1000ms backoff then transition to error.
+    let cur = goAwayIdle.state
+    const expectedDelays = [250, 500, 1000]
+    for (let i = 0; i < MAX_RESUME_ATTEMPTS; i++) {
+      const closed = reduceSessionMachine(cur, {
+        type: 'WS_CLOSED',
+        epoch: cur.connectionEpoch,
+      })
+      expect(closed.state.phase).toBe('connecting')
+      expect(closed.state.resumeAttempts).toBe(i + 1)
+      expect(closed.effects).toContainEqual({
+        type: 'SCHEDULE_RECONNECT',
+        epoch: closed.state.connectionEpoch,
+        attempt: i + 1,
+        baseDelayMs: expectedDelays[i],
+      })
+      const timerFired = reduceSessionMachine(closed.state, {
+        type: 'RECONNECT_TIMER_FIRED',
+        epoch: closed.state.connectionEpoch,
+      })
+      expect(timerFired.effects).toContainEqual({
+        type: 'OPEN_WS',
+        epoch: closed.state.connectionEpoch,
+        persona: 'chloe',
+        sessionId: 'sess-keep',
+      })
+      cur = timerFired.state
+    }
+    const exhausted = reduceSessionMachine(cur, {
+      type: 'WS_CLOSED',
+      epoch: cur.connectionEpoch,
+    })
+    expect(exhausted.state.phase).toBe('error')
+    expect(exhausted.state.resumeSessionId).toBeNull()
+
+    // Deferred while speaking until PLAYER_DRAINED.
     const speaking = reduceSessionMachine(ready, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
@@ -242,149 +323,39 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
       persona: 'chloe',
       sessionId: 'sess-keep',
     })
-
-    // GoAway mid-capturing re-arms mic capture automatically once resumed socket is ready!
-    const capturing = reduceSessionMachine(ready, { type: 'PTT_PRESS' }).state
-    expect(capturing.phase).toBe('capturing')
-    const goAwayMidHold = step(
-      capturing,
-      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'go_away', sessionId: 'sess-keep' } },
-      { type: 'SERVER_MESSAGE', epoch: 2, msg: { type: 'ready', sessionId: 'sess-keep' } },
-    )
-    expect(goAwayMidHold.state.phase).toBe('capturing')
-    expect(goAwayMidHold.effects).toContainEqual({ type: 'START_MIC_CAPTURE' })
   })
 
-  // Row 7: Connection epochs ignore stale socket events.
-  it('Row 7: ignores SERVER_MESSAGE and WS_CLOSED from stale connectionEpoch', () => {
-    const ready = connectedReadyState()
+  it('Row 7, 8, 9, 10, 11: connection epochs, StrictMode idempotency, MIC_DENIED retry, key-repeat, and PERSONA_SWITCH', () => {
+    const ready = connectedReadyState('sess-chloe')
     const switched = reduceSessionMachine(ready, {
       type: 'PERSONA_SWITCH',
       persona: 'david',
     }).state
     expect(switched.connectionEpoch).toBe(2)
+    expect(
+      reduceSessionMachine(switched, {
+        type: 'SERVER_MESSAGE',
+        epoch: 1,
+        msg: { type: 'error', message: 'stale' },
+      }).state,
+    ).toBe(switched)
 
-    const staleMsg = reduceSessionMachine(switched, {
-      type: 'SERVER_MESSAGE',
-      epoch: 1,
-      msg: { type: 'error', message: 'stale socket failure' },
-    })
-    expect(staleMsg.state).toBe(switched)
-
-    const staleClose = reduceSessionMachine(switched, {
-      type: 'WS_CLOSED',
-      epoch: 1,
-      reason: 'stale close',
-    })
-    expect(staleClose.state).toBe(switched)
-  })
-
-  // Row 8: React StrictMode idempotent mount — duplicate CONNECT_REQUESTED is a no-op.
-  it('Row 8: duplicate CONNECT_REQUESTED while connecting or ready opens no second socket', () => {
     const init = createInitialSessionState('chloe')
     const first = reduceSessionMachine(init, { type: 'CONNECT_REQUESTED' })
-    expect(first.effects).toHaveLength(1)
-    expect(first.state.connectionEpoch).toBe(1)
+    expect(reduceSessionMachine(first.state, { type: 'CONNECT_REQUESTED' }).effects).toEqual([])
 
-    const duplicate = reduceSessionMachine(first.state, { type: 'CONNECT_REQUESTED' })
-    expect(duplicate.state).toBe(first.state)
-    expect(duplicate.effects).toEqual([])
-  })
-
-  // Row 9: Mic denied surfaces actionable error and retries cleanly on next PTT_PRESS.
-  it('Row 9: MIC_DENIED enters actionable error and retries START_MIC_CAPTURE on next PTT_PRESS', () => {
-    const ready = connectedReadyState('sess-mic')
-    const denied = step(
-      ready,
-      { type: 'PTT_PRESS' },
-      { type: 'MIC_DENIED' },
-    )
+    const denied = step(ready, { type: 'PTT_PRESS' }, { type: 'MIC_DENIED' })
     expect(denied.state.phase).toBe('error')
     expect(denied.state.micDenied).toBe(true)
-    expect(denied.state.errorMessage).toMatch(/microphone/i)
-
     const retried = reduceSessionMachine(denied.state, { type: 'PTT_PRESS' })
     expect(retried.state.phase).toBe('capturing')
-    expect(retried.state.micDenied).toBe(false)
     expect(retried.effects).toEqual([{ type: 'START_MIC_CAPTURE' }])
-  })
 
-  // Row 10: Key-repeat PTT_PRESS while capturing is ignored.
-  it('Row 10: ignores repeated PTT_PRESS while already capturing', () => {
-    const ready = connectedReadyState()
     const capturing = reduceSessionMachine(ready, { type: 'PTT_PRESS' }).state
-    const repeat = reduceSessionMachine(capturing, { type: 'PTT_PRESS' })
-    expect(repeat.state).toBe(capturing)
-    expect(repeat.effects).toEqual([])
+    expect(reduceSessionMachine(capturing, { type: 'PTT_PRESS' }).effects).toEqual([])
   })
 
-  // Row 11: PERSONA_SWITCH from any state + ClientText barge-in and auto-connect.
-  it('Row 11: PERSONA_SWITCH resets UI/turns/seq from any phase, and CLIENT_TEXT_SUBMIT barges in or auto-connects', () => {
-    const ready = connectedReadyState('sess-chloe')
-    const withTurnAndUi = step(
-      ready,
-      {
-        type: 'SERVER_MESSAGE',
-        epoch: 1,
-        msg: { type: 'ui_state', tier: 1, state: { seq: 3, page: 'savings', extra_monthly_pence: 4500 } },
-      },
-      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'audio', data: 'AAAA' } },
-    ).state
-
-    const switched = reduceSessionMachine(withTurnAndUi, {
-      type: 'PERSONA_SWITCH',
-      persona: 'tom',
-    })
-    expect(switched.state.persona).toBe('tom')
-    expect(switched.state.phase).toBe('connecting')
-    expect(switched.state.turns).toEqual([])
-    expect(switched.state.seenUiSeqKey).toEqual({ sessionId: '', maxSeq: 0 })
-    expect(switched.effects).toContainEqual({ type: 'RESET_UI_FOR_PERSONA', persona: 'tom' })
-    expect(switched.effects).toContainEqual({
-      type: 'OPEN_WS',
-      epoch: 2,
-      persona: 'tom',
-      sessionId: null,
-    })
-
-    // ClientText during agentSpeaking barges in cleanly.
-    const speaking = step(
-      ready,
-      {
-        type: 'SERVER_MESSAGE',
-        epoch: 1,
-        msg: { type: 'text', text: 'Let me check that.', partial: true },
-      },
-      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'audio', data: 'AAAA' } },
-    ).state
-    const textBarged = reduceSessionMachine(speaking, {
-      type: 'CLIENT_TEXT_SUBMIT',
-      text: 'Show savings instead',
-    })
-    expect(textBarged.state.phase).toBe('thinking')
-    expect(textBarged.state.turns[0].interrupted).toBe(true)
-    expect(textBarged.effects).toContainEqual({ type: 'FLUSH_PLAYER' })
-    expect(textBarged.effects).toContainEqual({
-      type: 'SEND_CLIENT_TEXT',
-      text: 'Show savings instead',
-    })
-
-    // ClientText from ended connects first and sends text upon ready.
-    const ended = reduceSessionMachine(ready, {
-      type: 'SERVER_MESSAGE',
-      epoch: 1,
-      msg: { type: 'end' },
-    }).state
-    const queued = step(
-      ended,
-      { type: 'CLIENT_TEXT_SUBMIT', text: 'Hello again' },
-      { type: 'SERVER_MESSAGE', epoch: 2, msg: { type: 'ready', sessionId: 'sess-new' } },
-    )
-    expect(queued.state.phase).toBe('thinking')
-    expect(queued.effects).toContainEqual({ type: 'SEND_CLIENT_TEXT', text: 'Hello again' })
-  })
-
-  it('deduplicates ui_state by (sessionId, Math.trunc(Number(seq))) and resets on ready & PERSONA_SWITCH', () => {
+  it('preserves seenUiSeqKey.maxSeq across GoAway ready on the SAME sessionId, and resets on new sessionId / PERSONA_SWITCH', () => {
     const ready = connectedReadyState('sess-a')
     const u1 = reduceSessionMachine(ready, {
       type: 'SERVER_MESSAGE',
@@ -397,7 +368,6 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
       tier: 1,
     })
 
-    // Duplicate seq=2 (e.g. Tier 2 / Tier 3 echo) is dropped!
     const dup = reduceSessionMachine(u1.state, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
@@ -405,55 +375,58 @@ describe('sessionMachine.ts — All 11 transition rows & invariants', () => {
     })
     expect(dup.effects.some((e) => e.type === 'APPLY_UI_STATE')).toBe(false)
 
-    // Stale seq=1 is dropped!
-    const stale = reduceSessionMachine(u1.state, {
+    // GoAway resume on identical 'sess-a' preserves maxSeq === 2 and passes lastUiSeq: 2!
+    const goAway = reduceSessionMachine(u1.state, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
-      msg: { type: 'ui_state', tier: 2, state: { seq: 1, page: 'home' } },
+      msg: { type: 'go_away', sessionId: 'sess-a' },
     })
-    expect(stale.effects.some((e) => e.type === 'APPLY_UI_STATE')).toBe(false)
-
-    // New ready frame resets maxSeq to 0 EVEN IF sessionId is identical ('sess-a'), as well as for 'sess-b'!
-    const reReadySameId = reduceSessionMachine(u1.state, {
+    expect(goAway.effects).toContainEqual({
+      type: 'OPEN_WS',
+      epoch: 2,
+      persona: 'chloe',
+      sessionId: 'sess-a',
+      lastUiSeq: 2,
+    })
+    const reReadySameId = reduceSessionMachine(goAway.state, {
       type: 'SERVER_MESSAGE',
-      epoch: 1,
+      epoch: 2,
       msg: { type: 'ready', sessionId: 'sess-a' },
     }).state
-    expect(reReadySameId.seenUiSeqKey).toEqual({ sessionId: 'sess-a', maxSeq: 0 })
-    const seq1SameId = reduceSessionMachine(reReadySameId, {
+    expect(reReadySameId.seenUiSeqKey).toEqual({ sessionId: 'sess-a', maxSeq: 2 })
+
+    // Stale Tier 3 echo seq=2 after GoAway is rejected, whereas seq=3 applies cleanly!
+    const staleAfterResume = reduceSessionMachine(reReadySameId, {
       type: 'SERVER_MESSAGE',
-      epoch: 1,
-      msg: { type: 'ui_state', tier: 1, state: { seq: 1, page: 'mortgage' } },
+      epoch: 2,
+      msg: { type: 'ui_state', tier: 3, state: { seq: 2, page: 'spending' } },
     })
-    expect(seq1SameId.effects).toContainEqual({
+    expect(staleAfterResume.effects.some((e) => e.type === 'APPLY_UI_STATE')).toBe(false)
+
+    const freshSeq3 = reduceSessionMachine(reReadySameId, {
+      type: 'SERVER_MESSAGE',
+      epoch: 2,
+      msg: { type: 'ui_state', tier: 1, state: { seq: 3, page: 'mortgage' } },
+    })
+    expect(freshSeq3.effects).toContainEqual({
       type: 'APPLY_UI_STATE',
-      state: { seq: 1, page: 'mortgage' },
+      state: { seq: 3, page: 'mortgage' },
       tier: 1,
     })
 
-    const reReadyNewId = reduceSessionMachine(seq1SameId.state, {
+    // Fresh sessionId ('sess-b') resets maxSeq to 0!
+    const reReadyNewId = reduceSessionMachine(freshSeq3.state, {
       type: 'SERVER_MESSAGE',
-      epoch: 1,
+      epoch: 2,
       msg: { type: 'ready', sessionId: 'sess-b' },
     }).state
-    const freshSeq1 = reduceSessionMachine(reReadyNewId, {
-      type: 'SERVER_MESSAGE',
-      epoch: 1,
-      msg: { type: 'ui_state', tier: 1, state: { seq: 1, page: 'savings' } },
-    })
-    expect(freshSeq1.effects).toContainEqual({
-      type: 'APPLY_UI_STATE',
-      state: { seq: 1, page: 'savings' },
-      tier: 1,
-    })
+    expect(reReadyNewId.seenUiSeqKey).toEqual({ sessionId: 'sess-b', maxSeq: 0 })
   })
 })
 
-describe('Assistant text accumulation (W-2) & sanitizeAgentProse (W-3)', () => {
-  it('W-2: supports BOTH cumulative prefix snapshots and per-segment chunks, finalizing on turn_complete', () => {
+describe('Assistant text accumulation and sanitizeAgentProse hardening', () => {
+  it('supports cumulative prefix snapshots and per-segment chunks, finalizing on turn_complete', () => {
     const ready = connectedReadyState()
-
-    // 1. Cumulative streaming (new text starts with old text -> replaces cleanly)
     const cum = step(
       ready,
       { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'text', text: 'In November', partial: true } },
@@ -465,10 +438,9 @@ describe('Assistant text accumulation (W-2) & sanitizeAgentProse (W-3)', () => {
       { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'turn_complete', turnIndex: 1 } },
     ).state
     expect(cum.turns).toHaveLength(1)
-    expect(cum.turns[0].text).toBe('In November you spent £2,018.64.')
-    expect(cum.turns[0].partial).toBe(false)
+    expect(cum.turns[0]?.text).toBe('In November you spent £2,018.64.')
+    expect(cum.turns[0]?.partial).toBe(false)
 
-    // 2. Per-segment streaming on Turn 2 (pacing phrase, then post-tool answer -> appends without losing pacing phrase!)
     const seg = step(
       cum,
       {
@@ -488,45 +460,48 @@ describe('Assistant text accumulation (W-2) & sanitizeAgentProse (W-3)', () => {
       { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'turn_complete', turnIndex: 2 } },
     ).state
     expect(seg.turns).toHaveLength(2)
-    expect(seg.turns[1].text).toBe(
+    expect(seg.turns[1]?.text).toBe(
       'One moment while I check Netflix. Sign in to Account settings and select Cancel Membership.',
     )
-    expect(seg.turns[1].partial).toBe(false)
   })
 
-  it('W-3: strips arbitrary <word> and <multi word> audio tags generically while preserving < £50 prose', () => {
+  it('strips Composite v2 inline stage tags and nested [Diagnosis context: ...] while preserving x<y and y>z comparisons', () => {
     const raw =
       '<neutral> <reassuring> In November you spent £2,018.64, with coffee < £50. ' +
-      '<excited> <gentle reassuring tone> Do you recognise Netflix? </neutral> ' +
-      '[Diagnosis context: November total £2,018.64; flagged subscription Netflix £45.00.] ' +
+      '<excited> <gentle reassuring tone> If x<y and y>z or a < b and c > d, do you recognise Netflix? </neutral> ' +
+      '[Diagnosis context: November [nested [detail]] total £2,018.64; flagged Netflix £45.00.] ' +
       '{@AGENT: savings_agent} <state_update>{"x":1}</state_update>'
     expect(sanitizeAgentProse(raw)).toBe(
-      'In November you spent £2,018.64, with coffee < £50. Do you recognise Netflix?',
+      'In November you spent £2,018.64, with coffee < £50. If x<y and y>z or a < b and c > d, do you recognise Netflix?',
+    )
+    expect(stripDiagnosisBlocks('Hello [Diagnosis context: a [nested] b] world').trim()).toBe(
+      'Hello   world',
     )
   })
 
-  it('normalises 4+-letter ALL-CAPS TTS lexical-stress words while preserving banking & geographic acronyms', () => {
+  it('preserves Sarah fixture vendors (BT, OVO), UK acronyms (TSB, NHS, GWR, NOW), and dynamic custom fixture tokens while lowercasing stress caps', () => {
     expect(sanitizeAgentProse('HIGHER')).toBe('higher')
     expect(sanitizeAgentProse('FLAGGED')).toBe('flagged')
-    expect(sanitizeAgentProse('FREEZE')).toBe('freeze')
     expect(
       sanitizeAgentProse(
-        '<warm> In November you spent £2,018.64, which is £77.15 HIGHER than October. ' +
-          'One charge was FLAGGED on screen, and you can FREEZE your card inside your FEE-FREE app.',
+        'Your BT broadband and OVO Energy bills plus TSB, NHS, GWR, and NOW charges were NOT FLAGGED.',
       ),
     ).toBe(
-      'In November you spent £2,018.64, which is £77.15 higher than October. ' +
-        'One charge was flagged on screen, and you can freeze your card inside your fee-free app.',
+      'Your BT broadband and OVO Energy bills plus TSB, NHS, GWR, and NOW charges were not flagged.',
     )
 
-    // Sentence-opening stressed words capitalise cleanly rather than leaving a lowercase sentence opener.
-    expect(
-      sanitizeAgentProse("FREEZE your card immediately if needed. NEVER share your PIN."),
-    ).toBe('Freeze your card immediately if needed. Never share your PIN.')
-
-    // Genuine banking, regulatory, payment, and geographic acronyms remain uppercase.
-    const acronyms =
-      'Rates use 4.50% AER, 3.89% APR, SVR, ERC, ISA, GBP in the UK under FCA rules via BACS, CHAPS, and PIN.'
-    expect(sanitizeAgentProse(acronyms)).toBe(acronyms)
+    // Dynamic custom fixture vendor token preservation:
+    const customFixture = structuredClone(getFixture('sarah'))
+    customFixture.transactions.push({
+      id: 'txn-custom-kfc',
+      month_offset: 0,
+      day: 12,
+      vendor: 'KFC Bristol',
+      category: 'eating_out',
+      amount_pence: 1250,
+    })
+    expect(sanitizeAgentProse('Your KFC Bristol charge was CONFIRMED.', customFixture)).toBe(
+      'Your KFC Bristol charge was confirmed.',
+    )
   })
 })

@@ -16,10 +16,12 @@ export interface MonthBucket {
   total_pence: number
 }
 
-function normalizeVendorForms(name: string): { raw: string; stem: string } {
+const UNICODE_ALNUM_OR_SPACE_RE = /[\p{L}\p{N} ]/u
+
+export function normalizeVendorForms(name: string): { raw: string; stem: string } {
   const lowered = name.trim().toLowerCase()
   const rawClean = Array.from(lowered)
-    .filter((ch) => /[a-z0-9 ]/.test(ch))
+    .filter((ch) => UNICODE_ALNUM_OR_SPACE_RE.test(ch))
     .join('')
     .replace(/\s+/g, ' ')
     .trim()
@@ -29,7 +31,7 @@ function normalizeVendorForms(name: string): { raw: string; stem: string } {
     stemSrc = stemSrc.slice(0, -2)
   }
   const stemClean = Array.from(stemSrc)
-    .filter((ch) => /[a-z0-9 ]/.test(ch))
+    .filter((ch) => UNICODE_ALNUM_OR_SPACE_RE.test(ch))
     .join('')
     .replace(/\s+/g, ' ')
     .trim()
@@ -39,7 +41,8 @@ function normalizeVendorForms(name: string): { raw: string; stem: string } {
 
 function containsTokenSequence(txTokens: string[], needleTokens: string[]): boolean {
   if (needleTokens.length === 0 || needleTokens.length > txTokens.length) return false
-  if (needleTokens.length === 1 && needleTokens[0].length < 2 && txTokens.length > 1) {
+  const firstToken = needleTokens[0]
+  if (needleTokens.length === 1 && firstToken !== undefined && firstToken.length < 2 && txTokens.length > 1) {
     return false
   }
   const span = needleTokens.length
@@ -65,7 +68,7 @@ export function vendorsEqual(left: string, right: string): boolean {
 
 /**
  * Match non-income transactions using exact normalised match + contiguous whole-token containment.
- * Identical to Python _match_vendor_rows (S2-1).
+ * Identical to Python `_match_vendor_rows`.
  */
 export function matchVendorRows(
   txns: Transaction[],
