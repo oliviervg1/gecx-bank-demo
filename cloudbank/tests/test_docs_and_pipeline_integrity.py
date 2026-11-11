@@ -227,7 +227,7 @@ def test_docs_backticked_identifiers_and_links_exist_in_non_test_codebase() -> N
         *sorted(DOCS_DIR.rglob("*.md")),
     ]
 
-    ident_re = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{2,})`")
+    ident_re = re.compile(r"`([A-Za-z_][A-Za-z0-9_]{2,})(?:\(\))?`")
     link_re = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 
     unknown_identifiers: list[tuple[str, str]] = []

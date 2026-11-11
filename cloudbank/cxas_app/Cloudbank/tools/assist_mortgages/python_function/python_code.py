@@ -272,7 +272,6 @@ def _dispatch_mortgage(
     anchor_year, anchor_month, anchor_day = _parse_demo_date()
     statement_month = _MONTH_NAMES[anchor_month - 1]
     mortgage = snapshot["mortgage"]
-    # ui_view_state.subview replaces legacy mortgage_state.last_subview; only pending_savings_pivot is stored.
     mortgage_st = dict(context.state.get("mortgage_state") or {})
 
     if mortgage is None:

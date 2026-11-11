@@ -123,9 +123,10 @@ def assist_everyday_banking(
     """
     try:
         everyday = dict(context.state.get("everyday_state") or {})
+        clean_confirmed = (anomaly_confirmed or "").strip()
         clean_switch = (switch_intent or "").strip()
         if clean_switch:
-            return _handle_switch_intent(clean_switch, everyday)
+            return _handle_switch_intent(clean_switch, everyday, clean_confirmed)
 
         snapshot = _normalize_snapshot(context.state.get("customer_snapshot") or {})
         if not snapshot:
@@ -139,7 +140,7 @@ def assist_everyday_banking(
             (category or "").strip(),
             _clean_vendor_input(vendor_name),
             (period or "").strip(),
-            (anomaly_confirmed or "").strip(),
+            clean_confirmed,
         )
     except Exception:
         logger.exception("assist_everyday_banking failed")
@@ -386,13 +387,13 @@ def _dispatch_everyday(
         in ("balance", "overview", "category", "vendor", "trend", "subscriptions")
         and confirmed in ("yes", "no")
         and pending_anom
-        and not (vendor_name and _vendors_equal(vendor_name, pending_anom))
     ):
         deferred_vendor = pending_anom
         deferred_status = "confirmed" if confirmed == "yes" else "unrecognised"
         _set_vendor_anomaly_status(everyday, pending_anom, deferred_status)
         everyday["pending_anomaly_vendor"] = ""
         if deferred_status == "unrecognised":
+            everyday["pending_redirect_offer"] = False
             last_sub = dict(everyday.get("last_discussed_subscription") or {})
             if _vendors_equal(pending_anom, str(last_sub.get("vendor") or "")):
                 everyday["last_discussed_subscription"] = {}
@@ -440,6 +441,13 @@ def _dispatch_everyday(
                     f"I have marked the {deferred_vendor} charge as not recognised on your screen, "
                     "and you can freeze your card in the Profile tab or contact Cloudbank support "
                     f"if you need to raise a formal card dispute. {result['agent_action']}"
+                )
+            }
+        if vendor_name and _vendors_equal(vendor_name, deferred_vendor):
+            return {
+                "agent_action": (
+                    f"Thanks for confirming that {deferred_vendor} charge. "
+                    f"{result['agent_action']}"
                 )
             }
         return {
@@ -557,18 +565,62 @@ def _match_vendor_rows(
     return canonical, matched
 
 
-def _handle_switch_intent(switch_intent: str, everyday: dict[str, Any]) -> dict:
+def _handle_switch_intent(
+    switch_intent: str, everyday: dict[str, Any], confirmed: str = ""
+) -> dict:
     """Handle local navigation, capabilities, farewell, or cross-spoke pivots."""
     if switch_intent == "FAREWELL":
         context.state["everyday_state"] = {}
         return _farewell_response()
+
+    pending_anom = str(everyday.get("pending_anomaly_vendor") or "")
+    resolved_on_switch = ""
+    if (
+        confirmed in ("yes", "no")
+        and pending_anom
+        and switch_intent
+        in (
+            "NAVIGATE_HOME",
+            "NAVIGATE_PROFILE",
+            "CAPABILITIES",
+            "SAVINGS",
+            "MORTGAGES",
+        )
+    ):
+        resolved_on_switch = "confirmed" if confirmed == "yes" else "unrecognised"
+        _set_vendor_anomaly_status(everyday, pending_anom, resolved_on_switch)
+        everyday["pending_anomaly_vendor"] = ""
+        if resolved_on_switch == "unrecognised":
+            everyday["pending_redirect_offer"] = False
+            last_sub = dict(everyday.get("last_discussed_subscription") or {})
+            if _vendors_equal(pending_anom, str(last_sub.get("vendor") or "")):
+                everyday["last_discussed_subscription"] = {}
+        context.state["everyday_state"] = everyday
 
     if switch_intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES"):
         if switch_intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE"):
             everyday["pending_anomaly_vendor"] = ""
             everyday["pending_redirect_offer"] = False
             context.state["everyday_state"] = everyday
-        return _shared_navigation_response(switch_intent)
+        nav_resp = _shared_navigation_response(switch_intent)
+        if resolved_on_switch and switch_intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE"):
+            by_vendor = everyday.get("anomaly_by_vendor")
+            if isinstance(by_vendor, dict) and by_vendor:
+                current_ui = dict(context.state.get("ui_view_state") or {})
+                current_ui["anomaly_by_vendor"] = {
+                    str(k): str(v)
+                    for k, v in by_vendor.items()
+                    if v in ("confirmed", "unrecognised")
+                }
+                context.state["ui_view_state"] = current_ui
+        if resolved_on_switch == "unrecognised":
+            return {
+                "agent_action": (
+                    f"I have marked the {pending_anom} charge as not recognised on your screen. "
+                    f"{nav_resp['agent_action']}"
+                )
+            }
+        return nav_resp
 
     if switch_intent in ("SAVINGS", "MORTGAGES"):
         target = "savings_agent" if switch_intent == "SAVINGS" else "mortgage_agent"
@@ -592,6 +644,13 @@ def _stage_spoke_pivot(
     last_sub = dict(everyday.get("last_discussed_subscription") or {})
     sub_vendor = str(last_sub.get("vendor") or "")
     freed_pence = int(last_sub.get("monthly_pence") or 0)
+    if (
+        sub_vendor
+        and _get_vendor_anomaly_status(everyday, sub_vendor) == "unrecognised"
+    ):
+        sub_vendor = ""
+        freed_pence = 0
+        everyday["last_discussed_subscription"] = {}
 
     context.state["handoff_context"] = (
         {
@@ -1444,7 +1503,11 @@ def _handle_vendor(
     period_rows = [t for t in matched if t["month_offset"] == offset]
     period_total = sum(t["amount_pence"] for t in period_rows)
 
-    if any(t["category"] == "subscriptions" for t in matched) and period_total > 0:
+    if (
+        any(t["category"] == "subscriptions" for t in matched)
+        and period_total > 0
+        and _get_vendor_anomaly_status(everyday, canonical) != "unrecognised"
+    ):
         everyday["last_discussed_subscription"] = {
             "vendor": canonical,
             "monthly_pence": period_total,
@@ -1590,10 +1653,14 @@ def _handle_subscriptions(
     total_pence = sum(t["amount_pence"] for t in subs)
 
     non_bill_subs = [t for t in subs if t["category"] == "subscriptions"]
-    highlight = ""
-    if non_bill_subs:
-        lead_sub = non_bill_subs[0]
-        highlight = lead_sub["vendor"]
+    highlight = non_bill_subs[0]["vendor"] if non_bill_subs else ""
+    redirectable_subs = [
+        t
+        for t in non_bill_subs
+        if _get_vendor_anomaly_status(everyday, t["vendor"]) != "unrecognised"
+    ]
+    if redirectable_subs:
+        lead_sub = redirectable_subs[0]
         everyday["last_discussed_subscription"] = {
             "vendor": lead_sub["vendor"],
             "monthly_pence": lead_sub["amount_pence"],

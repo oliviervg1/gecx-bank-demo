@@ -93,7 +93,7 @@ All `OBJECT` variables declare `{"type": "OBJECT", "required": []}` with no `pro
 | `ui_emitted_seq` | `STRING` | `capture_utterance`, `release_line` | `capture_utterance`, `release_line` | Highest `ui_view_state.seq` emitted on the session (`"0"` initial). |
 | `unclear_count` | `STRING` | All 4 controllers | All 4 controllers | Shared 2-strike counter (`"0"` / `"1"`, resets to `"0"` and clears pending flags on Strike 2 without hanging up). |
 | `everyday_state` | `OBJECT` | `assist_everyday_banking` | `assist_everyday_banking` | Tracks `pending_anomaly_vendor`, `anomaly_by_vendor`, `pending_redirect_offer`, `last_discussed_subscription`. |
-| `mortgage_state` | `OBJECT` | `assist_mortgages` | `assist_mortgages` | Tracks `last_subview`, `monthly_overpayment_pence`, `lump_sum_overpayment_pence`, `pending_savings_pivot`. |
+| `mortgage_state` | `OBJECT` | `assist_mortgages` | `assist_mortgages` | Tracks `pending_savings_pivot` for renter deposit-timeline follow-up turns. |
 | `pass_turn_id` / `pass_count` | `STRING` | `capture_utterance` | `capture_utterance`, Controllers | Per-invocation loop guard (`_MAX_PASSES = 8`). |
 | `call_complete` | `STRING` | All 4 controllers, callbacks | `capture_utterance`, `release_line` | `""` -> `"true"` (farewell staged) -> `"released"` (`end_session` emitted). |
 | `escalation_reason` | `STRING` | Controllers, callbacks | `capture_utterance`, `release_line` | Reason attached to `Part.from_end_session` (e.g. `CALL_COMPLETED`). |

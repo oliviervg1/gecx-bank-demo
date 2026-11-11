@@ -1,6 +1,6 @@
 # Python Controller Specifications
 
-Every agent in Cloudbank exposes one deterministic Python controller tool. Controllers own all `customer_snapshot` normalisation, exact integer-pence and basis-point math, monotonic `ui_view_state` screen updates, 2-strike unclear recovery, and silent cross-agent routing via `context.state["target_agent"]`. Shared pure helpers (`_parse_demo_date`, `_emit_ui_view`, `_format_gbp`, `_format_bps`, `_half_up`, `_to_pence`, `_capabilities_message`, `_handle_switch_intent`) live in `cloudbank/cxas_shared/controller_common.py` and are spliced byte-identically into all four controllers by `cloudbank/scripts/sync_shared.py`.
+Every agent in Cloudbank exposes one deterministic Python controller tool. Controllers own all `customer_snapshot` normalisation, exact integer-pence and basis-point math, monotonic `ui_view_state` screen updates, 2-strike unclear recovery, and silent cross-agent routing via `context.state["target_agent"]`. Shared pure helpers (`_parse_demo_date`, `_emit_ui_view`, `_format_gbp`, `_format_bps`, `_half_up`, `_to_pence`, `_capabilities_message`, `_farewell_response`, `_shared_navigation_response`, `_increment_unclear`, `_unclear_reset_home_response`) live in `cloudbank/cxas_shared/controller_common.py` and are spliced byte-identically into all four controllers by `cloudbank/scripts/sync_shared.py`.
 
 ## Controller Progression Across a Multi-Product Session
 

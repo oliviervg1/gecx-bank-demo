@@ -290,6 +290,110 @@ def test_resolved_anomaly_persists_per_vendor_and_disputed_charge_never_hands_of
     assert state["handoff_context"] == {}
 
 
+def test_same_vendor_dispute_vendor_revisit_and_switch_intent_anomaly_confirmed(
+    struct_fixtures: dict[str, dict[str, Any]],
+    ui_view_state_schema: dict[str, Any],
+) -> None:
+    """Verify same-vendor anomaly_confirmed, disputed _handle_vendor guard, and switch_intent anomaly_confirmed."""
+    # 1a. Same-vendor query_type='vendor' + vendor_name='Netflix' + anomaly_confirmed='no'
+    state_no = make_seeded_state("chloe", struct_fixtures)
+    e_no = load_controller_namespace("assist_everyday_banking", state_no)
+    e_no["assist_everyday_banking"](query_type="overview")
+    assert state_no["everyday_state"]["pending_anomaly_vendor"] == "Netflix"
+
+    same_no = e_no["assist_everyday_banking"](
+        query_type="vendor",
+        vendor_name="Netflix",
+        period="this_month",
+        anomaly_confirmed="no",
+    )
+    same_no_txt = _assert_envelope_and_ui(same_no, state_no, ui_view_state_schema)
+    assert "marked the Netflix charge as not recognised" in same_no_txt
+    assert "freeze your card in the Profile tab" in same_no_txt
+    assert "At Netflix, you spent £45 across 1 payment" in same_no_txt
+    assert state_no["everyday_state"]["pending_anomaly_vendor"] == ""
+    assert state_no["everyday_state"]["anomaly_by_vendor"] == {
+        "Netflix": "unrecognised"
+    }
+    assert state_no["everyday_state"]["last_discussed_subscription"] == {}
+    assert state_no["ui_view_state"]["anomaly_by_vendor"] == {
+        "Netflix": "unrecognised"
+    }
+
+    # 1b. Revisiting a disputed vendor via _handle_vendor MUST NOT re-arm last_discussed_subscription
+    revisit = e_no["assist_everyday_banking"](
+        query_type="vendor", vendor_name="Netflix", period="this_month"
+    )
+    _assert_envelope_and_ui(revisit, state_no, ui_view_state_schema)
+    assert state_no["everyday_state"]["last_discussed_subscription"] == {}
+
+    # Even if stale last_discussed_subscription existed, _stage_spoke_pivot blocks disputed handoff
+    state_no["everyday_state"]["last_discussed_subscription"] = {
+        "vendor": "Netflix",
+        "monthly_pence": 4500,
+    }
+    piv_blocked = e_no["assist_everyday_banking"](switch_intent="SAVINGS")
+    piv_blocked_txt = _assert_envelope_and_ui(
+        piv_blocked, state_no, ui_view_state_schema
+    )
+    assert "Netflix" not in piv_blocked_txt
+    assert state_no["handoff_context"] == {}
+    assert state_no["everyday_state"]["last_discussed_subscription"] == {}
+
+    # 1c. Same-vendor query_type='vendor' + vendor_name='Netflix' + anomaly_confirmed='yes'
+    state_yes = make_seeded_state("chloe", struct_fixtures)
+    e_yes = load_controller_namespace("assist_everyday_banking", state_yes)
+    e_yes["assist_everyday_banking"](query_type="overview")
+    same_yes = e_yes["assist_everyday_banking"](
+        query_type="vendor",
+        vendor_name="Netflix",
+        period="this_month",
+        anomaly_confirmed="yes",
+    )
+    same_yes_txt = _assert_envelope_and_ui(same_yes, state_yes, ui_view_state_schema)
+    assert "Thanks for confirming that Netflix charge." in same_yes_txt
+    assert "we can come back to Netflix" not in same_yes_txt
+    assert "At Netflix, you spent £45 across 1 payment" in same_yes_txt
+    assert state_yes["everyday_state"]["anomaly_by_vendor"] == {"Netflix": "confirmed"}
+    assert state_yes["everyday_state"]["pending_anomaly_vendor"] == ""
+
+    # 1d. switch_intent='NAVIGATE_PROFILE' + anomaly_confirmed='no' records unrecognised & emits anomaly_by_vendor
+    state_prof = make_seeded_state("chloe", struct_fixtures)
+    e_prof = load_controller_namespace("assist_everyday_banking", state_prof)
+    e_prof["assist_everyday_banking"](query_type="overview")
+    prof_resp = e_prof["assist_everyday_banking"](
+        switch_intent="NAVIGATE_PROFILE", anomaly_confirmed="no"
+    )
+    prof_txt = _assert_envelope_and_ui(prof_resp, state_prof, ui_view_state_schema)
+    assert "marked the Netflix charge as not recognised" in prof_txt
+    assert "Profile page" in prof_txt
+    assert state_prof["everyday_state"]["anomaly_by_vendor"] == {
+        "Netflix": "unrecognised"
+    }
+    assert state_prof["everyday_state"]["last_discussed_subscription"] == {}
+    assert state_prof["ui_view_state"] == {
+        "seq": 2,
+        "page": "profile",
+        "anomaly_by_vendor": {"Netflix": "unrecognised"},
+    }
+
+    # 1e. switch_intent='SAVINGS' + anomaly_confirmed='no' records unrecognised and blocks £45 handoff
+    state_sav = make_seeded_state("chloe", struct_fixtures)
+    e_sav = load_controller_namespace("assist_everyday_banking", state_sav)
+    e_sav["assist_everyday_banking"](query_type="overview")
+    sav_piv = e_sav["assist_everyday_banking"](
+        switch_intent="SAVINGS", anomaly_confirmed="no"
+    )
+    sav_piv_txt = _assert_envelope_and_ui(sav_piv, state_sav, ui_view_state_schema)
+    assert "Netflix" not in sav_piv_txt
+    assert state_sav["everyday_state"]["anomaly_by_vendor"] == {
+        "Netflix": "unrecognised"
+    }
+    assert state_sav["everyday_state"]["last_discussed_subscription"] == {}
+    assert state_sav["handoff_context"] == {}
+    assert state_sav["target_agent"] == "savings_agent"
+
+
 def test_non_subscription_anomaly_uses_category_aware_copy(
     struct_fixtures: dict[str, dict[str, Any]],
     ui_view_state_schema: dict[str, Any],

@@ -88,7 +88,7 @@ def assist_mortgages(
 | `handoff_context` | Read / Write | Preserved across `switch_intent` hops; consumed for default monthly overpayment and cleared to `{}` on local turns. |
 | `demo_date` / `first_name` | Read | Resolves clamped next monthly payment date and personalises farewells. |
 | `pass_count` | Read | Bounds cross-spoke pivots (`int(pass_count) > 4` stops ping-pong loops). |
-| `mortgage_state` | Read / Write | Tracks `last_subview`, `monthly_overpayment_pence`, `lump_sum_overpayment_pence`, and `pending_savings_pivot`. |
+| `mortgage_state` | Read / Write | Tracks `pending_savings_pivot` for renter deposit-timeline follow-up turns. |
 | `ui_view_state` | Read / Write | Emits `{page: "mortgage", subview, monthly_overpayment_pence?, lump_sum_overpayment_pence?}` (or `home`/`profile`). |
 | `target_agent` | Write | Stages `everyday_banking_agent` or `savings_agent` on cross-spoke pivots. |
 | `unclear_count` | Read / Write | Shared 2-strike non-terminating unclear counter (incremented on unmatched pending turns as well). |
