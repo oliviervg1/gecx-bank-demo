@@ -74,12 +74,72 @@ function buildSandboxedSuggestionDoc(htmlSnippet: string): string {
   ].join('')
 }
 
+const GENERIC_DOMAIN_PARTS = new Set([
+  'com',
+  'co',
+  'uk',
+  'org',
+  'net',
+  'gov',
+  'help',
+  'support',
+  'www',
+  'app',
+])
+
+const VIDEO_HOSTS = new Set(['youtube.com', 'm.youtube.com', 'youtu.be'])
+
+export function selectTopCitations(
+  citations: Array<Record<string, unknown>>,
+  turnText: string,
+): Array<{ href: string; label: string }> {
+  const turnWords = new Set(turnText.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])
+  const candidates: Array<{ href: string; label: string; domain: string; rank: number; idx: number }> = []
+
+  citations.forEach((cit, idx) => {
+    const rawHref = cit.uri ?? cit.url
+    if (!isSafeHttpUrl(rawHref)) return
+    const parsed = new URL(rawHref)
+    const domain = parsed.hostname.toLowerCase().replace(/^www\./, '')
+    const domainTokens = domain
+      .split('.')
+      .filter((part) => part.length >= 3 && !GENERIC_DOMAIN_PARTS.has(part))
+    const matchesVendor = domainTokens.some((tok) => turnWords.has(tok))
+    const isVideo = VIDEO_HOSTS.has(domain)
+    const rank = matchesVendor ? 0 : isVideo ? 2 : 1
+    candidates.push({
+      href: rawHref,
+      label: String(cit.title || domain),
+      domain,
+      rank,
+      idx,
+    })
+  })
+
+  candidates.sort((a, b) => (a.rank !== b.rank ? a.rank - b.rank : a.idx - b.idx))
+
+  const seenDomains = new Set<string>()
+  const picked: Array<{ href: string; label: string }> = []
+  for (const cand of candidates) {
+    if (seenDomains.has(cand.domain)) continue
+    seenDomains.add(cand.domain)
+    picked.push({ href: cand.href, label: cand.label })
+    if (picked.length >= 3) break
+  }
+  return picked
+}
+
 function SearchSuggestionsBlock({
   suggestions,
+  turnText,
 }: {
   suggestions: ServerSearchSuggestionsMsg
+  turnText: string
 }) {
-  const safeCitations = suggestions.citations.filter((c) => isSafeHttpUrl(c.uri ?? c.url))
+  const safeCitations = useMemo(
+    () => selectTopCitations(suggestions.citations, turnText),
+    [suggestions.citations, turnText],
+  )
   const fallbackQueries =
     suggestions.htmls.length === 0 ? suggestions.webSearchQueries : []
 
@@ -111,22 +171,18 @@ function SearchSuggestionsBlock({
             </a>
           ))}
 
-          {safeCitations.map((cit, idx) => {
-            const href = String(cit.uri ?? cit.url)
-            const label = String(cit.title ?? href)
-            return (
-              <a
-                key={`cit-${idx}-${href}`}
-                href={href}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-divider bg-white text-[12px] font-medium text-brand-green hover:underline"
-              >
-                <span className="truncate max-w-[220px]">{label}</span>
-                <ExternalLink size={11} />
-              </a>
-            )
-          })}
+          {safeCitations.map((cit, idx) => (
+            <a
+              key={`cit-${idx}-${cit.href}`}
+              href={cit.href}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-divider bg-white text-[12px] font-medium text-brand-green hover:underline"
+            >
+              <span className="truncate max-w-[220px]">{cit.label}</span>
+              <ExternalLink size={11} />
+            </a>
+          ))}
         </div>
       )}
     </div>
@@ -338,7 +394,10 @@ export function ConciergePanel() {
 
                 {turn.searchSuggestions && (
                   <div className="w-full max-w-[88%]">
-                    <SearchSuggestionsBlock suggestions={turn.searchSuggestions} />
+                    <SearchSuggestionsBlock
+                      suggestions={turn.searchSuggestions}
+                      turnText={turn.text}
+                    />
                   </div>
                 )}
               </div>

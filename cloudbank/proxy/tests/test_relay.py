@@ -266,7 +266,10 @@ async def test_three_tier_ui_state_extraction_float_seq_coercion_and_session_res
                             {
                                 "chunks": [
                                     {
-                                        "agent_transfer": {"targetAgent": "savings_agent"},
+                                        "agent_transfer": {
+                                            "targetAgent": "savings_agent",
+                                            "internalDebug": "secret-not-forwarded",
+                                        },
                                         "tool_call": {"displayName": "assist_savings"},
                                         "tool_response": {"displayName": "assist_savings"},
                                         "updated_variables": {
@@ -491,16 +494,68 @@ async def test_f4_1_held_end_session_flushed_even_when_upstream_drops_with_conne
 
 
 @pytest.mark.asyncio
-async def test_emits_server_end_from_diagnostic_info_end_session_tool_call(
+async def test_emits_server_end_from_diagnostic_tool_call_signal_alone(
     fake_upstream: FakeUpstream,
 ) -> None:
-    """Matches live BidiRunSession wire behaviour when release_line appends Part.from_end_session."""
+    """T7-1a: toolCall displayName=='end_session' alone triggers ServerEnd on turnCompleted."""
     browser = FakeBrowser()
     relay = Relay(
         browser=browser,
         upstream=fake_upstream,
         app_resource="apps/x",
-        session_id="sess-diag-end",
+        session_id="sess-diag-tc-only",
+    )
+    task = asyncio.create_task(
+        relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+    )
+    try:
+        chunk = base64.b64encode(b"farewell-pcm").decode("ascii")
+        await fake_upstream.inject({"sessionOutput": {"audio": chunk, "turnIndex": 1}})
+        await fake_upstream.inject(
+            {
+                "sessionOutput": {
+                    "turnCompleted": True,
+                    "turnIndex": 1,
+                    "diagnosticInfo": {
+                        "messages": [
+                            {
+                                "role": "mortgage_agent",
+                                "chunks": [
+                                    {
+                                        "toolCall": {
+                                            "displayName": "end_session",
+                                            "tool": "apps/x/tools/end_session",
+                                        }
+                                    },
+                                ],
+                            }
+                        ]
+                    },
+                }
+            }
+        )
+        await asyncio.sleep(0.05)
+
+        msgs = browser.parsed_messages()
+        assert [m["type"] for m in msgs] == ["ready", "audio", "turn_complete", "end"]
+        assert relay.ended_cleanly is True
+    finally:
+        await browser.close()
+        await fake_upstream.close()
+        await task
+
+
+@pytest.mark.asyncio
+async def test_emits_server_end_from_diagnostic_call_complete_released_signal_alone(
+    fake_upstream: FakeUpstream,
+) -> None:
+    """T7-1b: updatedVariables call_complete=='released' alone triggers ServerEnd on turnCompleted."""
+    browser = FakeBrowser()
+    relay = Relay(
+        browser=browser,
+        upstream=fake_upstream,
+        app_resource="apps/x",
+        session_id="sess-diag-var-only",
     )
     task = asyncio.create_task(
         relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
@@ -519,16 +574,6 @@ async def test_emits_server_end_from_diagnostic_info_end_session_tool_call(
                                 "role": "mortgage_agent",
                                 "chunks": [
                                     {"updatedVariables": {"call_complete": "released"}},
-                                    {
-                                        "toolCall": {
-                                            "displayName": "end_session",
-                                            "tool": "apps/x/tools/end_session",
-                                            "args": {
-                                                "reason": "CALL_COMPLETED",
-                                                "session_escalated": False,
-                                            },
-                                        }
-                                    },
                                 ],
                             }
                         ]

@@ -375,18 +375,93 @@ def test_everyday_and_mortgage_remaining_branches_and_search_resilience(
     """Verify balance, trend, subscriptions, search fallbacks, and local navigation across controllers."""
     state = make_seeded_state("chloe", struct_fixtures)
 
-    # Dict search_help with bracket characters sanitized before [Diagnosis context: ...]
+    # QrsGoogleSearchTool snippets shape: prefers vendor domain, skips YouTube, sanitizes brackets, and caps at 600 chars
     resp_obj_ns = load_controller_namespace(
         "assist_everyday_banking",
         state,
         search_handler=lambda inp: {
-            "answer": ["Open Account [Settings] and click Cancel."]
+            "search_query": inp["query"],
+            "snippets": [
+                {
+                    "url": "https://www.youtube.com/watch?v=123",
+                    "title": "YouTube tutorial",
+                    "text": "Watch video tutorial.",
+                },
+                {
+                    "url": "https://subsorted.co.uk/spotify",
+                    "title": "SubSorted guide",
+                    "text": "General UK guide.",
+                },
+                {
+                    "url": "https://support.spotify.com/uk/article/close-account/",
+                    "title": "Spotify Support",
+                    "text": "Open Account [Settings] and click Cancel.",
+                },
+            ],
         },
     )
     ok_res = resp_obj_ns["assist_everyday_banking"](
         query_type="cancel_subscription", vendor_name="Spotify"
     )
-    assert "[Diagnosis context: Open Account (Settings) and click Cancel.]" in ok_res["agent_action"]
+    assert "Watch video tutorial" not in ok_res["agent_action"]
+    assert (
+        "[Diagnosis context: Open Account (Settings) and click Cancel. General UK guide.]"
+        in ok_res["agent_action"]
+    )
+
+    # Live CXAS ExternalResponse wrapper (.ok / .text / .json()) is unwrapped identically to dict
+    class _FakeExternalResponse:
+        ok = True
+        text = '{"snippets":[{"url":"https://help.netflix.com/en/node/407","text":"Go to Manage your membership and click Cancel."}]}'
+
+        def json(self) -> dict[str, Any]:
+            return {
+                "search_query": "how to cancel Netflix subscription UK",
+                "snippets": [
+                    {
+                        "url": "https://help.netflix.com/en/node/407",
+                        "title": "How to cancel - Netflix Help Center",
+                        "text": "Go to Manage your membership and click Cancel.",
+                    }
+                ],
+            }
+
+    ext_ns = load_controller_namespace(
+        "assist_everyday_banking",
+        state,
+        search_handler=lambda _inp: _FakeExternalResponse(),
+    )
+    ext_res = ext_ns["assist_everyday_banking"](
+        query_type="cancel_subscription", vendor_name="Netflix"
+    )
+    assert (
+        "[Diagnosis context: Go to Manage your membership and click Cancel.]"
+        in ext_res["agent_action"]
+    )
+
+    # T7-5: Long search snippet is capped at _MAX_DIAGNOSIS_CHARS (600)
+    long_text = "Step " * 200  # 1,000 chars
+    cap_ns = load_controller_namespace(
+        "assist_everyday_banking",
+        state,
+        search_handler=lambda _inp: {
+            "search_query": "cancel Spotify",
+            "snippets": [{"url": "https://support.spotify.com/cancel", "text": long_text}],
+        },
+    )
+    capped_res = cap_ns["assist_everyday_banking"](
+        query_type="cancel_subscription", vendor_name="Spotify"
+    )
+    diag_body = capped_res["agent_action"].split("[Diagnosis context: ", 1)[1].rstrip("]")
+    assert len(diag_body) == 600
+
+    # Non-masking snapshot check: missing required balance_pence yields graceful apology rather than "£0"
+    broken_state = make_seeded_state("chloe", struct_fixtures)
+    del broken_state["customer_snapshot"]["accounts"]["current"]["balance_pence"]
+    broken_ns = load_controller_namespace("assist_everyday_banking", broken_state)
+    broken_res = broken_ns["assist_everyday_banking"](query_type="balance")
+    assert "temporary issue checking your account details" in broken_res["agent_action"]
+    assert "£0" not in broken_res["agent_action"]
 
     # Exception / error fallback in search_help
     def _boom(_inp: dict[str, Any]) -> None:

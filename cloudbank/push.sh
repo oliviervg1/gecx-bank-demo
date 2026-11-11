@@ -52,15 +52,31 @@ while [ $# -gt 0 ]; do
     --create-version)
       CREATE_VERSION="true"
       shift
-      if [ $# -gt 0 ] && [[ "$1" != -* ]] && [ "$TARGET" = "prod" ] && [ -z "$VERSION_NAME" ]; then
-        VERSION_NAME="$1"
-        shift
+      if [ $# -gt 0 ] && [[ "$1" != -* ]] && [ -z "$VERSION_NAME" ]; then
+        case "$1" in
+          prod|production|dev)
+            ;;
+          *)
+            VERSION_NAME="$1"
+            shift
+            ;;
+        esac
       fi
       ;;
     --create-version=*)
       CREATE_VERSION="true"
       VERSION_NAME="${1#*=}"
+      case "$VERSION_NAME" in
+        ""|prod|production|dev)
+          echo "error: invalid version name '$VERSION_NAME'" >&2
+          exit 1
+          ;;
+      esac
       shift
+      ;;
+    -*)
+      echo "error: unknown option: $1" >&2
+      exit 1
       ;;
     *)
       TARGET="$1"

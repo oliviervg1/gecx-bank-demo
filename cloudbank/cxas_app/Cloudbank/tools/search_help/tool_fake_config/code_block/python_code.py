@@ -6,12 +6,20 @@ def fake_tool_call(
     input: dict[str, Any],
     callback_context: CallbackContext,
 ) -> Optional[dict[str, Any]]:
-    """Deterministic fake search response for NAIVE goldens and simulations."""
+    """Deterministic fake QrsGoogleSearchTool response for NAIVE goldens and simulations."""
     del tool, callback_context
-    query = str((input or {}).get("query") or "").strip()
+    query = str((input or {}).get("query") or "").strip() or "how to cancel subscription UK"
     return {
-        "answer": [
-            "Sign in to your account page in the provider's app or website, open Membership and Billing, and select Cancel Membership. Your subscription remains active until the end of the current billing period."
+        "search_query": query,
+        "snippets": [
+            {
+                "url": "https://help.netflix.com/en/node/407",
+                "title": "How to cancel - Help Centre",
+                "text": (
+                    "Sign in to your account page in the provider's app or website, "
+                    "open Membership and Billing, and select Cancel Membership. "
+                    "Your subscription remains active until the end of the current billing period."
+                ),
+            }
         ],
-        "search_queries": [query or "how to cancel subscription UK"],
     }

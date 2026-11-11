@@ -257,6 +257,44 @@ def test_push_sh_pipeline_order_and_no_push_eval() -> None:
     )
 
 
+def test_push_sh_argument_order_and_target_parsing(tmp_path: Path) -> None:
+    """F7-3: push.sh parses TARGET and --create-version cleanly in any argument order."""
+    work = tmp_path / "cb"
+    work.mkdir()
+    (work / "push.sh").write_text((CLOUDBANK_ROOT / "push.sh").read_text(encoding="utf-8"), encoding="utf-8")
+    (work / "gecx-config.json").write_text(
+        json.dumps({"gcp_project_id": "test-p", "location": "eu", "deployed_app_id": "app-1"}),
+        encoding="utf-8",
+    )
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    uv_log = tmp_path / "uv_calls.log"
+    fake_uv = bin_dir / "uv"
+    fake_uv.write_text(
+        f"#!/usr/bin/env bash\necho \"$*\" >> {uv_log}\n",
+        encoding="utf-8",
+    )
+    fake_uv.chmod(0o755)
+    env = {**os.environ, "PATH": f"{bin_dir}:{os.environ.get('PATH', '')}"}
+
+    # Case 1: ./push.sh dev --create-version v1 -> target='dev', version='v1'
+    uv_log.write_text("", encoding="utf-8")
+    r1 = subprocess.run(["bash", str(work / "push.sh"), "dev", "--create-version", "v1"], env=env, capture_output=True, text=True)
+    assert r1.returncode == 0, r1.stderr
+    calls1 = uv_log.read_text(encoding="utf-8").splitlines()
+    assert any("manage_ces_app.py --config gecx-config.json push dev" in c for c in calls1)
+    assert any("run_golden_evals.py --config gecx-config.json sync dev" in c for c in calls1)
+    assert any("manage_ces_app.py --config gecx-config.json create-version v1  dev" in c for c in calls1)
+
+    # Case 2: ./push.sh --create-version dev -> target='dev', auto-timestamped version (never version='dev'!)
+    uv_log.write_text("", encoding="utf-8")
+    r2 = subprocess.run(["bash", str(work / "push.sh"), "--create-version", "dev"], env=env, capture_output=True, text=True)
+    assert r2.returncode == 0, r2.stderr
+    calls2 = uv_log.read_text(encoding="utf-8").splitlines()
+    assert any("manage_ces_app.py --config gecx-config.json push dev" in c for c in calls2)
+    assert any("create-version v-" in c and c.endswith(" dev") for c in calls2)
+
+
 def test_push_hooks_gate_manage_ces_app_push_subcommand(tmp_path: Path) -> None:
     """Both pre-agent-push.sh and pre-agent-push-lint.sh intercept manage_ces_app.py push."""
     push_hook = HOOKS_DIR / "pre-agent-push.sh"
@@ -347,15 +385,41 @@ def test_push_hooks_gate_manage_ces_app_push_subcommand(tmp_path: Path) -> None:
             )
             assert res.returncode == 0, f"{hook.name} false-triggered on {safe_cmd!r}: {res.stderr}"
 
-    # Whereas actually invoking ./push.sh in command position IS intercepted!
-    exec_push_payload = json.dumps({"tool_input": {"command": "cd cloudbank && ./push.sh"}})
-    exec_res = subprocess.run(
-        ["bash", str(lint_hook)],
-        input=exec_push_payload,
-        capture_output=True,
-        text=True,
-        cwd=REPO_ROOT,
-        env=env,
-    )
-    assert exec_res.returncode == 2
-    assert "LINT BLOCKED" in exec_res.stderr
+    # Whereas actually invoking push in any shell wrapper, multi-line, subshell, or timeout form IS intercepted!
+    for exec_cmd in (
+        "cd cloudbank && ./push.sh",
+        "cd cloudbank\n./push.sh",
+        "timeout 900 ./cloudbank/push.sh",
+        "sudo ./cloudbank/push.sh",
+        "exec ./cloudbank/push.sh",
+        "source ./cloudbank/push.sh",
+        "if true; then ./cloudbank/push.sh; fi",
+        "echo ./cloudbank/push.sh | xargs bash",
+        "`./cloudbank/push.sh`",
+        'echo "$(cd cloudbank && ./push.sh)"',
+        "npx cxas push",
+    ):
+        exec_push_payload = json.dumps({"tool_input": {"command": exec_cmd}})
+        exec_res = subprocess.run(
+            ["bash", str(lint_hook)],
+            input=exec_push_payload,
+            capture_output=True,
+            text=True,
+            cwd=REPO_ROOT,
+            env=env,
+        )
+        assert exec_res.returncode == 2, f"lint_hook missed {exec_cmd!r}"
+        assert "LINT BLOCKED" in exec_res.stderr
+
+        # Also verify wrong-project guard in pre-agent-push.sh catches multi-line & timeout forms!
+        wrong_target_cmd = (
+            f"{exec_cmd} --to projects/wrong-proj/locations/eu/apps/00000000-0000-0000-0000-000000000000"
+        )
+        wrong_res = subprocess.run(
+            ["bash", str(push_hook)],
+            input=json.dumps({"tool_input": {"command": wrong_target_cmd}}),
+            capture_output=True,
+            text=True,
+            cwd=CLOUDBANK_ROOT,
+        )
+        assert wrong_res.returncode == 2, f"push_hook missed {wrong_target_cmd!r}"
