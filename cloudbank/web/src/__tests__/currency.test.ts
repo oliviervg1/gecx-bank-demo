@@ -1,25 +1,26 @@
 import { describe, it, expect } from 'vitest'
-import { formatGBP } from '../util/currency'
+import { formatBps, formatGBP, formatGBPFromPence, formatPence } from '../util/currency'
 
-describe('formatGBP', () => {
-  it('formats whole pounds with two decimal places', () => {
-    expect(formatGBP(0)).toBe('0.00')
-    expect(formatGBP(5)).toBe('5.00')
-    expect(formatGBP(45)).toBe('45.00')
+describe('currency & basis-point formatters', () => {
+  it('formats integer pence without floating-point drift', () => {
+    expect(formatPence(0)).toBe('0.00')
+    expect(formatPence(500)).toBe('5.00')
+    expect(formatPence(4500)).toBe('45.00')
+    expect(formatPence(201864)).toBe('2,018.64')
+    expect(formatPence(21450000)).toBe('214,500.00')
+    expect(formatGBPFromPence(425075)).toBe('£4,250.75')
+    expect(formatGBPFromPence(-3454)).toBe('-£34.54')
   })
 
-  it('adds thousand separators for >= 4 digits', () => {
+  it('formats integer basis points as X.XX%', () => {
+    expect(formatBps(450)).toBe('4.50%')
+    expect(formatBps(441)).toBe('4.41%')
+    expect(formatBps(389)).toBe('3.89%')
+    expect(formatBps(4057)).toBe('40.57%')
+  })
+
+  it('formats legacy pound amounts', () => {
     expect(formatGBP(1245.5)).toBe('1,245.50')
-    expect(formatGBP(214500)).toBe('214,500.00')
-    expect(formatGBP(4250.75)).toBe('4,250.75')
-  })
-
-  it('rounds to 2 decimal places', () => {
-    expect(formatGBP(12.4)).toBe('12.40')
-    expect(formatGBP(12.345)).toBe('12.35')
-  })
-
-  it('handles negative values for income rows', () => {
     expect(formatGBP(-3200)).toBe('-3,200.00')
   })
 })

@@ -1,0 +1,250 @@
+common_session_parameters:
+  persona_id: "chloe"
+  first_name: "Chloe"
+  demo_date: "2026-11-24"
+  time_of_day: "afternoon"
+  customer_snapshot:
+    user:
+      first_name: "Chloe"
+      last_name: "Williams"
+      age: 29
+      location: "Manchester, UK"
+      employment: "Product Manager"
+      email: "chloe.williams@example.com"
+      annual_income_pence: 5200000
+      goals:
+        - "Build a £10,000 Home Emergency Pot"
+        - "Trim recurring subscriptions and overpay the mortgage"
+    accounts:
+      current:
+        name: "Cloudbank Everyday Account"
+        sort_code: "00-00-99"
+        account_number_last4: "4821"
+        balance_pence: 425075
+        currency: "GBP"
+      savings:
+        name: "Cloudbank Easy Access Saver"
+        balance_pence: 485000
+        gross_rate_bps: 441
+        aer_bps: 450
+        monthly_contribution_pence: 20000
+        goal_name: "Home Emergency Pot"
+        goal_target_pence: 1000000
+      mortgage:
+        balance_pence: 21450000
+        address: "123 Forest Avenue, Manchester"
+        interest_rate_bps: 420
+        rate_type: "Fixed"
+        fixed_until: "2027-09-30"
+        term_remaining_months: 220
+        next_payment:
+          amount_pence: 139971
+          day_of_month: 1
+        annual_overpayment_allowance_pence: 2145000
+        overpaid_this_year_pence: 0
+        renewal_options:
+          - id: "fix-2yr"
+            label: "2-year Fixed"
+            term_years: 2
+            rate_bps: 389
+          - id: "fix-5yr"
+            label: "5-year Fixed"
+            term_years: 5
+            rate_bps: 374
+    transactions:
+      - { id: "txn-salary", month_offset: 0, day: 1, vendor: "Salary", category: "income", amount_pence: -320000 }
+      - { id: "txn-mortgage-01", month_offset: 0, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 139971, is_subscription: true }
+      - { id: "txn-council-01", month_offset: 0, day: 3, vendor: "Manchester City Council", category: "bills", amount_pence: 16500, is_subscription: true }
+      - { id: "txn-tesco-01", month_offset: 0, day: 4, vendor: "Tesco", category: "groceries", amount_pence: 3850 }
+      - { id: "txn-pret-01", month_offset: 0, day: 5, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
+      - { id: "txn-northern-01", month_offset: 0, day: 6, vendor: "Northern Rail", category: "transport", amount_pence: 1420 }
+      - { id: "txn-deliveroo-01", month_offset: 0, day: 7, vendor: "Deliveroo", category: "eating_out", amount_pence: 2130 }
+      - { id: "txn-amazon-01", month_offset: 0, day: 8, vendor: "Amazon", category: "shopping", amount_pence: 2499 }
+      - { id: "txn-costa-01", month_offset: 0, day: 9, vendor: "Costa Coffee", category: "coffee_shops", amount_pence: 385 }
+      - { id: "txn-mns-01", month_offset: 0, day: 10, vendor: "M&S Food", category: "groceries", amount_pence: 2215 }
+      - { id: "txn-bills-elec-01", month_offset: 0, day: 11, vendor: "British Gas", category: "bills", amount_pence: 7820, is_subscription: true }
+      - { id: "txn-asda-01", month_offset: 0, day: 12, vendor: "Asda", category: "groceries", amount_pence: 4130 }
+      - { id: "txn-pret-02", month_offset: 0, day: 13, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
+      - { id: "txn-cinema-01", month_offset: 0, day: 14, vendor: "Odeon", category: "entertainment", amount_pence: 1250 }
+      - { id: "txn-bills-phone-01", month_offset: 0, day: 15, vendor: "EE", category: "bills", amount_pence: 3200, is_subscription: true }
+      - { id: "txn-tfl-01", month_offset: 0, day: 16, vendor: "TfGM Metrolink", category: "transport", amount_pence: 640 }
+      - { id: "txn-amazon-02", month_offset: 0, day: 17, vendor: "Amazon", category: "shopping", amount_pence: 1750 }
+      - { id: "txn-spotify-01", month_offset: 0, day: 18, vendor: "Spotify", category: "subscriptions", amount_pence: 1199, is_subscription: true }
+      - { id: "txn-tesco-02", month_offset: 0, day: 19, vendor: "Tesco", category: "groceries", amount_pence: 2985 }
+      - { id: "txn-deliveroo-02", month_offset: 0, day: 20, vendor: "Deliveroo", category: "eating_out", amount_pence: 1875 }
+      - { id: "txn-netflix", month_offset: 0, day: 21, vendor: "Netflix", category: "subscriptions", amount_pence: 4500, is_subscription: true, is_anomaly: true }
+      - { id: "txn-uber-01", month_offset: 0, day: 22, vendor: "Uber", category: "transport", amount_pence: 820 }
+      - { id: "txn-pret-03", month_offset: 0, day: 22, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
+      - { id: "txn-tesco-03", month_offset: 0, day: 23, vendor: "Tesco Express", category: "groceries", amount_pence: 1240 }
+      - { id: "txn-salary-2", month_offset: 1, day: 1, vendor: "Salary", category: "income", amount_pence: -320000 }
+      - { id: "txn-mortgage-02", month_offset: 1, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 139971, is_subscription: true }
+      - { id: "txn-council-02", month_offset: 1, day: 3, vendor: "Manchester City Council", category: "bills", amount_pence: 16500, is_subscription: true }
+      - { id: "txn-tesco-04", month_offset: 1, day: 4, vendor: "Tesco", category: "groceries", amount_pence: 2840 }
+      - { id: "txn-pret-04", month_offset: 1, day: 5, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
+      - { id: "txn-northern-02", month_offset: 1, day: 7, vendor: "Northern Rail", category: "transport", amount_pence: 1420 }
+      - { id: "txn-deliveroo-03", month_offset: 1, day: 9, vendor: "Deliveroo", category: "eating_out", amount_pence: 1950 }
+      - { id: "txn-bills-elec-02", month_offset: 1, day: 11, vendor: "British Gas", category: "bills", amount_pence: 7820, is_subscription: true }
+      - { id: "txn-asda-02", month_offset: 1, day: 12, vendor: "Asda", category: "groceries", amount_pence: 4200 }
+      - { id: "txn-costa-02", month_offset: 1, day: 14, vendor: "Costa Coffee", category: "coffee_shops", amount_pence: 385 }
+      - { id: "txn-bills-phone-02", month_offset: 1, day: 15, vendor: "EE", category: "bills", amount_pence: 3200, is_subscription: true }
+      - { id: "txn-amazon-03", month_offset: 1, day: 16, vendor: "Amazon", category: "shopping", amount_pence: 3240 }
+      - { id: "txn-spotify-02", month_offset: 1, day: 18, vendor: "Spotify", category: "subscriptions", amount_pence: 1199, is_subscription: true }
+      - { id: "txn-cinema-02", month_offset: 1, day: 19, vendor: "Odeon", category: "entertainment", amount_pence: 1250 }
+      - { id: "txn-mns-02", month_offset: 1, day: 20, vendor: "M&S Food", category: "groceries", amount_pence: 1875 }
+      - { id: "txn-netflix-02", month_offset: 1, day: 21, vendor: "Netflix", category: "subscriptions", amount_pence: 1799, is_subscription: true }
+      - { id: "txn-deliveroo-04", month_offset: 1, day: 23, vendor: "Deliveroo", category: "eating_out", amount_pence: 1520 }
+      - { id: "txn-tfl-02", month_offset: 1, day: 24, vendor: "TfGM Metrolink", category: "transport", amount_pence: 640 }
+      - { id: "txn-tesco-05", month_offset: 1, day: 25, vendor: "Tesco", category: "groceries", amount_pence: 2410 }
+      - { id: "txn-uber-02", month_offset: 1, day: 26, vendor: "Uber", category: "transport", amount_pence: 940 }
+      - { id: "txn-pret-05", month_offset: 1, day: 27, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
+      - { id: "txn-salary-3", month_offset: 2, day: 1, vendor: "Salary", category: "income", amount_pence: -320000 }
+      - { id: "txn-mortgage-03", month_offset: 2, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 139971, is_subscription: true }
+      - { id: "txn-council-03", month_offset: 2, day: 3, vendor: "Manchester City Council", category: "bills", amount_pence: 16500, is_subscription: true }
+      - { id: "txn-tesco-06", month_offset: 2, day: 5, vendor: "Tesco", category: "groceries", amount_pence: 2630 }
+      - { id: "txn-northern-03", month_offset: 2, day: 7, vendor: "Northern Rail", category: "transport", amount_pence: 1420 }
+      - { id: "txn-deliveroo-05", month_offset: 2, day: 9, vendor: "Deliveroo", category: "eating_out", amount_pence: 1840 }
+      - { id: "txn-bills-elec-03", month_offset: 2, day: 11, vendor: "British Gas", category: "bills", amount_pence: 7820, is_subscription: true }
+      - { id: "txn-asda-03", month_offset: 2, day: 13, vendor: "Asda", category: "groceries", amount_pence: 4520 }
+      - { id: "txn-bills-phone-03", month_offset: 2, day: 15, vendor: "EE", category: "bills", amount_pence: 3200, is_subscription: true }
+      - { id: "txn-amazon-04", month_offset: 2, day: 16, vendor: "Amazon", category: "shopping", amount_pence: 2495 }
+      - { id: "txn-spotify-03", month_offset: 2, day: 18, vendor: "Spotify", category: "subscriptions", amount_pence: 1199, is_subscription: true }
+      - { id: "txn-mns-03", month_offset: 2, day: 19, vendor: "M&S Food", category: "groceries", amount_pence: 1520 }
+      - { id: "txn-netflix-03", month_offset: 2, day: 21, vendor: "Netflix", category: "subscriptions", amount_pence: 1799, is_subscription: true }
+      - { id: "txn-costa-03", month_offset: 2, day: 22, vendor: "Costa Coffee", category: "coffee_shops", amount_pence: 385 }
+      - { id: "txn-deliveroo-06", month_offset: 2, day: 24, vendor: "Deliveroo", category: "eating_out", amount_pence: 1690 }
+      - { id: "txn-uber-03", month_offset: 2, day: 25, vendor: "Uber", category: "transport", amount_pence: 840 }
+      - { id: "txn-pret-06", month_offset: 2, day: 26, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 495 }
+      - { id: "txn-tesco-07", month_offset: 2, day: 27, vendor: "Tesco", category: "groceries", amount_pence: 2010 }
+
+conversations:
+  - conversation: "chloe_hero_multi_product_journey"
+    tags:
+      - "P0"
+      - "hero"
+      - "multi_product"
+    turns:
+      - user: "Give me a quick look at my spending this month."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "EVERYDAY_BANKING"
+              topic_hint:
+                $matchType: "ignore"
+          - action: transfer_to_agent
+            args:
+              agent: "everyday_banking_agent"
+          - action: assist_everyday_banking
+            args:
+              query_type: "overview"
+              period: "this_month"
+        agent:
+          - "# silent"
+          - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
+
+      - user: "Yes, I recognise it — they hiked the plan. How do I cancel Netflix?"
+        tool_calls:
+          - action: assist_everyday_banking
+            args:
+              query_type: "cancel_subscription"
+              vendor_name: "Netflix"
+              anomaly_confirmed: "yes"
+        agent: "To cancel Netflix, sign in to your account page in the Netflix app or website, open Membership and Billing, and select Cancel Membership; your subscription stays active until the end of your current billing period. Would you like to see what redirecting that £45 a month from November into your Home Emergency Pot could do?"
+
+      - user: "Yes — show me what putting that £45 a month into savings does."
+        tool_calls:
+          - action: assist_everyday_banking
+            args:
+              switch_intent: "SAVINGS"
+          - action: transfer_to_agent
+            args:
+              agent: "savings_agent"
+          - action: assist_savings
+            args:
+              query_type: "projection"
+        agent:
+          - "# silent"
+          - "Your Home Emergency Pot currently holds £4,850 at 4.50% AER as of November. Adding £45 a month from Netflix lifts your monthly saving to £245, shaving 4 months off your timeline and reaching your £10,000 target in 19 months (June 2028)."
+
+      - user: "And what if I overpaid my mortgage by £200 a month instead?"
+        tool_calls:
+          - action: assist_savings
+            args:
+              switch_intent: "MORTGAGES"
+          - action: transfer_to_agent
+            args:
+              agent: "mortgage_agent"
+          - action: assist_mortgages
+            args:
+              query_type: "overpayment_projection"
+              monthly_overpayment: 200.0
+        agent:
+          - "# silent"
+          - "Starting from November, overpaying £200 a month totals £2,400 in year one, fitting within your remaining £21,450 10% fee-free allowance. It would shave 3 years and 2 months off your remaining term (down to 15 years and 2 months) and save £17,849.18 in total interest. These figures are an indicative illustration only and not personalised mortgage advice."
+
+      - user: "Compare my fixed-rate renewal options."
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              query_type: "rate_options"
+        agent: "Compared with your November payment of £1,399.71 a month at 4.20%, the 2-year Fixed at 3.89% would be £1,365.17 a month (£34.54 less a month), while the 5-year Fixed at 3.74% would be £1,348.63 a month (£51.08 less a month). These figures are an indicative illustration only and not personalised mortgage advice."
+
+      - user: "Thanks, that's everything — goodbye!"
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Chloe. Have a great rest of your day, and goodbye."
+
+  - conversation: "chloe_unrecognised_anomaly_journey"
+    tags:
+      - "P0"
+      - "hero"
+      - "anomaly_dispute"
+    turns:
+      - user: "Give me a quick look at my spending this month."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "EVERYDAY_BANKING"
+              topic_hint:
+                $matchType: "ignore"
+          - action: transfer_to_agent
+            args:
+              agent: "everyday_banking_agent"
+          - action: assist_everyday_banking
+            args:
+              query_type: "overview"
+              period: "this_month"
+        agent:
+          - "# silent"
+          - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
+
+      - user: "No, I didn't upgrade Netflix — I don't recognise £45."
+        tool_calls:
+          - action: assist_everyday_banking
+            args:
+              query_type: "anomaly_followup"
+              anomaly_confirmed: "no"
+        agent: "I have marked the £45 Netflix charge in November as not recognised on your screen. It is worth checking whether anyone in your household upgraded the plan, and you can freeze your card in the Profile tab or contact Cloudbank support if you need to raise a formal card dispute."
+
+      - user: "Open my Profile page so I can check my card controls."
+        tool_calls:
+          - action: assist_everyday_banking
+            args:
+              switch_intent: "NAVIGATE_PROFILE"
+        agent: "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
+
+      - user: "Thanks, goodbye!"
+        tool_calls:
+          - action: assist_everyday_banking
+            args:
+              switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Chloe. Have a great rest of your day, and goodbye."

@@ -1,286 +1,104 @@
-# Workspace guide
+# Workspace Guide
 
-This repository is a workspace for building and managing GECX (Google Customer
-Engagement Suite) conversational agents. It hosts the **Cloudbank "Gemini Live"
-demo** — a voice-first banking agent for a fictional bank. See `README.md` for
-the project overview and design.
+This repository hosts the **Cloudbank Multi-Product Retail Banking Reference Application** built on **CX Agent Studio (GECX)** (`CXAS`). It pairs a 4-agent, tool-first `gemini-composite-v2` voice and chat application with a hardened FastAPI `BidiRunSession` WebSocket proxy and a React 5-tab Split-Screen Workbench.
 
-## Repository structure
+## Repository Structure
 
 ```
-.agents/skills/                 # Reusable agent skills
-├── cxas-agent-foundry/         # Composite skill for end-to-end agent lifecycle
-├── removed-skill-sim/              # Skill for converting evals
-└── ...
-cloudbank/                      # The demo project
-├── cxas_app/Cloudbank/         # GECX agent (deployed via cxas push)
-├── evals/                      # Golden evals
-├── proxy/                      # FastAPI BidiRunSession proxy
-├── web/                        # Vite React mobile app
-├── gecx-config.json            # GCP project, location, deployed app id
-├── cxaslint.yaml               # Lint policy
-└── push.sh                     # Wraps cxas push
-examples/                       # Config templates
-.venv/                          # Shared virtual environment (gitignored)
-AGENTS.md                       # Workspace guide (this file)
-README.md                       # Project overview and design
-.active-project                 # Points to the active project folder
+.agents/skills/
+└── cxas-agent-foundry/         # End-to-end GECX agent lifecycle skill and CLI hooks
+cloudbank/                      # Cloudbank application workspace
+├── cxas_app/Cloudbank/         # CXAS bundle (app.json, global_instruction.txt, guardrails, 4 agents, tools)
+├── evals/                      # Multi-segment NAIVE golden evaluations and SimulationEvals
+├── proxy/                      # Localhost FastAPI BidiRunSession WebSocket proxy
+├── scripts/                    # Vendored Apache-2.0 lifecycle & audit scripts (zero external path deps)
+├── shared/                     # Frozen cross-runtime JSON contracts (customer_snapshot.schema.json, parity_vectors.json)
+├── tests/                      # Offline pytest suite (bundle integrity, controllers, state matrix, callbacks, parity)
+├── web/                        # Vite + React 5-tab banking app & GECX Split-Screen Workbench
+├── cxaslint.yaml               # Zero-warning CXAS structural & evaluation lint policy
+├── gecx-config.json            # GCP project, location ("eu"), app_name, deployed_app_id
+├── pyproject.toml              # Python environment for agent tests and CXAS tooling (PyPI pinned)
+└── push.sh                     # Lint + Composite v2 audit + pytest + overwrite import + golden sync
+docs/                           # Architecture guides, per-tool specs, and role-based runbooks
+AGENTS.md                       # Workspace engineering rules (this file)
+GEMINI.md                       # Agent delegation, manual authoring, and zero-warning mandates
+README.md                       # Root onboarding and offline quickstart
+CHANGELOG.md                    # Release history (Why / Fix / Test / Docs)
 ```
 
 ## Setup
 
-Run the setup script to create a virtual environment and install the
-`cxas-scrapi` SDK:
+Run the setup script to create `.venv`, install `cxas-scrapi` from PyPI, and sync `cloudbank/`, `cloudbank/proxy/`, and `cloudbank/web/`:
 
 ```bash
-.agents/skills/cxas-agent-foundry/scripts/setup.sh          # Full setup (install + configure)
-.agents/skills/cxas-agent-foundry/scripts/setup.sh --configure  # Reconfigure only
+.agents/skills/cxas-agent-foundry/scripts/setup.sh --skip-config
 source .venv/bin/activate
 ```
 
-Requires Python 3.10+ and [astral-uv](https://docs.astral.sh/uv/getting-started/installation/).
+Requires Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Node.js 22+. Both `cloudbank/pyproject.toml` and `cloudbank/proxy/pyproject.toml` pin `[[tool.uv.index]]` to `https://pypi.org/simple` so `uv.lock` never records corporate mirror URLs.
 
-## Testing the Cloudbank app
+## Local Verification Gates
+
+Run all four gates locally before committing or deploying. CI (`.github/workflows/ci.yml`) enforces the exact same checks:
 
 ```bash
-cd cloudbank/web   && npm test && npm run typecheck && npm run lint && npm audit
-cd cloudbank/proxy && python -m pytest && uvx ruff check .
-cd cloudbank       && cxas lint         # must be 0 errors, 0 warnings
+# 1. CXAS structural & evaluation lint (run from cloudbank/ WITHOUT --app-dir so E001-E011 execute) + Composite v2 audit
+cd cloudbank && uv run --locked cxas lint
+cd cloudbank && uv run --locked python scripts/audit_agent.py --workspace=cxas_app/Cloudbank --report
+
+# 2. Offline Python agent suite (bundle AST/schema checks, controllers, state matrix, callback chains, parity vectors)
+cd cloudbank && uv run --locked pytest -v
+
+# 3. Bidi WebSocket proxy suite & Ruff lint
+cd cloudbank/proxy && uv run --locked --all-extras pytest -v && uv run --locked --all-extras ruff check .
+
+# 4. Web unit/parity/state-machine tests, TypeScript check, zero-warning ESLint, and production build
+cd cloudbank/web && npm test && npm run typecheck && npm run lint && npm run build
 ```
 
-Run all of these before merging. CI enforces the same gates
-(`.github/workflows/ci.yml`).
+## Core Architecture Invariants
 
-### The agent/UI parity suite
+### 1. Tool-First Hub-and-Spoke Topology (`4` Agents, Silent Callback Transfers)
 
-`cloudbank/web/src/__tests__/agentUiParity.test.ts` asserts that, for the real
-`chloe.json` and across several `today` values (including the 1st of a month),
-each `get_*` ClientFunction returns the same number the corresponding screen
-renders. It exists because the handler tests use small synthetic fixtures while
-the view tests render the real one — neither side can see a disagreement with
-the other, so without this suite a divergence ships behind a green test run.
+- `root_agent` declares `"childAgents": ["everyday_banking_agent", "savings_agent", "mortgage_agent"]` (`S007` single-parent acyclic tree). Sub-agents declare `"childAgents": []` and omit `modelSettings` so they inherit `gemini-composite-v2` from `app.json`.
+- **State-driven silent routing only:** Never place `{@AGENT: ...}` tokens in `instruction.txt`, never expose `transfer_to_agent` or `end_session` to the model (`capture_utterance` hides both on every pass), and never use the words `"transfer"`, `"transferring"`, or `"connecting"` in `instruction.txt` or `agent_action`.
+- Python controllers (`route_banking_intent`, `assist_everyday_banking`, `assist_savings`, `assist_mortgages`) stage `context.state["target_agent"] = "<agent>"` and return a single-key `{"agent_action": "..."}` dictionary. On the post-tool pass (`_is_tool_response`), `before_model_callback` (`capture_utterance`) clears `state["target_agent"] = ""` and returns `LlmResponse.from_parts(parts=[Part.from_agent_transfer(agent=target)])`, skipping the source agent's post-tool LLM pass (`after_model_callback` `agent_transfer` serves as defense-in-depth).
+- Spokes handle `switch_intent="NAVIGATE_HOME" | "NAVIGATE_PROFILE" | "CAPABILITIES"` locally without hopping back to `root_agent`, carry cross-spoke pivot values in `context.state["handoff_context"]`, and use a non-terminating 2-strike `unclear_count` that never hangs up on noisy microphone input.
+- Every agent carries identical copies of three callbacks under `cxas pull`-compatible paths (`before_model_callbacks/capture_utterance/python_code.py`, `after_model_callbacks/agent_transfer/python_code.py`, `after_model_callbacks/release_line/python_code.py`). Note that `cxas lint` `S005` checks `strict-agent-path-layout` rather than callback content parity; byte-for-byte parity across all four agents is enforced by `cloudbank/tests/test_bundle_integrity.py`.
 
-**When you add a spending view or a `get_*` tool, add it to that file.** View
-aggregations live in `cloudbank/web/src/util/spendingViews.ts` as pure functions
-precisely so the test can call them without rendering; keep them there rather
-than inlining a `useMemo` in the component.
+See the official CX Agent Studio documentation for [instructions](https://docs.cloud.google.com/gemini-enterprise-cx/cx-agent-studio/instruction) and [callbacks](https://docs.cloud.google.com/gemini-enterprise-cx/cx-agent-studio/callback).
 
-Two invariants the suite depends on:
+### 2. Web-Owned `customer_snapshot` & Exact Cross-Language Integer Arithmetic
 
-- `computeSpendingSummary().monthly_history` is **always exactly 3 calendar
-  months** (this, last, two-ago), zero-padded. That is what makes
-  `monthly_history[n]` mean "n months ago" in the handlers.
-- "Subscription" means `is_subscription === true`, **not**
-  `category === 'subscriptions'` — British Gas, EE and the rent are flagged
-  recurring but categorised as `bills`.
+- `customer_snapshot` is identical verbatim to each persona fixture (`cloudbank/web/src/fixtures/{chloe,david,tom,sarah}.json`), validated against `cloudbank/shared/customer_snapshot.schema.json` in `pytest`, `vitest`, and `cloudbank/proxy`.
+- All monetary fields use **integer pence** (`*_pence`) and all interest rates use **integer basis points** (`*_bps`, with both `gross_rate_bps` for monthly compounding and `aer_bps` for display/speech on savings accounts).
+- On `ClientStart`, the browser seeds `{persona_id, first_name, demo_date, time_of_day, customer_snapshot}` via `BidiRunSession` `realtimeInput.variables`. All `OBJECT` variables in `app.json` are declared as `{"type": "OBJECT", "required": []}` with no `properties` (`V001`, avoiding `V102`/`V103`), and neither `{customer_snapshot}` nor `{ui_view_state}` is ever referenced in any prompt (`0` prompt tokens).
+- Because `realtimeInput.variables` is a `google.protobuf.Struct`, JSON numbers arrive in Python as floats (`4500.0`). `cloudbank/tests/conftest.py` round-trips fixtures through `Struct`, and controllers coerce snapshot integers once at entry via `_normalize_snapshot`.
+- Python controllers and TypeScript selectors (`spendingViews.ts`, `savingsMath.ts`, `mortgageMath.ts`) share exact integer `half_up(n, d)` rounding, month-by-month simulation loops, and integer bisection for fixed-rate renewal payments, verified against `cloudbank/shared/parity_vectors.json` in both `pytest` and `vitest`.
 
-### Golden evals cannot mock ClientFunction results
+### 3. Three-Tier `ui_view_state` Dynamic Screen Synchronisation
 
-`common_session_parameters` holds session *variables* (merged into each
-conversation's `session_parameters`); there is no tool-response mock mechanism,
-and the eval harness has no browser to execute a ClientFunction. So goldens can
-assert the **shape of the tool call** but not how the agent narrates the data
-that comes back. Manual transcript review remains the safety net for narration.
+Controllers increment `ui_view_state.seq` monotonically and never rely on browser `clientFunction` round-trips:
 
-## Proxy security
+1. **Tier 1 (`capture_utterance` on `_is_tool_response`):** Hides `returned_tool` first; when not transferring and not in an `evaluation*` session, stamps `ui_emitted_seq = str(seq)` and returns a `partial = True` `LlmResponse.from_parts(parts=[Part.from_json(data=json.dumps(view))])` so the browser updates tabs and calculators before speech synthesis starts.
+2. **Tier 2 (`release_line` in `after_model_callback`):** Re-stamps `ui_emitted_seq` on the persisted final pass and appends `Part.from_json` whenever `seq > prev_emitted_seq`.
+3. **Tier 3 (`relay.py` fallback):** Extracts `ui_view_state` from `session_output.diagnostic_info.messages[].chunks[].updated_variables` on `turn_completed=True`, deduplicated by `(sessionId, Math.trunc(Number(seq)))` in both proxy and browser (resetting on `ready` and `PERSONA_SWITCH`).
 
-`cloudbank/proxy` is **unauthenticated and localhost-only**. It holds ADC
-credentials and lends them to whoever connects, so never run it with
-`--host 0.0.0.0` and never deploy it without adding authentication first. There
-is no Dockerfile or deploy config in this repo, on purpose. See
-`cloudbank/proxy/README.md` for the controls that are in place (Origin
-allowlist, session cap, frame caps, session-variable allowlist) and the env vars
-that tune them.
+## Proxy Security
 
-### If the concierge pill sits on "Retry"
+`cloudbank/proxy` is unauthenticated and localhost-only. It holds local Application Default Credentials (`ADC`), so never bind it to `0.0.0.0` or deploy it remotely without adding authentication. It enforces strict `Origin` matching (honoring `PROXY_ALLOWED_ORIGINS` without wildcard suffix fallthrough), an explicit 5-key `CLIENT_SEEDABLE_VARIABLES` allowlist validated against `cloudbank/shared/customer_snapshot.schema.json`, a 10-second `16 kHz` `LINEAR16` silence keepalive, and a configurable `PROXY_MAX_IDLE_SECONDS` (default `900` seconds, emitting `ServerSessionExpired` on idle close).
 
-Check the proxy log before anything else. A rejected WebSocket origin looks
-identical to the proxy being down — the browser burns its three auto-retries
-against a 403 and gives up, while `/health` still returns 200:
+## Deploying & Syncing Evaluations (`cloudbank/push.sh`)
 
-```
-WARNING:proxy:rejecting websocket from disallowed origin 'https://…'
-```
+Never hardcode a GCP project ID anywhere in code, scripts, or docs; derive it dynamically from `cloudbank/gecx-config.json` (`locations/eu`).
 
-Hosted dev environments (Cloud Shell, Cloud Workstations, Codespaces, Gitpod)
-are accepted out of the box. Anywhere else needs `PROXY_ALLOWED_ORIGINS`.
-
-## Deploying the agent (cxas push)
-
-`cxas push` defaults to looking for `app.json` directly under `--app-dir`. This
-agent lives one level deeper (`cloudbank/cxas_app/Cloudbank/app.json`), so the
-bare `cxas push` invocation fails with
-`400 ImportApp must contain an app resource`. Always pass both flags:
+Use `./cloudbank/push.sh`, which runs the local lint/audit/test gates, performs an overwrite import via `cloudbank/scripts/manage_ces_app.py` (failing on any `ImportAppResponse.warnings` and verifying expected tool declarations so renamed or deleted tools never linger as orphans), and syncs multi-segment NAIVE golden evaluations via `cloudbank/scripts/run_golden_evals.py sync` (never `cxas push-eval`, which mis-orders `agentResponse` before `agentTransfer` on multi-agent turns):
 
 ```bash
 cd cloudbank
-cxas push \
-  --app-dir cxas_app/Cloudbank \
-  --to "projects/$(jq -r .gcp_project_id gecx-config.json)/locations/$(jq -r .location gecx-config.json)/apps/$(jq -r .deployed_app_id gecx-config.json)"
+./push.sh
 ```
 
-Prefer `./cloudbank/push.sh`, which builds exactly this from `gecx-config.json`.
-
-**Never hardcode the project id** — read it from `gecx-config.json`. A project in
-`lifecycleState: DELETE_REQUESTED` fails every CES call with
-`403 CONSUMER_INVALID`, which reads like a permissions problem; check
-`gcloud projects describe <id>` before debugging IAM.
-
-`gecx-config.json`'s `app_dir: "cxas_app/"` is misleading on this point — the
-SDK does not auto-descend into the nested app directory.
-
-### Adding a new tool to the agent (DO NOT SKIP)
-
-When adding any new tool (ClientFunction, search tool, etc.) to
-`cloudbank/cxas_app/Cloudbank/`, **two files must change**:
-
-1. The tool schema: `cloudbank/cxas_app/Cloudbank/tools/<name>/<name>.json`.
-2. The declaring agent's tool list, e.g.
-   `cloudbank/cxas_app/Cloudbank/agents/root_agent/root_agent.json` — add
-   `"<name>"` to the `tools` array. **Forgetting step 2 is a silent failure.**
-
-**Failure mode:** `cxas push` reports `Successfully pushed`, the tool JSON
-deploys, but the agent has no way to call it. The model falls back to
-*"mmmm, I'm having trouble with that"* with **zero** signals in the proxy logs,
-browser console, or push output. It is diagnosed only by `cxas pull <app>` and
-diffing the deployed agent JSON against your local one.
-
-**Always verify post-push:**
-
-```bash
-cxas pull projects/<project>/locations/us/apps/<app-id> --target-dir /tmp/check
-diff <(jq -r '.tools | sort | .[]' cloudbank/cxas_app/Cloudbank/agents/root_agent/root_agent.json) \
-     <(jq -r '.tools | sort | .[]' /tmp/check/*/agents/root_agent/root_agent.json)
-```
-
-If the diff has output, the deployed agent's tool list disagrees with your local
-one — the push didn't take, or you forgot step 2.
-
-Any change that creates a new tool must include both files in its diff and a
-post-push `cxas pull` verification.
-
-### Removing a tool from the agent (DO NOT SKIP)
-
-**First decide which of two things you are doing** — they are different layers,
-and `cxas push` treats them differently:
-
-| Layer | Where | Push behaviour |
-|---|---|---|
-| Tool **schema** (the app-level `Tool` resource, shared by all agents) | `tools/<name>/<name>.json` | **Additive** — uploads local schemas, never deletes deployed-but-locally-absent ones |
-| Agent **declaration** (which tools *that* agent may call) | `agents/<agent>/<agent>.json` → `tools` | **Replaced** — removing a name takes effect on push |
-
-**Case A — revoking a tool from one agent while another still uses it.** Only
-remove the name from that agent's `tools` array and push. Do NOT delete the tool
-directory, and there is no orphan to clean up.
-
-**Case B — deleting a tool from the app entirely**, i.e. *no* agent declares it
-any more. Four things must happen:
-
-1. Remove the tool name from the `tools` array of **every** agent that declares
-   it (`agents/*/*.json` — not just root; the app is multi-agent).
-2. Delete the tool directory: `rm -rf cloudbank/cxas_app/Cloudbank/tools/<name>/`.
-3. `./cloudbank/push.sh` (drops the reference from the agents — the model can no
-   longer call it).
-4. **Delete the orphan tool from CES via the REST API** — the schema still lives
-   on CES until you explicitly DELETE it.
-
-```bash
-# Find the orphan's resource id
-TOKEN=$(gcloud auth print-access-token)
-APP="projects/$(jq -r .gcp_project_id cloudbank/gecx-config.json)/locations/$(jq -r .location cloudbank/gecx-config.json)/apps/$(jq -r .deployed_app_id cloudbank/gecx-config.json)"
-curl -s -H "Authorization: Bearer $TOKEN" "https://ces.googleapis.com/v1/$APP/tools" \
-  | jq '.tools[] | select(.displayName=="<name-to-delete>") | .name'
-
-# Then DELETE it
-curl -X DELETE -H "Authorization: Bearer $TOKEN" \
-  "https://ces.googleapis.com/v1/<resource-name-from-above>"
-```
-
-Verify no orphans remain:
-
-```bash
-cxas pull "$APP" --target-dir /tmp/check
-comm -23 <(ls /tmp/check/*/tools/ | sort) <(jq -r '.tools[]' /tmp/check/*/agents/*/*.json | sort -u)
-# Empty output = no orphans (end_session is built-in so won't appear as a tool dir)
-```
-
-The `agents/*/*.json` glob matters. Reading only `root_agent.json` reports all
-five `get_*` tools plus `search_help` as orphans — every one a false positive,
-and deleting them would break the spending journey. A tool is an orphan only if
-**no** agent declares it.
-
-### Adding a sub-agent (DO NOT SKIP)
-
-When extracting a journey into its own sub-agent under
-`cloudbank/cxas_app/Cloudbank/agents/`, **three artifacts must change**:
-
-1. New directory `agents/<sub_agent>/<sub_agent>.json` + `instruction.txt`. The
-   JSON's `tools` array lists every tool the sub-agent calls, including tools
-   also declared on root — they are per-agent declarations, not global.
-2. Parent agent's JSON gains `"childAgents": ["<sub_agent>"]`. The string MUST
-   exactly match the JSON `name` field (underscores, no spaces); `cxas push`
-   returns `400 Reference not found` for a spaced display name here. See the
-   "Configuring childAgents (platform quirk)" section of
-   `.agents/skills/cxas-agent-foundry/references/gecx-design-guide.md`.
-3. Parent agent's `instruction.txt` gains a `<routing>` block describing when to
-   silently delegate. The `<action>` block references the sub-agent via the
-   **instruction-author syntax** `{@AGENT: <displayName>}` (same family as
-   `{@TOOL: <tool_name>}`). The sub-agent's `instruction.txt` has a matching
-   `<scope>` block describing when to silently transfer BACK using
-   `{@AGENT: root_agent}`. See
-   https://docs.cloud.google.com/customer-engagement-ai/conversational-agents/ps/instruction
-   for the syntax reference.
-
-**Two layers, easy to confuse:**
-
-- **Instruction-author syntax** (what you write in prompts):
-  `{@AGENT: <displayName>}`.
-- **Runtime action** (what the platform fires and transcripts show):
-  `actions.transfer_to_agent`. Never something you write literally in the
-  prompt.
-
-**Silent transfer:** the customer should perceive a single continuous assistant.
-Neither agent speaks about the handoff. Both agents need an explicit
-`CRITICAL — SILENT TRANSFER` (root) / `CRITICAL — SILENT TRANSFER BACK`
-(sub-agent) constraint banning "transfer" / "specialist" / "colleague" /
-"let me hand" / "one moment" filler.
-
-**Verify post-push:**
-
-```bash
-cxas pull "$APP" --target-dir /tmp/check
-ls /tmp/check/Cloudbank/agents/          # must contain parent + every child
-jq -r '.childAgents' /tmp/check/Cloudbank/agents/<parent>/<parent>.json
-# must list every child agent created
-```
-
-Any change that introduces a sub-agent must include the parent's `childAgents`
-update and the `cxas pull` verification — the same class of gotcha as the tool
-registration gap.
-
-## Available skills
-
-This workspace provides several specialized AI skills to assist with
-development.
-
-- **`cxas-agent-foundry`**: The primary skill for the end-to-end GECX agent
-  lifecycle. Use this for building agents from requirements, generating and
-  running evals, debugging failures, and syncing code.
-- **`removed-skill-sim`**: A utility skill for converting CXAS golden evaluations to
-  SCRAPI SimulationEvals test cases.
-- **`removed-skill-cuj`**: Ingests existing agent implementations (ADK,
-  DFCX, Cyara, draw.io, …) and produces a CUJ coverage report.
-- **`removed-skill-migration`**: Staged migration of a Dialogflow CX agent into a
-  CXAS app.
-- **`removed-skill-loss`**: Pulls non-contained conversations from CCAI
-  Insights, clusters them into failure patterns, and writes a markdown report.
-
-These are vendored copies of the skills shipped by the `cxas-scrapi` package
-(`.venv/share/cxas-scrapi/skills/.agents/skills/`). Re-sync after an SDK upgrade
-by copying that tree over `.agents/skills/`; the only local delta to preserve is
-the "Step 2.7" block in `cxas-agent-foundry/scripts/setup.sh`, which installs
-each project's `proxy/` and `web/` dependencies.
-
-*For detailed development workflows, linter policies, and GECX-specific
-conventions, refer to the documentation within the respective skills, e.g.
-`.agents/skills/cxas-agent-foundry/SKILL.md`.*
+When adding or removing tools or sub-agents:
+- Declare every tool in the owning agent's `agents/<agent>/<agent>.json` `"tools"` array, set a non-empty `description` in `tools/<tool>/<tool>.json` (`T012`), and reference `{@TOOL: <tool>}` in `instruction.txt` (`I012`; hidden tools such as `end_session` and wrapped `search_help` are referenced inside a negative `"Never call {@TOOL: ...} directly"` constraint).
+- Keep `childAgents` in `root_agent.json` strictly acyclic (`S007`), copy any callback edits across all four agents (`test_bundle_integrity.py` fails on drift), and follow every `--overwrite` push with `run_golden_evals.py sync` because `OVERWRITE` clears server-side evaluations on the target app.

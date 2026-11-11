@@ -1,4 +1,9 @@
 import '@testing-library/jest-dom/vitest'
+import { MotionGlobalConfig } from 'framer-motion'
+
+// Skip WAAPI animations in unit tests so happy-dom v21's Animation.cancel()
+// does not emit unhandled AbortError promise rejections on rapid test teardowns.
+MotionGlobalConfig.skipAnimations = true
 
 // happy-dom does not ship a WebSocket implementation. The AgentProvider opens
 // a WS in its mount effect, so tests that render it would otherwise crash with

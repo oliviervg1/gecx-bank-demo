@@ -1,15 +1,30 @@
-// The CES session-variable channel carries only the customer's first name.
-// Everything else (spending, anomaly) moves to the agent's get_* ClientFunctions
-// (see spendingHandlers.ts). first_name stays a variable so the warm opening
-// greeting fires with no tool round-trip.
-//
-// Structural parameter rather than a concrete Fixture type: this module reads
-// exactly one field, and typing it narrowly is what let the Chloe-only shape
-// (`ChloeFixture`) leak into the agent layer.
-export interface HasFirstName {
-  user: { first_name: string }
-}
+// Builds the exact 5-key CLIENT_SEEDABLE_VARIABLES payload for ClientStart.
+// customer_snapshot is passed verbatim from the active persona fixture.
 
-export function buildSessionVariables(fixture: HasFirstName): Record<string, string> {
-  return { first_name: fixture.user.first_name }
+import type { CustomerSnapshot } from '../data/fixture'
+import { DEFAULT_PINNED_DEMO_DATE, resolveTimeOfDay } from '../util/demoClock'
+import type { PersonaId, SeedVariables } from './protocol'
+
+export function buildSessionVariables(
+  personaId: PersonaId,
+  fixture: CustomerSnapshot,
+  opts: {
+    demoDate?: string
+    timeOfDay?: 'morning' | 'afternoon' | 'evening'
+    now?: Date
+  } = {},
+): SeedVariables {
+  const firstName = fixture.user.first_name.trim()
+  if (!firstName) {
+    throw new Error(`Invalid customer_snapshot for ${personaId}: missing user.first_name`)
+  }
+  const demoDate = opts.demoDate ?? DEFAULT_PINNED_DEMO_DATE
+  const timeOfDay = opts.timeOfDay ?? resolveTimeOfDay(opts.now)
+  return {
+    persona_id: personaId,
+    first_name: firstName,
+    demo_date: demoDate,
+    time_of_day: timeOfDay,
+    customer_snapshot: fixture,
+  }
 }

@@ -12,7 +12,7 @@ function Probe({ enabled = true, onBegin, onEnd }: {
   enabled?: boolean; onBegin: () => void; onEnd: () => void
 }) {
   const hold = useHoldToTalk({ enabled, onBegin, onEnd })
-  return <button data-testid="pill" {...hold}>hold</button>
+  return <button data-testid="pill" data-concierge-pill="true" {...hold}>hold</button>
 }
 
 let onBegin: Mock<() => void>
@@ -91,6 +91,44 @@ describe('spacebar', () => {
     field.focus()
     fireEvent.keyDown(field, { code: 'Space', key: ' ', bubbles: true })
     expect(onBegin).not.toHaveBeenCalled()
+  })
+
+  it('ignores space on keyboard-focused (:focus-visible) buttons/tabs, while keeping Spacebar active after mouse clicks', () => {
+    render(
+      <>
+        <button type="button" data-testid="other-btn">Other</button>
+        <div role="tab" tabIndex={0} data-testid="other-tab">Tab</div>
+        <Probe onBegin={onBegin} onEnd={onEnd} />
+      </>,
+    )
+    const otherBtn = screen.getByTestId('other-btn')
+    const otherTab = screen.getByTestId('other-tab')
+
+    // 1. Keyboard navigation (Tab -> focus-visible) yields Space to the focused button/tab.
+    fireEvent.keyDown(window, { key: 'Tab', code: 'Tab' })
+    otherBtn.focus()
+    fireEvent.keyDown(otherBtn, { code: 'Space', key: ' ', bubbles: true })
+    expect(onBegin).not.toHaveBeenCalled()
+
+    otherTab.focus()
+    fireEvent.keyDown(otherTab, { code: 'Space', key: ' ', bubbles: true })
+    expect(onBegin).not.toHaveBeenCalled()
+
+    // 2. F7-4: Mouse-clicking a tab/button leaves DOM focus on it without :focus-visible;
+    // Spacebar hold-to-talk MUST continue working immediately!
+    fireEvent.pointerDown(otherBtn, { pointerId: 1, bubbles: true })
+    otherBtn.focus()
+    fireEvent.click(otherBtn)
+    fireEvent.keyDown(otherBtn, { code: 'Space', key: ' ', bubbles: true })
+    expect(onBegin).toHaveBeenCalledTimes(1)
+    fireEvent.keyUp(otherBtn, { code: 'Space', key: ' ', bubbles: true })
+    expect(onEnd).toHaveBeenCalledTimes(1)
+
+    // 3. Focusing the concierge pill itself also allows Spacebar hold-to-talk.
+    fireEvent.keyDown(window, { key: 'Tab', code: 'Tab' })
+    pill().focus()
+    fireEvent.keyDown(pill(), { code: 'Space', key: ' ', bubbles: true })
+    expect(onBegin).toHaveBeenCalledTimes(2)
   })
 
   it('ignores other keys', () => {

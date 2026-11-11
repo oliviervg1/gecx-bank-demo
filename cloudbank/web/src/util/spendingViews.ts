@@ -1,137 +1,236 @@
-// Pure aggregations behind the Spending drill-in views.
-//
-// They live here rather than as useMemo bodies inside each view component so
-// tests can call them without rendering. That is what lets
-// `agentUiParity.test.ts` assert that what the screen shows and what the get_*
-// ClientFunctions return are the same numbers.
-//
-// Every function takes `today` so tests can pin the date. The views pass
-// nothing and get `new Date()`.
+// Pure integer-pence Spending sub-view selectors matching assist_everyday_banking/python_code.py.
 
 import type { Transaction } from '../data/fixture'
-import { isInCurrentCalendarMonth } from './spendingSummary'
-
-const round2 = (n: number): number => Math.round(n * 100) / 100
+import {
+  DEFAULT_PINNED_DEMO_DATE,
+  PERIOD_TO_OFFSET,
+  monthNameForOffset,
+  shortMonthForOffset,
+  type SpendingPeriod,
+} from './demoClock'
 
 export interface MonthBucket {
+  offset: 0 | 1 | 2
   label: string
-  year: number
-  month: number
-  total: number
+  monthName: string
+  total_pence: number
 }
 
-// The trailing 3 CALENDAR months, oldest-first — the order the bar charts read
-// left-to-right. This is the reverse of what get_monthly_trend returns
-// (newest-first); see spending_agent/instruction.txt on never narrating a
-// chart bar positionally.
-//
-// Months with no transactions are included as zero bars rather than dropped.
-// Collecting only non-empty months meant that on the 1st — when the current
-// month is empty — the chart quietly plotted a window ending LAST month, with
-// nothing on the axis to say so, while get_monthly_trend correctly reported
-// the current month at £0.
+function normalizeVendorForms(name: string): { raw: string; stem: string } {
+  const lowered = name.trim().toLowerCase()
+  const rawClean = Array.from(lowered)
+    .filter((ch) => /[a-z0-9 ]/.test(ch))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  let stemSrc = lowered
+  if (stemSrc.endsWith("'s") || stemSrc.endsWith('\u2019s')) {
+    stemSrc = stemSrc.slice(0, -2)
+  }
+  const stemClean = Array.from(stemSrc)
+    .filter((ch) => /[a-z0-9 ]/.test(ch))
+    .join('')
+    .replace(/\s+/g, ' ')
+    .trim()
+
+  return { raw: rawClean, stem: stemClean }
+}
+
+function containsTokenSequence(txTokens: string[], needleTokens: string[]): boolean {
+  if (needleTokens.length === 0 || needleTokens.length > txTokens.length) return false
+  if (needleTokens.length === 1 && needleTokens[0].length < 2 && txTokens.length > 1) {
+    return false
+  }
+  const span = needleTokens.length
+  for (let idx = 0; idx <= txTokens.length - span; idx++) {
+    let allMatch = true
+    for (let j = 0; j < span; j++) {
+      if (txTokens[idx + j] !== needleTokens[j]) {
+        allMatch = false
+        break
+      }
+    }
+    if (allMatch) return true
+  }
+  return false
+}
+
+export function vendorsEqual(left: string, right: string): boolean {
+  const l = normalizeVendorForms(left)
+  const r = normalizeVendorForms(right)
+  if (!l.raw || !r.raw) return false
+  return l.raw === r.raw || (Boolean(l.stem) && l.stem === r.stem)
+}
+
+/**
+ * Match non-income transactions using exact normalised match + contiguous whole-token containment.
+ * Identical to Python _match_vendor_rows (S2-1).
+ */
+export function matchVendorRows(
+  txns: Transaction[],
+  queryVendor: string,
+): { canonical: string; matched: Transaction[] } {
+  const needle = normalizeVendorForms(queryVendor)
+  if (!needle.raw) return { canonical: '', matched: [] }
+
+  const rawTokens = needle.raw.split(' ')
+  const stemTokens = needle.stem ? needle.stem.split(' ') : rawTokens
+
+  const matched: Transaction[] = []
+  let canonical = ''
+  let hasExact = false
+
+  for (const tx of txns) {
+    if (tx.amount_pence <= 0) continue
+    const txForms = normalizeVendorForms(tx.vendor)
+    const isExact =
+      txForms.raw === needle.raw || (Boolean(needle.stem) && txForms.stem === needle.stem)
+    const isTokenMatch =
+      containsTokenSequence(txForms.raw.split(' '), rawTokens) ||
+      containsTokenSequence(txForms.stem.split(' '), stemTokens)
+
+    if (isExact || isTokenMatch) {
+      matched.push(tx)
+      if (isExact && !hasExact) {
+        canonical = tx.vendor
+        hasExact = true
+      } else if (!canonical) {
+        canonical = tx.vendor
+      }
+    }
+  }
+
+  return { canonical, matched }
+}
+
 export function bucketByMonth(
   txns: Transaction[],
   opts: { category?: string; vendor?: string; excludeIncome?: boolean } = {},
-  today: Date = new Date(),
+  demoDate: string = DEFAULT_PINNED_DEMO_DATE,
 ): MonthBucket[] {
-  const vendorLc = opts.vendor?.toLowerCase()
-  const totals = new Map<string, number>()
-  for (const t of txns) {
-    if (opts.category && t.category !== opts.category) continue
-    if (vendorLc && !t.vendor.toLowerCase().includes(vendorLc)) continue
-    if (opts.excludeIncome && t.amount < 0) continue
-    const d = new Date(today)
-    d.setDate(d.getDate() - t.days_ago)
-    const key = `${d.getFullYear()}-${d.getMonth()}`
-    totals.set(key, (totals.get(key) ?? 0) + t.amount)
-  }
-  // offset 2, 1, 0 => oldest-first.
-  return [2, 1, 0].map((offset) => {
-    const d = new Date(today.getFullYear(), today.getMonth() - offset, 1)
-    return {
-      label: d.toLocaleString('en-GB', { month: 'short' }),
-      year: d.getFullYear(),
-      month: d.getMonth(),
-      total: round2(totals.get(`${d.getFullYear()}-${d.getMonth()}`) ?? 0),
+  const vendorMatchedIds = opts.vendor
+    ? new Set(matchVendorRows(txns, opts.vendor).matched.map((t) => t.id))
+    : null
+
+  const totals: [number, number, number] = [0, 0, 0]
+  for (const tx of txns) {
+    if (opts.excludeIncome !== false && tx.amount_pence <= 0) continue
+    if (opts.category && tx.category !== opts.category) continue
+    if (vendorMatchedIds && !vendorMatchedIds.has(tx.id)) continue
+    const off = tx.month_offset
+    if (off === 0 || off === 1 || off === 2) {
+      totals[off] += tx.amount_pence
     }
-  })
+  }
+
+  // Oldest-first [2, 1, 0] left-to-right for trend bars.
+  const order: Array<0 | 1 | 2> = [2, 1, 0]
+  return order.map((offset) => ({
+    offset,
+    label: shortMonthForOffset(demoDate, offset),
+    monthName: monthNameForOffset(demoDate, offset),
+    total_pence: totals[offset],
+  }))
 }
 
-export interface SubscriptionsView {
+export interface SubscriptionsViewData {
   items: Transaction[]
-  total: number
+  total_pence: number
+  monthName: string
 }
 
-// "Subscription" is defined by the is_subscription flag, not by the
-// `subscriptions` category — British Gas, EE and the rent are flagged
-// recurring but categorised as `bills`. get_subscriptions must agree.
 export function subscriptionsView(
   txns: Transaction[],
-  today: Date = new Date(),
-): SubscriptionsView {
+  period: SpendingPeriod = 'this_month',
+  demoDate: string = DEFAULT_PINNED_DEMO_DATE,
+): SubscriptionsViewData {
+  const offset = PERIOD_TO_OFFSET[period]
   const items = txns
-    .filter((t) => t.is_subscription === true && isInCurrentCalendarMonth(t.days_ago, today))
-    .sort((a, b) => b.amount - a.amount)
-  return { items, total: round2(items.reduce((sum, t) => sum + t.amount, 0)) }
+    .filter(
+      (t) => t.month_offset === offset && t.is_subscription === true && t.amount_pence > 0,
+    )
+    .sort((a, b) => b.amount_pence - a.amount_pence)
+  const total_pence = items.reduce((sum, t) => sum + t.amount_pence, 0)
+  return {
+    items,
+    total_pence,
+    monthName: monthNameForOffset(demoDate, offset),
+  }
 }
 
 export interface CategoryDrilldownData {
   rows: Transaction[]
-  total: number
-  byVendor: Record<string, number>
+  total_pence: number
+  byVendorPence: Array<{ vendor: string; total_pence: number }>
+  monthName: string
 }
 
 export function categoryDrilldownView(
   txns: Transaction[],
   category: string,
-  today: Date = new Date(),
+  period: SpendingPeriod = 'this_month',
+  demoDate: string = DEFAULT_PINNED_DEMO_DATE,
 ): CategoryDrilldownData {
+  const offset = PERIOD_TO_OFFSET[period]
   const rows = txns
     .filter(
       (t) =>
-        t.category === category &&
-        t.amount >= 0 &&
-        isInCurrentCalendarMonth(t.days_ago, today),
+        t.month_offset === offset && t.category === category && t.amount_pence > 0,
     )
-    .sort((a, b) => a.days_ago - b.days_ago)
+    .sort((a, b) => b.day - a.day)
 
-  const byVendorRaw: Record<string, number> = {}
-  for (const t of rows) {
-    byVendorRaw[t.vendor] = (byVendorRaw[t.vendor] ?? 0) + t.amount
+  const map = new Map<string, number>()
+  let total_pence = 0
+  for (const tx of rows) {
+    total_pence += tx.amount_pence
+    map.set(tx.vendor, (map.get(tx.vendor) ?? 0) + tx.amount_pence)
   }
+
+  const byVendorPence = Array.from(map.entries())
+    .map(([vendor, val]) => ({ vendor, total_pence: val }))
+    .sort((a, b) => b.total_pence - a.total_pence)
 
   return {
     rows,
-    total: round2(rows.reduce((sum, t) => sum + t.amount, 0)),
-    byVendor: Object.fromEntries(
-      Object.entries(byVendorRaw).map(([v, total]) => [v, round2(total)]),
-    ),
+    total_pence,
+    byVendorPence,
+    monthName: monthNameForOffset(demoDate, offset),
   }
 }
 
 export interface VendorHistoryData {
+  canonicalVendor: string
   rows: Transaction[]
-  thisMonth: Transaction[]
-  total: number
+  periodRows: Transaction[]
+  periodTotalPence: number
+  threeMonthTotalPence: number
   buckets: MonthBucket[]
+  monthName: string
 }
 
 export function vendorHistoryView(
   txns: Transaction[],
   vendor: string,
-  today: Date = new Date(),
+  period: SpendingPeriod = 'this_month',
+  demoDate: string = DEFAULT_PINNED_DEMO_DATE,
 ): VendorHistoryData {
-  const needle = vendor.trim().toLowerCase()
-  // Income is excluded here as it is in every other code path — otherwise a
-  // search for "sal" surfaces the Salary row as a negative bar and a
-  // "-£3,200.00" headline, while get_vendor_breakdown reports no matches.
-  const rows = txns.filter((t) => t.amount >= 0 && t.vendor.toLowerCase().includes(needle))
-  const thisMonth = rows.filter((t) => isInCurrentCalendarMonth(t.days_ago, today))
+  const offset = PERIOD_TO_OFFSET[period]
+  const { canonical, matched } = matchVendorRows(txns, vendor)
+  const sortedAll = [...matched].sort((a, b) =>
+    a.month_offset !== b.month_offset ? a.month_offset - b.month_offset : b.day - a.day,
+  )
+  const periodRows = sortedAll.filter((t) => t.month_offset === offset)
+  const periodTotalPence = periodRows.reduce((sum, t) => sum + t.amount_pence, 0)
+  const threeMonthTotalPence = sortedAll.reduce((sum, t) => sum + t.amount_pence, 0)
+
   return {
-    rows,
-    thisMonth,
-    total: round2(thisMonth.reduce((sum, t) => sum + t.amount, 0)),
-    buckets: bucketByMonth(txns, { vendor: needle, excludeIncome: true }, today),
+    canonicalVendor: canonical || vendor,
+    rows: sortedAll,
+    periodRows,
+    periodTotalPence,
+    threeMonthTotalPence,
+    buckets: bucketByMonth(txns, { vendor, excludeIncome: true }, demoDate),
+    monthName: monthNameForOffset(demoDate, offset),
   }
 }

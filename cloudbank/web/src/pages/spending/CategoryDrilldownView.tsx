@@ -1,25 +1,19 @@
 import { useMemo } from 'react'
 import { BarChart, Bar, Cell, XAxis, YAxis, ResponsiveContainer, Tooltip } from 'recharts'
 import { useFixture } from '../../data/useFixture'
+import { usePersona } from '../../personas/PersonaProvider'
+import { useSpendingView } from '../../agent/SpendingViewProvider'
 import { TransactionRow } from './TransactionRow'
 import { SpendingHeader } from './SpendingHeader'
-import { Card } from '../../components/Card'
 import type { Transaction } from '../../data/fixture'
-import { formatGBP } from '../../util/currency'
-import { categoryDrilldownView } from '../../util/spendingViews'
+import { formatGBPFromPence } from '../../util/currency'
+import { categoryDrilldownView, vendorsEqual } from '../../util/spendingViews'
 
 const EMPTY: Transaction[] = []
-
-// New palette (Plan Task 20): forest green primary + gold secondary tint.
-// Index 0 is forest green; every other bar uses the gold tint so the chart
-// reads as "primary vs supporting" rather than a rainbow.
 const BAR_PRIMARY = '#0a4d35'
-const BAR_SECONDARY = '#c89b3c'
+const BAR_SECONDARY = '#b8892e'
 
 function prettyCategory(category: string): string {
-  // Sentence case: "coffee_shops" -> "Coffee shops" (only the first word is
-  // capitalised). The plan's prose pins this: prettyCategory("coffee_shops")
-  // === "Coffee shops".
   const spaced = category.replace(/_/g, ' ')
   if (spaced.length === 0) return spaced
   return spaced.charAt(0).toUpperCase() + spaced.slice(1)
@@ -31,37 +25,54 @@ interface Props {
 
 export function CategoryDrilldownView({ category }: Props) {
   const fixture = useFixture()
+  const { demoDate } = usePersona()
+  const { period, highlightVendor } = useSpendingView()
   const transactions = fixture?.transactions ?? EMPTY
 
-  // rows, total and byVendor all describe the same population — this month's
-  // transactions in this category. Scoping them together is what keeps the
-  // card from printing a this-month total above an all-time row count.
-  const { rows: filtered, total, byVendor } = useMemo(
-    () => categoryDrilldownView(transactions, category),
-    [transactions, category],
+  const { rows: filtered, total_pence, byVendorPence, monthName } = useMemo(
+    () => categoryDrilldownView(transactions, category, period, demoDate),
+    [transactions, category, period, demoDate],
   )
-  const barData = Object.entries(byVendor).map(([name, value]) => ({ name, value }))
+  const barData = byVendorPence.map(({ vendor, total_pence: val }) => ({
+    name: vendor,
+    value: val,
+  }))
 
   return (
-    <div className="pb-4">
+    <div className="pb-6">
       <SpendingHeader breadcrumb={prettyCategory(category)} />
 
-      <Card className="mt-2">
-        <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium">This month</div>
-        <div className="text-[28px] font-bold text-brand-text mt-1 leading-none">£{formatGBP(total)}</div>
-        <div className="text-[13px] text-brand-muted mt-1">{filtered.length} transactions</div>
-      </Card>
+      <div className="py-4 border-b border-brand-divider">
+        <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium">
+          {monthName} · {prettyCategory(category)}
+        </div>
+        <div className="text-[28px] font-bold text-brand-text mt-1 leading-none tabular-nums">
+          {formatGBPFromPence(total_pence)}
+        </div>
+        <div className="text-[13px] text-brand-muted mt-1">
+          {filtered.length} {filtered.length === 1 ? 'transaction' : 'transactions'}
+        </div>
+      </div>
 
       {barData.length > 0 && (
-        <Card data-chart-slot="category_vendors" className="mt-3">
-          <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium mb-2">By vendor</div>
-          <div style={{ width: '100%', height: 160 }}>
+        <div
+          data-chart-slot="category_vendors"
+          className="py-4 border-b border-brand-divider"
+        >
+          <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium mb-2">
+            By Merchant
+          </div>
+          <div style={{ width: '100%', height: 148 }}>
             <ResponsiveContainer>
-              <BarChart data={barData} layout="vertical" margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+              <BarChart
+                data={barData}
+                layout="vertical"
+                margin={{ top: 4, right: 16, left: 0, bottom: 4 }}
+              >
                 <XAxis type="number" hide />
-                <YAxis type="category" dataKey="name" width={120} tick={{ fontSize: 11 }} />
-                <Tooltip formatter={(v: number) => `£${formatGBP(v)}`} />
-                <Bar dataKey="value" isAnimationActive={false}>
+                <YAxis type="category" dataKey="name" width={116} tick={{ fontSize: 11 }} />
+                <Tooltip formatter={(v: number) => formatGBPFromPence(v)} />
+                <Bar dataKey="value" isAnimationActive={false} radius={[0, 4, 4, 0]}>
                   {barData.map((_, i) => (
                     <Cell key={i} fill={i === 0 ? BAR_PRIMARY : BAR_SECONDARY} />
                   ))}
@@ -69,14 +80,22 @@ export function CategoryDrilldownView({ category }: Props) {
               </BarChart>
             </ResponsiveContainer>
           </div>
-        </Card>
+        </div>
       )}
 
-      <Card className="mt-3 p-0 overflow-hidden">
+      <div className="mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider">
         {filtered.map((t) => (
-          <TransactionRow key={t.id} transaction={t} highlighted={t.is_anomaly === true} />
+          <TransactionRow
+            key={t.id}
+            transaction={t}
+            highlighted={
+              highlightVendor
+                ? vendorsEqual(t.vendor, highlightVendor)
+                : Boolean(t.is_anomaly)
+            }
+          />
         ))}
-      </Card>
+      </div>
     </div>
   )
 }

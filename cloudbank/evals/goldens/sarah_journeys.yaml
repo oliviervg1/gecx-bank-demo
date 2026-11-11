@@ -1,0 +1,155 @@
+common_session_parameters:
+  persona_id: "sarah"
+  first_name: "Sarah"
+  demo_date: "2026-11-24"
+  time_of_day: "evening"
+  customer_snapshot:
+    user:
+      first_name: "Sarah"
+      last_name: "Okonkwo"
+      age: 56
+      location: "Bristol, UK"
+      employment: "Head of Operations"
+      email: "sarah.okonkwo@example.com"
+      annual_income_pence: 9800000
+      goals:
+        - "Clear the mortgage before retirement"
+        - "Keep £25,000 emergency reserve topped up"
+    accounts:
+      current:
+        name: "Cloudbank Everyday Account"
+        sort_code: "00-00-99"
+        account_number_last4: "6612"
+        balance_pence: 934015
+        currency: "GBP"
+      savings:
+        name: "Cloudbank Premier Saver"
+        balance_pence: 2150000
+        gross_rate_bps: 441
+        aer_bps: 450
+        monthly_contribution_pence: 40000
+        goal_name: "Retirement Emergency Reserve"
+        goal_target_pence: 2500000
+      mortgage:
+        balance_pence: 9650000
+        address: "8 Clifton Vale, Bristol"
+        interest_rate_bps: 405
+        rate_type: "Fixed"
+        fixed_until: "2028-03-31"
+        term_remaining_months: 90
+        next_payment:
+          amount_pence: 124510
+          day_of_month: 2
+        annual_overpayment_allowance_pence: 965000
+        overpaid_this_year_pence: 600000
+        renewal_options:
+          - id: "fix-2yr"
+            label: "2-year Fixed"
+            term_years: 2
+            rate_bps: 389
+          - id: "fix-5yr"
+            label: "5-year Fixed"
+            term_years: 5
+            rate_bps: 374
+    transactions:
+      - { id: "txn-salary-s", month_offset: 0, day: 1, vendor: "Salary", category: "income", amount_pence: -610000 }
+      - { id: "txn-mortgage-s", month_offset: 0, day: 2, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 124510, is_subscription: true }
+      - { id: "txn-council-s", month_offset: 0, day: 4, vendor: "Bristol City Council", category: "bills", amount_pence: 21500, is_subscription: true }
+      - { id: "txn-boston", month_offset: 0, day: 5, vendor: "Boston Tea Party", category: "coffee_shops", amount_pence: 440 }
+      - { id: "txn-energy-s", month_offset: 0, day: 6, vendor: "OVO Energy", category: "bills", amount_pence: 11820, is_subscription: true }
+      - { id: "txn-ms-s", month_offset: 0, day: 7, vendor: "M&S Food", category: "groceries", amount_pence: 4210 }
+      - { id: "txn-firstbus", month_offset: 0, day: 8, vendor: "First Bus", category: "transport", amount_pence: 6200 }
+      - { id: "txn-waitrose", month_offset: 0, day: 10, vendor: "Waitrose", category: "groceries", amount_pence: 8840 }
+      - { id: "txn-broadband-s", month_offset: 0, day: 11, vendor: "BT", category: "bills", amount_pence: 5400, is_subscription: true }
+      - { id: "txn-rest-s", month_offset: 0, day: 12, vendor: "The Ox", category: "eating_out", amount_pence: 9600 }
+      - { id: "txn-fuel-s", month_offset: 0, day: 14, vendor: "Esso", category: "transport", amount_pence: 5830 }
+      - { id: "txn-nattrust", month_offset: 0, day: 16, vendor: "National Trust", category: "subscriptions", amount_pence: 750, is_subscription: true }
+      - { id: "txn-waitrose-2", month_offset: 0, day: 18, vendor: "Waitrose", category: "groceries", amount_pence: 9415 }
+      - { id: "txn-jl-s", month_offset: 0, day: 19, vendor: "John Lewis", category: "shopping", amount_pence: 14500 }
+      - { id: "txn-theatre", month_offset: 0, day: 20, vendor: "Bristol Old Vic", category: "entertainment", amount_pence: 7200 }
+      - { id: "txn-boston-2", month_offset: 0, day: 22, vendor: "Boston Tea Party", category: "coffee_shops", amount_pence: 880 }
+      - { id: "txn-insurance", month_offset: 0, day: 23, vendor: "Aviva Home Insurance", category: "subscriptions", amount_pence: 9600, is_subscription: true, is_anomaly: true }
+      - { id: "txn-salary-s-2", month_offset: 1, day: 1, vendor: "Salary", category: "income", amount_pence: -610000 }
+      - { id: "txn-mortgage-s-2", month_offset: 1, day: 2, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 124510, is_subscription: true }
+      - { id: "txn-council-s-2", month_offset: 1, day: 4, vendor: "Bristol City Council", category: "bills", amount_pence: 21500, is_subscription: true }
+      - { id: "txn-energy-s-2", month_offset: 1, day: 6, vendor: "OVO Energy", category: "bills", amount_pence: 11820, is_subscription: true }
+      - { id: "txn-firstbus-2", month_offset: 1, day: 8, vendor: "First Bus", category: "transport", amount_pence: 6200 }
+      - { id: "txn-ms-s2", month_offset: 1, day: 9, vendor: "M&S Food", category: "groceries", amount_pence: 3875 }
+      - { id: "txn-broadband-s-2", month_offset: 1, day: 11, vendor: "BT", category: "bills", amount_pence: 5400, is_subscription: true }
+      - { id: "txn-waitrose-3", month_offset: 1, day: 13, vendor: "Waitrose", category: "groceries", amount_pence: 9105 }
+      - { id: "txn-boston-3", month_offset: 1, day: 15, vendor: "Boston Tea Party", category: "coffee_shops", amount_pence: 440 }
+      - { id: "txn-nattrust-2", month_offset: 1, day: 16, vendor: "National Trust", category: "subscriptions", amount_pence: 750, is_subscription: true }
+      - { id: "txn-fuel-s2", month_offset: 1, day: 18, vendor: "Esso", category: "transport", amount_pence: 6175 }
+      - { id: "txn-rest-s2", month_offset: 1, day: 20, vendor: "The Ox", category: "eating_out", amount_pence: 8850 }
+      - { id: "txn-jl-s2", month_offset: 1, day: 21, vendor: "John Lewis", category: "shopping", amount_pence: 9840 }
+      - { id: "txn-insurance-2", month_offset: 1, day: 23, vendor: "Aviva Home Insurance", category: "subscriptions", amount_pence: 4800, is_subscription: true }
+      - { id: "txn-waitrose-4", month_offset: 1, day: 25, vendor: "Waitrose", category: "groceries", amount_pence: 8560 }
+      - { id: "txn-garden", month_offset: 1, day: 27, vendor: "Bristol Garden Centre", category: "shopping", amount_pence: 6720 }
+      - { id: "txn-salary-s-3", month_offset: 2, day: 1, vendor: "Salary", category: "income", amount_pence: -610000 }
+      - { id: "txn-mortgage-s-3", month_offset: 2, day: 2, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 124510, is_subscription: true }
+      - { id: "txn-council-s-3", month_offset: 2, day: 4, vendor: "Bristol City Council", category: "bills", amount_pence: 21500, is_subscription: true }
+      - { id: "txn-energy-s-3", month_offset: 2, day: 6, vendor: "OVO Energy", category: "bills", amount_pence: 11820, is_subscription: true }
+      - { id: "txn-firstbus-3", month_offset: 2, day: 8, vendor: "First Bus", category: "transport", amount_pence: 6200 }
+      - { id: "txn-broadband-s-3", month_offset: 2, day: 11, vendor: "BT", category: "bills", amount_pence: 5400, is_subscription: true }
+      - { id: "txn-ms-s3", month_offset: 2, day: 12, vendor: "M&S Food", category: "groceries", amount_pence: 4520 }
+      - { id: "txn-nattrust-3", month_offset: 2, day: 16, vendor: "National Trust", category: "subscriptions", amount_pence: 750, is_subscription: true }
+      - { id: "txn-waitrose-5", month_offset: 2, day: 18, vendor: "Waitrose", category: "groceries", amount_pence: 7990 }
+      - { id: "txn-boston-4", month_offset: 2, day: 20, vendor: "Boston Tea Party", category: "coffee_shops", amount_pence: 440 }
+      - { id: "txn-rest-s3", month_offset: 2, day: 22, vendor: "Pasta Loco", category: "eating_out", amount_pence: 5420 }
+      - { id: "txn-insurance-3", month_offset: 2, day: 23, vendor: "Aviva Home Insurance", category: "subscriptions", amount_pence: 4800, is_subscription: true }
+      - { id: "txn-gwr-s3", month_offset: 2, day: 24, vendor: "Great Western Railway", category: "transport", amount_pence: 11400 }
+      - { id: "txn-waitrose-6", month_offset: 2, day: 25, vendor: "Waitrose", category: "groceries", amount_pence: 9200 }
+      - { id: "txn-theatre-2", month_offset: 2, day: 26, vendor: "Bristol Old Vic", category: "entertainment", amount_pence: 6400 }
+      - { id: "txn-jl-s3", month_offset: 2, day: 27, vendor: "John Lewis", category: "shopping", amount_pence: 18500 }
+      - { id: "txn-fuel-s3", month_offset: 2, day: 28, vendor: "Esso", category: "transport", amount_pence: 6100 }
+
+conversations:
+  - conversation: "sarah_overpayment_erc_cap_and_savings_journey"
+    tags:
+      - "P1"
+      - "mortgage"
+      - "allowance"
+    turns:
+      - user: "What happens if I overpay my mortgage by £400 a month?"
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "MORTGAGES"
+              topic_hint:
+                $matchType: "ignore"
+          - action: transfer_to_agent
+            args:
+              agent: "mortgage_agent"
+          - action: assist_mortgages
+            args:
+              query_type: "overpayment_projection"
+              monthly_overpayment: 400.0
+        agent:
+          - "# silent"
+          - "Starting from November, overpaying £400 a month adds £4,800 in year one, which exceeds your remaining £3,650 fee-free allowance by £1,150 and could incur an early repayment charge. It would shave 2 years off your remaining term (down to 5 years and 6 months) and save £4,340.38 in total interest. These figures are an indicative illustration only and not personalised mortgage advice."
+
+      - user: "What interest rate am I earning on my savings pot right now?"
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              switch_intent: "SAVINGS"
+          - action: transfer_to_agent
+            args:
+              agent: "savings_agent"
+          - action: assist_savings
+            args:
+              query_type: "interest_rate"
+        agent:
+          - "# silent"
+          - "In November, your Cloudbank Premier Saver earns 4.50% AER (4.41% gross compounded monthly). On your current £21,500 balance alone, that adds £967.55 in interest over 12 months."
+
+      - user: "Lovely, thank you — goodbye."
+        tool_calls:
+          - action: assist_savings
+            args:
+              switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Sarah. Have a great rest of your day, and goodbye."

@@ -1,0 +1,9 @@
+{
+  "name": "route_banking_intent",
+  "displayName": "route_banking_intent",
+  "pythonFunction": {
+    "name": "route_banking_intent",
+    "pythonCode": "tools/route_banking_intent/python_function/python_code.py",
+    "description": "Classify the caller's top-level retail banking request, stage silent specialist routing, update screen navigation, or close the session."
+  }
+}
