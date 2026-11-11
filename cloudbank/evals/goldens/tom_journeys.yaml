@@ -103,7 +103,7 @@ conversations:
               query_type: "summary"
         agent:
           - "# silent"
-          - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000 suggests borrowing up to £189,000 — or a property budget around £224,000 once your £35,000 First Home Deposit is complete (£20,800 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
+          - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000 suggests borrowing up to £189,000, or a property budget around £224,000 once your £35,000 First Home Deposit is complete (£20,800 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
 
       - user: "Yes, check my First Home Deposit savings summary."
         tool_calls:
@@ -118,9 +118,9 @@ conversations:
               query_type: "summary"
         agent:
           - "# silent"
-          - "As of November, your First Home Deposit in Cloudbank First Home Saver holds £14,200 toward your £35,000 target at 4.75% AER, with £350 going in each month — putting you on track to reach your goal in 47 months (October 2030)."
+          - "As of November, your First Home Deposit in Cloudbank First Home Saver holds £14,200 toward your £35,000 target at 4.75% AER, with £350 going in each month, putting you on track to reach your goal in 47 months (October 2030)."
 
-      - user: "Cheers, that's all — goodbye."
+      - user: "Cheers, that's all, goodbye."
         tool_calls:
           - action: assist_savings
             args:

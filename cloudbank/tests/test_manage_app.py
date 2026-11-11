@@ -1,14 +1,15 @@
-"""Offline unit tests for manage_ces_app overwrite import & tool verification."""
+"""Offline unit tests for manage_app overwrite import, config fallback, and tool verification."""
 
 from __future__ import annotations
 
-from pathlib import Path
-from types import SimpleNamespace
-from unittest.mock import MagicMock
-import zipfile
+import argparse
 import io
 import json
 import sys
+import zipfile
+from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -17,13 +18,31 @@ SCRIPTS_DIR = CLOUDBANK_ROOT / "scripts"
 if str(SCRIPTS_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPTS_DIR))
 
+import manage_app  # noqa: E402
 from gecx_workspace import load_workspace  # noqa: E402
-import manage_ces_app  # noqa: E402
+
+
+def test_workspace_loads_example_fallback_and_env_overrides(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify gecx_workspace falls back to gecx-config.example.json and honors CLOUDBANK_* env vars."""
+    monkeypatch.setenv("CLOUDBANK_GCP_PROJECT_ID", "demo-bank-proj")
+    monkeypatch.setenv("CLOUDBANK_LOCATION", "eu")
+    monkeypatch.setenv("CLOUDBANK_APP_ID", "11111111-2222-3333-4444-555555555555")
+
+    ws = load_workspace(CLOUDBANK_ROOT / "gecx-config.json")
+    assert ws.project_id == "demo-bank-proj"
+    assert ws.location == "eu"
+    assert ws.prod_app_id == "11111111-2222-3333-4444-555555555555"
+    assert (
+        ws.prod_app_resource
+        == "projects/demo-bank-proj/locations/eu/apps/11111111-2222-3333-4444-555555555555"
+    )
 
 
 def test_expected_bundle_tool_names_matches_cloudbank_manifest() -> None:
-    ws = load_workspace(CLOUDBANK_ROOT / "gecx-config.json")
-    expected = manage_ces_app.expected_bundle_tool_names(ws.app_dir)
+    ws = load_workspace(CLOUDBANK_ROOT)
+    expected = manage_app.expected_bundle_tool_names(ws.app_dir)
     assert expected == {
         "assist_everyday_banking",
         "assist_mortgages",
@@ -33,35 +52,56 @@ def test_expected_bundle_tool_names_matches_cloudbank_manifest() -> None:
     }
 
 
+def test_trimmed_cli_omits_destructive_branch_and_stale_cleanup_commands() -> None:
+    """Ensure prefix-based cleanup-stale and branch deletion commands were removed."""
+    parser = manage_app.build_parser()
+    subparsers_actions = [
+        action
+        for action in parser._actions
+        if isinstance(action, argparse._SubParsersAction)
+    ]
+    assert len(subparsers_actions) == 1
+    commands = set(subparsers_actions[0].choices.keys())
+    assert commands == {
+        "push",
+        "resolve-resource",
+        "list-versions",
+        "create-version",
+        "list-deployments",
+        "create-deployment",
+        "promote",
+    }
+
+
 def test_zip_app_bundle_overrides_display_name_without_mutating_disk() -> None:
-    ws = load_workspace(CLOUDBANK_ROOT / "gecx-config.json")
-    archive_bytes = manage_ces_app.zip_app_bundle(ws.app_dir, "Cloudbank-sandbox")
+    ws = load_workspace(CLOUDBANK_ROOT)
+    archive_bytes = manage_app.zip_app_bundle(ws.app_dir, "Cloudbank-staging")
     with zipfile.ZipFile(io.BytesIO(archive_bytes)) as zf:
         app_json = json.loads(zf.read("agent/app.json").decode("utf-8"))
-        assert app_json["displayName"] == "Cloudbank-sandbox"
+        assert app_json["displayName"] == "Cloudbank-staging"
         assert "agent/tools/route_banking_intent/route_banking_intent.json" in zf.namelist()
     disk_app_json = json.loads((ws.app_dir / "app.json").read_text(encoding="utf-8"))
     assert disk_app_json["displayName"] == "Cloudbank"
 
 
 def test_push_app_fails_closed_on_import_warnings(monkeypatch: pytest.MonkeyPatch) -> None:
-    ws = load_workspace(CLOUDBANK_ROOT / "gecx-config.json")
+    ws = load_workspace(CLOUDBANK_ROOT)
     fake_op = MagicMock()
     fake_op.result.return_value = SimpleNamespace(
         warnings=["Skipped invalid tool python_code.py"]
     )
     fake_apps = MagicMock()
     fake_apps.import_app.return_value = fake_op
-    monkeypatch.setattr(manage_ces_app, "apps_client", lambda _ws: fake_apps)
+    monkeypatch.setattr(manage_app, "apps_client", lambda _ws: fake_apps)
 
     with pytest.raises(RuntimeError, match="reported 1 warning"):
-        manage_ces_app.push_app(ws, ws.prod_app_resource, ws.app_name)
+        manage_app.push_app(ws, ws.prod_app_resource, ws.app_name)
 
 
 def test_push_app_verifies_tools_and_ignores_builtin_system_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ws = load_workspace(CLOUDBANK_ROOT / "gecx-config.json")
+    ws = load_workspace(CLOUDBANK_ROOT)
     fake_op = MagicMock()
     fake_op.result.return_value = SimpleNamespace(warnings=[])
     fake_apps = MagicMock()
@@ -79,10 +119,10 @@ def test_push_app_verifies_tools_and_ignores_builtin_system_tools(
     fake_tools_client = MagicMock()
     fake_tools_client.list_tools.return_value = remote_tools
 
-    monkeypatch.setattr(manage_ces_app, "apps_client", lambda _ws: fake_apps)
-    monkeypatch.setattr(manage_ces_app, "tools_client", lambda _res: fake_tools_client)
+    monkeypatch.setattr(manage_app, "apps_client", lambda _ws: fake_apps)
+    monkeypatch.setattr(manage_app, "tools_client", lambda _res: fake_tools_client)
 
-    manage_ces_app.push_app(ws, ws.prod_app_resource, ws.app_name)
+    manage_app.push_app(ws, ws.prod_app_resource, ws.app_name)
     fake_apps.import_app.assert_called_once()
     _, kwargs = fake_apps.import_app.call_args
     assert kwargs["conflict_strategy"] == "OVERWRITE"
@@ -92,21 +132,20 @@ def test_push_app_verifies_tools_and_ignores_builtin_system_tools(
 def test_verify_expected_tools_rejects_missing_or_orphan_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    ws = load_workspace(CLOUDBANK_ROOT / "gecx-config.json")
+    ws = load_workspace(CLOUDBANK_ROOT)
     remote_tools = [
         SimpleNamespace(name="p/l/a/tools/1", display_name="route_banking_intent", system_tool=None),
         SimpleNamespace(name="p/l/a/tools/2", display_name="assist_everyday_banking", system_tool=None),
         SimpleNamespace(name="p/l/a/tools/3", display_name="assist_savings", system_tool=None),
-        # assist_mortgages missing, legacy get_overview lingering as orphan!
         SimpleNamespace(name="p/l/a/tools/5", display_name="search_help", system_tool=None),
         SimpleNamespace(name="p/l/a/tools/old", display_name="get_overview", system_tool=None),
     ]
     fake_tools_client = MagicMock()
     fake_tools_client.list_tools.return_value = remote_tools
-    monkeypatch.setattr(manage_ces_app, "tools_client", lambda _res: fake_tools_client)
+    monkeypatch.setattr(manage_app, "tools_client", lambda _res: fake_tools_client)
 
     with pytest.raises(
         RuntimeError,
         match=r"missing=\['assist_mortgages'\], orphans=\['get_overview'\]",
     ):
-        manage_ces_app.verify_expected_tools(ws, ws.prod_app_resource)
+        manage_app.verify_expected_tools(ws, ws.prod_app_resource)

@@ -23,9 +23,9 @@ Call {@TOOL: assist_mortgages} with query_type ("summary", "next_payment", "over
 </step>
 
 <step name="Handle_Mortgage_Pivot_Or_Close">
-<trigger>The caller accepts an offer to review their savings deposit pot, asks about everyday banking or savings, asks to open Home or Profile, asks what else you can help with, or says goodbye.</trigger>
+<trigger>The caller accepts or declines an offer to review their savings deposit pot, asks about everyday banking or savings, asks to open Home or Profile, asks what else you can help with, or says goodbye.</trigger>
 <action>
-Call {@TOOL: assist_mortgages} with switch_intent ("EVERYDAY_BANKING", "SAVINGS", "NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES", or "FAREWELL"), then say what its agent_action tells you to say.
+Call {@TOOL: assist_mortgages} passing confirm_pivot ("yes" or "no") when they reply to the savings deposit pot offer without naming another query, or switch_intent ("EVERYDAY_BANKING", "SAVINGS", "NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES", or "FAREWELL"), then say what its agent_action tells you to say.
 </action>
 </step>
 </subtask>

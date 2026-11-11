@@ -1,11 +1,13 @@
 import logging
 import math
-from typing import Literal
+from datetime import date
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
 _PLATFORM_CURRENT_DATE_KEY = "current_date"
 _DEFAULT_DEMO_DATE = "2026-11-24"
+_DEFAULT_DEMO_YMD = (2026, 11, 24)
 _MAX_PROJECTION_MONTHS = 600
 _MONTH_NAMES = (
     "January",
@@ -60,10 +62,13 @@ def assist_savings(
         A single-key dict with ``agent_action`` carrying the spoken reply.
     """
     try:
+        # Handle spoke pivots and local navigation before consuming handoff_context.
+        clean_switch = (switch_intent or "").strip()
+        if clean_switch:
+            return _handle_switch_intent(clean_switch)
+
         handoff = dict(context.state.get("handoff_context") or {})
         context.state["handoff_context"] = {}
-        if switch_intent.strip():
-            return _handle_switch_intent(switch_intent.strip())
         snapshot = _normalize_snapshot(context.state.get("customer_snapshot") or {})
         if not snapshot:
             return {
@@ -71,7 +76,7 @@ def assist_savings(
             }
         return _dispatch_savings(
             snapshot["savings"],
-            query_type.strip(),
+            (query_type or "").strip(),
             _to_pence(extra_monthly_amount),
             _to_pence(custom_target_amount),
             handoff,
@@ -84,7 +89,11 @@ def assist_savings(
 
 
 def _dispatch_savings(
-    sav: dict, query: str, extra_pence: int, custom_target_pence: int, handoff: dict
+    sav: dict[str, Any],
+    query: str,
+    extra_pence: int,
+    custom_target_pence: int,
+    handoff: dict[str, Any],
 ) -> dict:
     """Resolve handoff defaults and dispatch a savings query."""
     anchor_year, anchor_month, _ = _parse_demo_date()
@@ -107,7 +116,12 @@ def _dispatch_savings(
     if query == "projection":
         context.state["unclear_count"] = "0"
         return _handle_projection(
-            sav, extra_pence, custom_target_pence, attributed_vendor, anchor_year, anchor_month
+            sav,
+            extra_pence,
+            custom_target_pence,
+            attributed_vendor,
+            anchor_year,
+            anchor_month,
         )
     if query == "summary":
         context.state["unclear_count"] = "0"
@@ -135,7 +149,7 @@ def _project_savings_goal(
     monthly_contribution_pence: int,
     extra_monthly_pence: int,
     goal_target_pence: int,
-) -> dict:
+) -> dict[str, Any]:
     """Simulate month-by-month compound savings growth capped at 600 months."""
     if balance_pence >= goal_target_pence:
         return {
@@ -187,7 +201,7 @@ def _target_month_label(anchor_year: int, anchor_month: int, months_ahead: int) 
     return f"{_MONTH_NAMES[target_month - 1]} {target_year}"
 
 
-def _normalize_snapshot(raw: dict) -> dict:
+def _normalize_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
     """Coerce protobuf Struct floats on accounts.savings into exact ints."""
     if not isinstance(raw, dict) or "accounts" not in raw:
         return {}
@@ -208,20 +222,30 @@ def _normalize_snapshot(raw: dict) -> dict:
 
 
 def _parse_demo_date() -> tuple[int, int, int]:
-    """Parse YYYY-MM-DD by integer components without timezone shifts."""
+    """Parse and validate YYYY-MM-DD as a real calendar date in 2000..2100."""
     raw = (
         str(context.state.get("demo_date") or "").strip()
         or str(context.state.get(_PLATFORM_CURRENT_DATE_KEY) or "").strip()
         or _DEFAULT_DEMO_DATE
     )
     parts = raw.split("-")
-    if len(parts) == 3 and all(p.isdigit() for p in parts):
+    if (
+        len(parts) == 3
+        and len(parts[0]) == 4
+        and len(parts[1]) == 2
+        and len(parts[2]) == 2
+        and all(p.isdigit() for p in parts)
+    ):
         year = int(parts[0])
         month = int(parts[1])
         day = int(parts[2])
-        if 1 <= month <= 12 and 1 <= day <= 31:
-            return year, month, day
-    return 2026, 11, 24
+        if 2000 <= year <= 2100:
+            try:
+                date(year, month, day)
+                return year, month, day
+            except ValueError:
+                pass
+    return _DEFAULT_DEMO_YMD
 
 
 def _format_gbp(amount_pence: int) -> str:
@@ -239,7 +263,7 @@ def _format_bps(rate_bps: int) -> str:
     return f"{whole}.{frac:02d}%"
 
 
-def _emit_ui_view(payload: dict) -> None:
+def _emit_ui_view(payload: dict[str, Any]) -> None:
     """Increment ui_view_state.seq monotonically and store payload."""
     current = dict(context.state.get("ui_view_state") or {})
     next_seq = int(current.get("seq") or 0) + 1
@@ -248,7 +272,9 @@ def _emit_ui_view(payload: dict) -> None:
     context.state["ui_view_state"] = updated
 
 
-def _handle_summary(sav: dict, anchor_year: int, anchor_month: int) -> dict:
+def _handle_summary(
+    sav: dict[str, Any], anchor_year: int, anchor_month: int
+) -> dict:
     """Report current savings balance, AER, monthly contribution, and baseline goal date."""
     statement_month = _MONTH_NAMES[anchor_month - 1]
     base = _project_savings_goal(
@@ -288,14 +314,16 @@ def _handle_summary(sav: dict, anchor_year: int, anchor_month: int) -> dict:
             f"As of {statement_month}, your {sav['goal_name']} in {sav['name']} holds "
             f"{_format_gbp(sav['balance_pence'])} toward your {_format_gbp(sav['goal_target_pence'])} target "
             f"at {_format_bps(sav['aer_bps'])} AER, with {_format_gbp(sav['monthly_contribution_pence'])} "
-            f"going in each month — putting you on track to reach your goal in {months} months ({target_label})."
+            f"going in each month, putting you on track to reach your goal in {months} months ({target_label})."
         )
     }
 
 
-def _handle_interest_rate(sav: dict, statement_month: str) -> dict:
+def _handle_interest_rate(sav: dict[str, Any], statement_month: str) -> dict:
     """Report AER, gross nominal rate, and 12-month compounded interest on current balance."""
-    annual_int = _annual_interest_on_balance(sav["balance_pence"], sav["gross_rate_bps"])
+    annual_int = _annual_interest_on_balance(
+        sav["balance_pence"], sav["gross_rate_bps"]
+    )
     context.state["savings_state"] = {
         "last_extra_monthly_pence": 0,
         "last_custom_target_pence": 0,
@@ -311,9 +339,9 @@ def _handle_interest_rate(sav: dict, statement_month: str) -> dict:
 
 
 def _format_projection_reply(
-    sav: dict,
-    base: dict,
-    proj: dict,
+    sav: dict[str, Any],
+    base: dict[str, Any],
+    proj: dict[str, Any],
     extra_pence: int,
     target_pence: int,
     handoff_vendor: str,
@@ -359,7 +387,7 @@ def _format_projection_reply(
 
 
 def _handle_projection(
-    sav: dict,
+    sav: dict[str, Any],
     extra_pence: int,
     custom_target_pence: int,
     handoff_vendor: str,
@@ -368,26 +396,47 @@ def _handle_projection(
 ) -> dict:
     """Compare baseline vs extra monthly contribution timeline and sync SavingsPage."""
     statement_month = _MONTH_NAMES[anchor_month - 1]
-    target_pence = custom_target_pence if custom_target_pence > 0 else sav["goal_target_pence"]
+    target_pence = (
+        custom_target_pence if custom_target_pence > 0 else sav["goal_target_pence"]
+    )
     base = _project_savings_goal(
-        sav["balance_pence"], sav["gross_rate_bps"], sav["monthly_contribution_pence"], 0, target_pence
+        sav["balance_pence"],
+        sav["gross_rate_bps"],
+        sav["monthly_contribution_pence"],
+        0,
+        target_pence,
     )
     proj = _project_savings_goal(
-        sav["balance_pence"], sav["gross_rate_bps"], sav["monthly_contribution_pence"], extra_pence, target_pence
+        sav["balance_pence"],
+        sav["gross_rate_bps"],
+        sav["monthly_contribution_pence"],
+        extra_pence,
+        target_pence,
     )
 
     context.state["savings_state"] = {
         "last_extra_monthly_pence": extra_pence,
         "last_custom_target_pence": custom_target_pence,
     }
-    view_payload = {"page": "savings", "extra_monthly_pence": extra_pence}
+    view_payload: dict[str, Any] = {
+        "page": "savings",
+        "extra_monthly_pence": extra_pence,
+    }
     if custom_target_pence > 0:
         view_payload["custom_target_pence"] = custom_target_pence
     _emit_ui_view(view_payload)
 
     return {
         "agent_action": _format_projection_reply(
-            sav, base, proj, extra_pence, target_pence, handoff_vendor, statement_month, anchor_year, anchor_month
+            sav,
+            base,
+            proj,
+            extra_pence,
+            target_pence,
+            handoff_vendor,
+            statement_month,
+            anchor_year,
+            anchor_month,
         )
     }
 
@@ -395,9 +444,10 @@ def _handle_projection(
 def _handle_switch_intent(switch_intent: str) -> dict:
     """Handle local navigation, capabilities, farewell, or cross-spoke pivots."""
     if switch_intent == "FAREWELL":
-        first_name = (context.state.get("first_name") or "").strip()
+        first_name = str(context.state.get("first_name") or "").strip()
         context.state["unclear_count"] = "0"
         context.state["savings_state"] = {}
+        context.state["handoff_context"] = {}
         context.state["escalation_reason"] = "CALL_COMPLETED"
         context.state["call_complete"] = "true"
         suffix = f", {first_name}" if first_name else ""
@@ -415,7 +465,7 @@ def _handle_switch_intent(switch_intent: str) -> dict:
         if switch_intent == "NAVIGATE_PROFILE":
             _emit_ui_view({"page": "profile"})
             return {
-                "agent_action": "I have opened your Profile page on screen. What else can I help you with?"
+                "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
             }
         return {
             "agent_action": "I can help with everyday banking and spending, your savings pot and goal projections, or your mortgage payments, overpayments, and fixed-rate renewal options. Which area would you like to explore?"
@@ -423,7 +473,9 @@ def _handle_switch_intent(switch_intent: str) -> dict:
 
     if switch_intent in ("EVERYDAY_BANKING", "MORTGAGES"):
         target = (
-            "everyday_banking_agent" if switch_intent == "EVERYDAY_BANKING" else "mortgage_agent"
+            "everyday_banking_agent"
+            if switch_intent == "EVERYDAY_BANKING"
+            else "mortgage_agent"
         )
         label = (
             "everyday banking and spending"
@@ -451,11 +503,12 @@ def _handle_unclear() -> dict:
             "agent_action": "Sorry, I did not quite catch that. Would you like help with your savings pot, everyday banking, or your mortgage?"
         }
     context.state["unclear_count"] = "0"
+    context.state["savings_state"] = {}
     _emit_ui_view({"page": "home"})
     return {
         "agent_action": (
             "I have opened your Home summary on screen. I can help with everyday banking and "
-            "spending, savings pots and goal projections, or mortgage payments, overpayments, "
-            "and fixed-rate renewal options. Which would you like to look at?"
+            "spending, your savings pot and goal projections, or your mortgage payments, "
+            "overpayments, and fixed-rate renewal options. Which area would you like to explore?"
         )
     }
