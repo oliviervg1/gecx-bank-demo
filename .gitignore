@@ -17,13 +17,6 @@ htmlcov/
 .venv
 venv/
 env/
-.python-version
-
-# Linked worktrees (created by superpowers worktree skill)
-.claude/worktrees/
-
-# Gemini sub-agent discovery symlink (created by setup.sh; per-machine)
-.gemini/agents
 
 # Node / web
 node_modules/
@@ -42,17 +35,23 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 .pnpm-store/
+playwright-report/
+test-results/
 
-# Editor / IDE
+# Editor / IDE / local agent config
 .idea/
 .vscode/
+.claude/
+.gemini/
+.active-project
 *.swp
 *.swo
 *~
 .DS_Store
 Thumbs.db
 
-# Env / secrets
+# Local GCP deployment config & secrets
+cloudbank/gecx-config.json
 .env
 .env.local
 .env.*.local
@@ -70,16 +69,9 @@ application_default_credentials.json
 gha-creds-*.json
 secrets/
 
-# Tooling
-.claude/settings.local.json
-.gemini/settings.local.json
-
-# Brainstorming / scratch
-.superpowers/
+# Scratch & evaluation reports
 tmp/
 .tmp/
-
-# cxas-agent-foundry per-run eval / lint reports
 **/eval-reports/
 **/experiment_log.md
 **/results.tsv

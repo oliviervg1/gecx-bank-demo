@@ -1,8 +1,8 @@
 {
-  "gcp_project_id": "cxas-labs-emea",
+  "gcp_project_id": "<your-gcp-project-id>",
   "location": "eu",
   "app_name": "Cloudbank",
-  "deployed_app_id": "c9019405-024c-4318-9301-13f8c5688114",
+  "deployed_app_id": "<your-deployed-app-uuid>",
   "app_dir": "cxas_app/",
   "model": "gemini-composite-v2",
   "modality": "audio",

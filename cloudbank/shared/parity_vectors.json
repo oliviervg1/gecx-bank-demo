@@ -10,7 +10,7 @@
     "target_year_month": "From demo_date (year, month in 1..12) and months_to_goal m: total_m = year * 12 + (month - 1) + m; target_year = total_m // 12; target_month = (total_m % 12) + 1.",
     "simulate_mortgage": "If opening_balance_pence <= 0: months = 0, total_interest_pence = 0, ending_balance_pence = 0, paid_off = true. Else iterate m = 1..max_months (default 600): interest = half_up(bal * interest_rate_bps, 120_000); if bal + interest <= monthly_payment_pence return {months: m, total_interest_pence: total_interest + interest, ending_balance_pence: 0, paid_off: true}; else bal = bal + interest - monthly_payment_pence; total_interest += interest. After max_months return {months: max_months, total_interest_pence: total_interest, ending_balance_pence: bal, paid_off: false}.",
     "mortgage_overpayment": "effective_lump_pence = min(max(0, lump_sum_overpayment_pence), balance_pence). Baseline runs simulate_mortgage(balance_pence, interest_rate_bps, next_payment.amount_pence, 600). Projected runs simulate_mortgage(balance_pence - effective_lump_pence, interest_rate_bps, next_payment.amount_pence + monthly_overpayment_pence, 600). first_year_overpayment_pence = min(balance_pence, effective_lump_pence + min(12, projected.months) * monthly_overpayment_pence). remaining_allowance_pence = max(0, annual_overpayment_allowance_pence - overpaid_this_year_pence). exceeds_allowance = first_year_overpayment_pence > remaining_allowance_pence (strict >, so equality is ERC-free). excess_over_allowance_pence = max(0, first_year_overpayment_pence - remaining_allowance_pence).",
-    "renewal_payment_bisection": "Integer bisection over simulate_mortgage(balance_pence, rate_bps, mid, max_months=term_remaining_months).paid_off with low = half_up(balance_pence * rate_bps, 120_000) + 1 and high = balance_pence + low, returning smallest payment_pence that pays off within term_remaining_months.",
+    "renewal_payment_bisection": "If balance_pence <= 0 return 0. Else integer bisection over simulate_mortgage(balance_pence, rate_bps, mid, max_months=term_remaining_months).paid_off with low = half_up(balance_pence * rate_bps, 120_000) + 1 and high = balance_pence + low, returning smallest payment_pence that pays off within term_remaining_months.",
     "renter_readiness": "max_borrowing_pence = half_up(annual_income_pence * 45, 10); indicative_budget_with_goal_pence = max_borrowing_pence + goal_target_pence; remaining_to_goal_pence = max(0, goal_target_pence - balance_pence); deposit_progress_bps = min(10000, half_up(balance_pence * 10000, goal_target_pence))."
   },
   "half_up_cases": [
@@ -518,6 +518,19 @@
         "ending_balance_pence": 0,
         "paid_off": true
       }
+    },
+    {
+      "id": "edge_zero_balance_immediate_payoff",
+      "balance_pence": 0,
+      "interest_rate_bps": 420,
+      "monthly_payment_pence": 100000,
+      "max_months": 600,
+      "expected": {
+        "months": 0,
+        "total_interest_pence": 0,
+        "ending_balance_pence": 0,
+        "paid_off": true
+      }
     }
   ],
   "mortgage_renewals": {
@@ -560,5 +573,114 @@
     { "id": "standard_45_pounds", "raw": 45.0, "expected_pence": 4500 },
     { "id": "half_penny_rounds_up", "raw": 19.995, "expected_pence": 2000 },
     { "id": "absurd_upper_clamped_to_10m", "raw": 999999999.0, "expected_pence": 1000000000 }
+  ],
+  "mortgage_renewal_edges": [
+    {
+      "id": "edge_zero_balance_renewal_returns_zero",
+      "balance_pence": 0,
+      "rate_bps": 400,
+      "term_remaining_months": 120,
+      "expected_payment_pence": 0
+    },
+    {
+      "id": "edge_negative_balance_renewal_returns_zero",
+      "balance_pence": -500,
+      "rate_bps": 400,
+      "term_remaining_months": 120,
+      "expected_payment_pence": 0
+    }
+  ],
+  "vendor_matching_cases": [
+    {
+      "id": "short_substring_rejected",
+      "persona": "chloe",
+      "query": "co",
+      "expected_canonical": "",
+      "expected_match_count": 0
+    },
+    {
+      "id": "whole_token_costa",
+      "persona": "chloe",
+      "query": "costa",
+      "expected_canonical": "Costa Coffee",
+      "expected_match_count": 3
+    },
+    {
+      "id": "exact_wins_over_prefix_tesco",
+      "persona": "chloe",
+      "query": "tesco",
+      "expected_canonical": "Tesco",
+      "expected_match_count": 7
+    },
+    {
+      "id": "possessive_stem_sainsbury",
+      "persona": "david",
+      "query": "sainsbury",
+      "expected_canonical": "Sainsbury's",
+      "expected_match_count": 8
+    },
+    {
+      "id": "curly_apostrophe_sainsburys",
+      "persona": "david",
+      "query": "Sainsbury\u2019s",
+      "expected_canonical": "Sainsbury's",
+      "expected_match_count": 8
+    },
+    {
+      "id": "unicode_cafe_nero",
+      "synthetic_transactions": [
+        {
+          "id": "txn-cafe-01",
+          "month_offset": 0,
+          "day": 12,
+          "vendor": "Caf\u00e9 Nero",
+          "category": "coffee_shops",
+          "amount_pence": 385
+        }
+      ],
+      "query": "caf\u00e9",
+      "expected_normalized_raw": "caf\u00e9 nero",
+      "expected_normalized_stem": "caf\u00e9 nero",
+      "expected_canonical": "Caf\u00e9 Nero",
+      "expected_match_count": 1
+    }
+  ],
+  "calendar_date_cases": [
+    {
+      "id": "valid_default_demo_date",
+      "raw": "2026-11-24",
+      "valid": true,
+      "resolved": [2026, 11, 24]
+    },
+    {
+      "id": "valid_leap_day_2024",
+      "raw": "2024-02-29",
+      "valid": true,
+      "resolved": [2024, 2, 29]
+    },
+    {
+      "id": "invalid_non_leap_feb29",
+      "raw": "2026-02-29",
+      "valid": false,
+      "resolved": [2026, 11, 24]
+    },
+    {
+      "id": "invalid_feb30",
+      "raw": "2026-02-30",
+      "valid": false,
+      "resolved": [2026, 11, 24]
+    },
+    {
+      "id": "invalid_apr31",
+      "raw": "2026-04-31",
+      "valid": false,
+      "resolved": [2026, 11, 24]
+    },
+    {
+      "id": "invalid_month_13",
+      "raw": "2026-13-01",
+      "valid": false,
+      "resolved": [2026, 11, 24]
+    }
   ]
 }
