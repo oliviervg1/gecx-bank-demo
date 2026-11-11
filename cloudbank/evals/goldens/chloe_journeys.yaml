@@ -141,7 +141,7 @@ conversations:
           - "# silent"
           - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
 
-      - user: "Yes, I recognise it — they hiked the plan. How do I cancel Netflix?"
+      - user: "Yes, I recognise it, they hiked the plan. How do I cancel Netflix?"
         tool_calls:
           - action: assist_everyday_banking
             args:
@@ -150,7 +150,7 @@ conversations:
               anomaly_confirmed: "yes"
         agent: "To cancel Netflix, sign in to your account page in the Netflix app or website, open Membership and Billing, and select Cancel Membership; your subscription stays active until the end of your current billing period. Would you like to see what redirecting that £45 a month from November into your Home Emergency Pot could do?"
 
-      - user: "Yes — show me what putting that £45 a month into savings does."
+      - user: "Yes, show me what putting that £45 a month into savings does."
         tool_calls:
           - action: assist_everyday_banking
             args:
@@ -188,7 +188,7 @@ conversations:
               query_type: "rate_options"
         agent: "Compared with your November payment of £1,399.71 a month at 4.20%, the 2-year Fixed at 3.89% would be £1,365.17 a month (£34.54 less a month), while the 5-year Fixed at 3.74% would be £1,348.63 a month (£51.08 less a month). These figures are an indicative illustration only and not personalised mortgage advice."
 
-      - user: "Thanks, that's everything — goodbye!"
+      - user: "Thanks, that's everything, goodbye!"
         tool_calls:
           - action: assist_mortgages
             args:
@@ -223,7 +223,7 @@ conversations:
           - "# silent"
           - "In November you have spent £2,018.64 so far, which is £77.15 higher than October. One charge is flagged on your screen: £45 at Netflix on 21 November (up from £17.99 in October). Do you recognise that charge?"
 
-      - user: "No, I didn't upgrade Netflix — I don't recognise £45."
+      - user: "No, I didn't upgrade Netflix, I don't recognise £45."
         tool_calls:
           - action: assist_everyday_banking
             args:

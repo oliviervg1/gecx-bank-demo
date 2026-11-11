@@ -1,8 +1,9 @@
-"""Browser ↔ proxy WebSocket message types.
+"""Browser-to-proxy and proxy-to-browser WebSocket message types.
 
-Mirrors ``cloudbank/web/src/agent/protocol.ts``. All client-function round-trip
-messages (``ClientToolResponse`` / ``ServerClientFunction``) have been removed:
-screen state flows strictly server-to-browser via ``ServerUiState``.
+Matches `cloudbank/shared/ws_protocol.schema.json` and mirrors
+`cloudbank/web/src/agent/protocol.ts`. Persona financial snapshots are owned
+and loaded strictly on the server; client-function round-trip messages are
+absent because screen state flows strictly server-to-browser via `ServerUiState`.
 """
 from __future__ import annotations
 
@@ -15,21 +16,32 @@ from pydantic import (
     BaseModel,
     ConfigDict,
     Field,
+    StrictBool,
+    StrictInt,
+    StrictStr,
     TypeAdapter,
     ValidationError,
     field_validator,
 )
 
 Persona = Literal["chloe", "david", "tom", "sarah"]
+TimeOfDay = Literal["morning", "afternoon", "evening"]
 
-# Cap on a single inbound browser frame (100ms 16 kHz PCM16 is ~4.3 KB base64;
-# ClientStart with a 15 KB customer_snapshot is <32 KB).
+# Cap on a single inbound browser frame (1 MiB; 100ms 16 kHz PCM16 is ~4.3 KB base64).
 MAX_CLIENT_FRAME_BYTES = 1024 * 1024
 _MAX_AUDIO_B64_LEN = MAX_CLIENT_FRAME_BYTES
 _MAX_TEXT_LEN = 8192
 
 
-# ── Client → Proxy ──────────────────────────────────────────────────────────
+class BinaryFrameError(ValueError):
+    """Raised when a client sends an unsupported binary WebSocket frame."""
+
+
+class BrowserDisconnectError(Exception):
+    """Raised when the browser WebSocket closes cleanly."""
+
+
+# -- Client -> Proxy ----------------------------------------------------------
 
 
 class ClientStart(BaseModel):
@@ -37,17 +49,19 @@ class ClientStart(BaseModel):
 
     type: Literal["start"]
     persona: Persona
-    variables: dict[str, Any]
-    sessionId: str | None = None
+    timeOfDay: TimeOfDay | None = None
+    demoDate: StrictStr | None = None
+    sessionId: StrictStr | None = Field(default=None, min_length=1)
+    lastUiSeq: StrictInt | None = Field(default=None, ge=0)
 
 
 class AudioFrame(BaseModel):
-    """Used in both directions; ``type='audio'``."""
+    """Base64-encoded 16-bit PCM audio frame used in both directions (`type='audio'`)."""
 
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["audio"] = "audio"
-    data: str = Field(min_length=1, max_length=_MAX_AUDIO_B64_LEN)
+    data: StrictStr = Field(min_length=1, max_length=_MAX_AUDIO_B64_LEN)
 
     @field_validator("data")
     @classmethod
@@ -58,6 +72,8 @@ class AudioFrame(BaseModel):
             raise ValueError("audio data must be valid standard base64") from exc
         if not decoded:
             raise ValueError("audio data must not decode to empty bytes")
+        if len(decoded) % 2 != 0:
+            raise ValueError("PCM16 audio data must have an even byte length")
         return value
 
 
@@ -65,7 +81,7 @@ class ClientText(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["text"]
-    text: str = Field(max_length=_MAX_TEXT_LEN)
+    text: StrictStr = Field(max_length=_MAX_TEXT_LEN)
 
 
 class ClientStop(BaseModel):
@@ -93,39 +109,58 @@ def parse_client_msg(raw: str) -> ClientMsg:
         raise ValueError(str(exc)) from exc
 
 
-# ── Proxy → Client ──────────────────────────────────────────────────────────
+def serialize_client_msg(msg: ClientMsg) -> str:
+    return json.dumps(
+        msg.model_dump(mode="json", exclude_none=True),
+        separators=(",", ":"),
+    )
+
+
+# -- Proxy -> Client ----------------------------------------------------------
 
 
 class ServerReady(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["ready"] = "ready"
-    sessionId: str
+    sessionId: StrictStr = Field(min_length=1)
 
 
 class ServerTranscript(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["transcript"] = "transcript"
-    text: str
-    isFinal: bool = False
+    text: StrictStr
+    isFinal: StrictBool = False
 
 
 class ServerText(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["text"] = "text"
-    text: str
-    partial: bool = False
+    text: StrictStr
+    partial: StrictBool = False
 
 
 class ServerUiState(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["ui_state"] = "ui_state"
     state: dict[str, Any]
     tier: Literal[1, 2, 3] = 1
 
 
 class ServerTurnDiagnostics(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["turn_diagnostics"] = "turn_diagnostics"
-    turnIndex: int | None = None
+    turnIndex: StrictInt | None = None
     agentTransfers: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ServerSearchSuggestions(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["search_suggestions"] = "search_suggestions"
     htmls: list[str] = Field(default_factory=list)
     webSearchQueries: list[str] = Field(default_factory=list)
@@ -133,35 +168,47 @@ class ServerSearchSuggestions(BaseModel):
 
 
 class ServerTurnComplete(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["turn_complete"] = "turn_complete"
-    turnIndex: int | None = None
+    turnIndex: StrictInt | None = None
 
 
 class ServerGoAway(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["go_away"] = "go_away"
-    sessionId: str
+    sessionId: StrictStr = Field(min_length=1)
 
 
 class ServerSessionExpired(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["session_expired"] = "session_expired"
-    message: str = "Session paused due to inactivity"
+    message: StrictStr = "Session paused due to inactivity"
 
 
 class ServerInterrupt(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["interrupt"] = "interrupt"
 
 
 class ServerEnd(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["end"] = "end"
 
 
 class ServerError(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     type: Literal["error"] = "error"
-    message: str
-    field: str | None = None
+    message: StrictStr
+    field: StrictStr | None = None
 
 
-ServerMsg = (
+ServerMsg = Annotated[
     ServerReady
     | ServerTranscript
     | ServerText
@@ -174,8 +221,18 @@ ServerMsg = (
     | ServerSessionExpired
     | ServerInterrupt
     | ServerEnd
-    | ServerError
-)
+    | ServerError,
+    Field(discriminator="type"),
+]
+
+_server_adapter: TypeAdapter[ServerMsg] = TypeAdapter(ServerMsg)
+
+
+def parse_server_msg(raw: str) -> ServerMsg:
+    try:
+        return _server_adapter.validate_json(raw)
+    except ValidationError as exc:
+        raise ValueError(str(exc)) from exc
 
 
 def serialize_server_msg(msg: ServerMsg) -> str:

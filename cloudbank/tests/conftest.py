@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import json
 import types
+from collections.abc import Callable
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import cxas_scrapi.utils.callback_libs as callback_libs
 import pytest
@@ -14,8 +15,9 @@ from google.protobuf import json_format, struct_pb2
 CLOUDBANK_DIR = Path(__file__).resolve().parent.parent
 REPO_ROOT = CLOUDBANK_DIR.parent
 BUNDLE_DIR = CLOUDBANK_DIR / "cxas_app" / "Cloudbank"
+SHARED_CALLBACKS_DIR = CLOUDBANK_DIR / "cxas_shared" / "callbacks"
 SHARED_DIR = CLOUDBANK_DIR / "shared"
-FIXTURES_DIR = CLOUDBANK_DIR / "web" / "src" / "fixtures"
+PERSONAS_DIR = SHARED_DIR / "personas"
 GOLDENS_DIR = CLOUDBANK_DIR / "evals" / "goldens"
 SIMULATIONS_DIR = CLOUDBANK_DIR / "evals" / "simulations"
 
@@ -32,6 +34,24 @@ CONTROLLER_NAMES = (
     "assist_savings",
     "assist_mortgages",
 )
+
+_CALLBACK_SANDBOX_GLOBALS: dict[str, Any] = {
+    "Blob": callback_libs.Blob,
+    "CallbackContext": callback_libs.CallbackContext,
+    "Content": callback_libs.Content,
+    "Event": callback_libs.Event,
+    "EventActions": callback_libs.EventActions,
+    "FunctionCall": callback_libs.FunctionCall,
+    "FunctionDeclaration": callback_libs.FunctionDeclaration,
+    "FunctionResponse": callback_libs.FunctionResponse,
+    "GenerateContentConfig": callback_libs.GenerateContentConfig,
+    "LlmRequest": callback_libs.LlmRequest,
+    "LlmResponse": callback_libs.LlmResponse,
+    "Part": callback_libs.Part,
+    "Tool": callback_libs.Tool,
+    "ToolContext": callback_libs.ToolContext,
+    "ToolDeclaration": callback_libs.ToolDeclaration,
+}
 
 
 def roundtrip_protobuf_struct(payload: dict[str, Any]) -> dict[str, Any]:
@@ -57,7 +77,10 @@ def load_fake_search_help() -> Callable[[dict[str, Any]], dict[str, Any] | None]
     }
     exec(compile(fake_path.read_text(encoding="utf-8"), str(fake_path), "exec"), namespace)
     fake_fn = namespace["fake_tool_call"]
-    tool_meta = callback_libs.Tool(name="search_help", description="Google Search")
+    tool_meta = callback_libs.Tool(
+        name="search_help",
+        description="Google Search",
+    )
 
     def _call(inp: dict[str, Any]) -> dict[str, Any] | None:
         cb_ctx = callback_libs.CallbackContext()
@@ -102,25 +125,10 @@ def load_callback_namespace(
         / callback_name
         / "python_code.py"
     )
-    namespace: dict[str, Any] = {"__name__": f"cxas_cb_{agent_name}_{callback_name}"}
-    for sym in (
-        "Blob",
-        "CallbackContext",
-        "Content",
-        "Event",
-        "EventActions",
-        "FunctionCall",
-        "FunctionDeclaration",
-        "FunctionResponse",
-        "GenerateContentConfig",
-        "LlmRequest",
-        "LlmResponse",
-        "Part",
-        "Tool",
-        "ToolContext",
-        "ToolDeclaration",
-    ):
-        namespace[sym] = getattr(callback_libs, sym)
+    namespace: dict[str, Any] = {
+        "__name__": f"cxas_cb_{agent_name}_{callback_name}",
+        **_CALLBACK_SANDBOX_GLOBALS,
+    }
     exec(compile(cb_path.read_text(encoding="utf-8"), str(cb_path), "exec"), namespace)
     return namespace
 
@@ -145,9 +153,9 @@ def make_seeded_state(
 
 @pytest.fixture(scope="session")
 def raw_fixtures() -> dict[str, dict[str, Any]]:
-    """Return exact parsed JSON fixtures prior to protobuf.Struct coercion."""
+    """Return exact parsed JSON persona fixtures prior to protobuf.Struct coercion."""
     return {
-        pid: json.loads((FIXTURES_DIR / f"{pid}.json").read_text(encoding="utf-8"))
+        pid: json.loads((PERSONAS_DIR / f"{pid}.json").read_text(encoding="utf-8"))
         for pid in PERSONA_IDS
     }
 

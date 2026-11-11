@@ -2,14 +2,14 @@ import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { VendorHistoryView } from '../pages/spending/VendorHistoryView'
 import { PersonaProvider } from '../personas/PersonaProvider'
-import { SpendingViewProvider } from '../agent/SpendingViewProvider'
+import { BankingViewStateProvider } from '../agent/BankingViewStateProvider'
 
 function renderWith(vendor: string) {
   return render(
     <PersonaProvider initialDemoDate="2026-11-24">
-      <SpendingViewProvider>
+      <BankingViewStateProvider>
         <VendorHistoryView vendor={vendor} />
-      </SpendingViewProvider>
+      </BankingViewStateProvider>
     </PersonaProvider>,
   )
 }

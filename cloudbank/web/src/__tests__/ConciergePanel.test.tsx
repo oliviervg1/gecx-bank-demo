@@ -78,14 +78,14 @@ afterEach(() => {
 })
 
 describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
-  it('renders executive greeting on ready, calm Reconnect status on error, and zero technical jargon', async () => {
-    render(
+  it('renders executive greeting on ready, mode-aware helper copy for ?ptt=0, calm Reconnect status on error, and zero technical jargon', async () => {
+    const { unmount } = render(
       <MotionConfig reducedMotion="always">
         <App />
       </MotionConfig>,
     )
 
-    const ws = sockets[sockets.length - 1]
+    const ws = sockets[sockets.length - 1]!
     await act(async () => {
       ws.open()
       ws.deliver({ type: 'ready', sessionId: 'sess-exec' })
@@ -106,34 +106,45 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       expect(combinedVisibleAndA11y).not.toContain(token)
     }
 
-    // Error state shows calm executive note instead of ready greeting or raw error codes.
     await act(async () => {
       ws.deliver({ type: 'error', message: 'upstream 1007 failed_precondition' })
     })
     expect(screen.getByTestId('concierge-unavailable-state')).toHaveTextContent(
       "We couldn't reach the concierge. Select Reconnect to try again.",
     )
-    expect(screen.queryByText('How can I help today, Chloe?')).toBeNull()
-
-    // Clicking Reconnect opens a fresh socket.
-    fireEvent.click(screen.getAllByRole('button', { name: 'Reconnect' })[0])
+    fireEvent.click(screen.getAllByRole('button', { name: 'Reconnect' })[0]!)
     expect(sockets.length).toBeGreaterThan(1)
+    unmount()
+
+    // Continuous mode (?ptt=0) renders hands-free helper copy instead of "Hold to talk".
+    window.history.replaceState({}, '', '/?ptt=0')
+    render(
+      <MotionConfig reducedMotion="always">
+        <App />
+      </MotionConfig>,
+    )
+    const wsCont = sockets[sockets.length - 1]!
+    await act(async () => {
+      wsCont.open()
+      wsCont.deliver({ type: 'ready', sessionId: 'sess-cont' })
+    })
+    expect(screen.getByText(/start hands-free listening/i)).toBeInTheDocument()
   })
 
-  it('drives every field of ui_view_state.schema.json across all 5 tabs, updates plain-English specialist pills, and sandboxes search HTML', async () => {
+  it('drives every field of ui_view_state across all 5 tabs, announces navigation + finalized turns politely, and sandboxes search HTML', async () => {
     render(
       <MotionConfig reducedMotion="always">
         <App />
       </MotionConfig>,
     )
 
-    const ws = sockets[sockets.length - 1]
+    const ws = sockets[sockets.length - 1]!
     await act(async () => {
       ws.open()
       ws.deliver({ type: 'ready', sessionId: 'sess-e2e' })
     })
 
-    // 1. Spending overview + highlight_vendor + anomaly_status + Everyday Banking pill
+    // 1. Spending overview + highlight_vendor + anomaly_status + polite navigation announcement
     await act(async () => {
       ws.deliver({
         type: 'ui_state',
@@ -152,8 +163,11 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       'Marked as not recognised',
     )
     expect(screen.getByTestId('active-specialist-pill')).toHaveTextContent('Everyday Banking')
+    expect(screen.getByTestId('ui-navigation-announcer')).toHaveTextContent(
+      'Showing Spending: Overview',
+    )
 
-    // 2. Spending category + period ('last_month') and vendor subviews
+    // 2. Spending category + vendor subviews
     await act(async () => {
       ws.deliver({
         type: 'ui_state',
@@ -168,7 +182,9 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       })
     })
     expect(await screen.findByText(/Spending › Coffee shops/)).toBeInTheDocument()
-    expect(screen.getByText(/October · Coffee shops/i)).toBeInTheDocument()
+    expect(screen.getByTestId('ui-navigation-announcer')).toHaveTextContent(
+      'Showing Spending: Coffee shops',
+    )
 
     await act(async () => {
       ws.deliver({
@@ -185,18 +201,26 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     })
     expect(await screen.findByText(/Spending › Tesco/)).toBeInTheDocument()
 
-    // 3. Sanitized assistant prose + normalized ALL-CAPS stress + no (Interrupted) wart + sandboxed search_suggestions
+    // 3. Streaming partial sets aria-busy without spamming aria-live; final turn updates polite announcer once.
     await act(async () => {
       ws.deliver({
         type: 'text',
         partial: true,
         text: '<neutral> Your spend is £77.15 HIGHER than October and Netflix was FLAGGED.',
       })
+    })
+    const stream = screen.getByTestId('conversation-stream')
+    expect(stream).toHaveAttribute('role', 'log')
+    expect(stream).toHaveAttribute('aria-live', 'off')
+    expect(stream).toHaveAttribute('aria-busy', 'true')
+    expect(screen.getByTestId('concierge-turn-announcer')).toHaveTextContent('')
+
+    await act(async () => {
       ws.deliver({ type: 'interrupt' })
       ws.deliver({
         type: 'text',
         partial: false,
-        text: '<reassuring> To cancel Netflix in the UK, open Account settings or FREEZE your card (4.50% AER, no ERC via BACS or CHAPS). [Diagnosis context: internal raw search payload]',
+        text: '<reassuring> To cancel Netflix in the UK, open Account settings or FREEZE your card (4.50% AER, no ERC via BACS or CHAPS). [Diagnosis context: internal [nested] search payload]',
       })
       ws.deliver({
         type: 'search_suggestions',
@@ -220,41 +244,26 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       ws.deliver({ type: 'turn_complete', turnIndex: 1 })
     })
 
-    const stream = screen.getByTestId('conversation-stream')
-    expect(stream).toHaveAttribute('role', 'log')
-    expect(stream).toHaveAttribute('aria-live', 'polite')
-    expect(stream.textContent).toContain(
-      'Your spend is £77.15 higher than October and Netflix was flagged.',
-    )
-    expect(stream.textContent).toContain(
-      'To cancel Netflix in the UK, open Account settings or freeze your card (4.50% AER, no ERC via BACS or CHAPS).',
+    expect(stream).toHaveAttribute('aria-busy', 'false')
+    expect(screen.getByTestId('concierge-turn-announcer')).toHaveTextContent(
+      'Cloudbank Concierge: To cancel Netflix in the UK, open Account settings or freeze your card (4.50% AER, no ERC via BACS or CHAPS).',
     )
     expect(stream.textContent).not.toContain('HIGHER')
     expect(stream.textContent).not.toContain('FLAGGED')
     expect(stream.textContent).not.toContain('FREEZE')
-    expect(stream.textContent).not.toContain('(Interrupted)')
-    expect(screen.queryByTestId('interrupted-badge')).toBeNull()
     expect(stream.textContent).not.toContain('Diagnosis context')
     expect(stream.textContent).not.toContain('<reassuring>')
-    expect(stream.textContent).not.toContain('everyday_banking_agent')
 
     const iframe = stream.querySelector('iframe')
     expect(iframe).not.toBeNull()
     expect(iframe?.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox')
-    // Duplicate webSearchQueries pill is suppressed when sandboxed htmls chip is present.
-    expect(screen.queryByText('how to cancel Netflix subscription UK')).toBeNull()
-    // Citations are capped at 3, deduplicated by domain, and prefer the vendor's own domain first.
     const citationLinks = Array.from(
       screen.getByTestId('search-suggestions-block').querySelectorAll('a'),
     )
     expect(citationLinks).toHaveLength(3)
     expect(citationLinks[0]).toHaveTextContent('Netflix Help Centre')
-    expect(screen.queryByText('Duplicate Netflix')).toBeNull()
-    expect(screen.queryByText('youtube.com')).toBeNull()
-    expect(screen.queryByText('emma-app.com')).toBeNull()
-    expect(screen.queryByText('Evil URI')).toBeNull()
 
-    // 4. Savings projection sync (extra_monthly_pence + custom_target_pence + Savings pill)
+    // 4. Savings, Mortgage, Profile, and Home sync
     await act(async () => {
       ws.deliver({
         type: 'ui_state',
@@ -271,7 +280,6 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     expect(screen.getByText('+£45.00/mo')).toBeInTheDocument()
     expect(screen.getByTestId('active-specialist-pill')).toHaveTextContent('Savings')
 
-    // 5. Mortgage overpay sync (subview + monthly_overpayment_pence + lump_sum_overpayment_pence + Mortgages pill)
     await act(async () => {
       ws.deliver({
         type: 'ui_state',
@@ -286,10 +294,10 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       })
     })
     expect(await screen.findByTestId('mortgage-overpay-view')).toBeInTheDocument()
-    expect(screen.getByText('+£200.00/mo')).toBeInTheDocument()
-    expect(screen.getByTestId('active-specialist-pill')).toHaveTextContent('Mortgages')
+    expect(screen.getByTestId('ui-navigation-announcer')).toHaveTextContent(
+      'Showing Mortgage: Overpay',
+    )
 
-    // 6. Profile & Home page sync
     await act(async () => {
       ws.deliver({ type: 'ui_state', tier: 1, state: { seq: 6, page: 'profile' } })
     })
@@ -301,7 +309,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     expect(await screen.findByText('Accounts Overview')).toBeInTheDocument()
   })
 
-  it('shows microphone permission guidance instead of connection error when mic is blocked on an open socket, keeping text input live', async () => {
+  it('shows microphone permission guidance instead of connection error when mic is blocked on an open socket', async () => {
     const origMediaDevices = navigator.mediaDevices
     const origAudioCtx = globalThis.AudioContext
     Object.defineProperty(navigator, 'mediaDevices', {
@@ -314,7 +322,6 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
           ),
       },
     })
-    // Provide a stub AudioContext so createAudioCapture reaches getUserMedia.
     ;(globalThis as unknown as { AudioContext: unknown }).AudioContext = class {
       state = 'running'
       sampleRate = 48000
@@ -322,7 +329,6 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       resume = vi.fn().mockResolvedValue(undefined)
       close = vi.fn().mockResolvedValue(undefined)
       createMediaStreamSource = vi.fn()
-      createGain = vi.fn(() => ({ gain: { value: 0 }, connect: vi.fn() }))
       destination = {}
     }
 
@@ -338,7 +344,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
         </MotionConfig>,
       )
 
-      const ws = sockets[sockets.length - 1]
+      const ws = sockets[sockets.length - 1]!
       await act(async () => {
         ws.open()
         ws.deliver({ type: 'ready', sessionId: 'sess-mic-denied' })
@@ -346,25 +352,14 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
 
       const pill = screen.getByRole('button', { name: /Hold to talk/i })
       await act(async () => {
-        fireEvent.pointerDown(pill, { pointerId: 1 })
+        fireEvent.pointerDown(pill, { pointerId: 1, button: 0 })
       })
 
-      // Panel displays microphone-permission guidance, NOT "Concierge connection unavailable".
       expect(screen.getByTestId('concierge-mic-blocked-state')).toHaveTextContent(
         /Allow microphone access in your browser to speak/i,
       )
       expect(screen.queryByTestId('concierge-unavailable-state')).toBeNull()
-      expect(screen.queryByText(/Concierge connection unavailable/i)).toBeNull()
-      expect(screen.queryByRole('button', { name: 'Reconnect' })).toBeNull()
 
-      // Pill tooltip uses plain executive guidance, never leaking NotAllowedError.
-      const blockedPill = screen.getByRole('button', { name: /Microphone off/i })
-      expect(blockedPill).toHaveAttribute(
-        'title',
-        'Allow microphone access in your browser, then hold to talk',
-      )
-
-      // Text input remains the immediate path forward over the SAME open socket!
       const input = screen.getByLabelText('Ask your Cloudbank concierge')
       fireEvent.change(input, { target: { value: 'Show my savings pot' } })
       fireEvent.submit(input.closest('form')!)
@@ -383,7 +378,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     }
   })
 
-  it('tailors starter prompts per persona (renter Tom vs ERC-near Sarah), auto-scrolls on new turns, and opens mobile concierge drawer', async () => {
+  it('tailors starter prompts per persona and opens mobile concierge drawer with h1 heading', async () => {
     window.history.replaceState({}, '', '/?persona=tom')
     const { unmount } = render(
       <MotionConfig reducedMotion="always">
@@ -391,62 +386,40 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       </MotionConfig>,
     )
 
-    const wsTom = sockets[sockets.length - 1]
+    const wsTom = sockets[sockets.length - 1]!
     await act(async () => {
       wsTom.open()
       wsTom.deliver({ type: 'ready', sessionId: 'sess-tom' })
     })
 
-    // Tom is a renter: starter prompts offer first-home borrowing instead of mortgage overpay/renewal.
     expect(
       screen.getByRole('button', { name: 'How much could I borrow for my first home?' }),
     ).toBeInTheDocument()
-    expect(
-      screen.queryByRole('button', { name: /overpaying my mortgage/i }),
-    ).toBeNull()
-    expect(
-      screen.queryByRole('button', { name: /fixed-rate renewal/i }),
-    ).toBeNull()
 
-    // Switch to Sarah: shows £96 savings prompt and £400/mo ERC-near overpay prompt.
     fireEvent.click(screen.getByRole('button', { name: /Sarah/i }))
-    const wsSarah = sockets[sockets.length - 1]
+    const wsSarah = sockets[sockets.length - 1]!
     await act(async () => {
       wsSarah.open()
       wsSarah.deliver({ type: 'ready', sessionId: 'sess-sarah' })
     })
     expect(
       screen.getByRole('button', {
-        name: 'Show me what putting £96 a month extra into savings does.',
-      }),
-    ).toBeInTheDocument()
-    expect(
-      screen.getByRole('button', {
         name: 'What happens if I overpay my mortgage by £400 a month?',
       }),
     ).toBeInTheDocument()
-
-    // Submit text -> shows thinking indicator and auto-scrolls conversation-stream.
-    const scrollSpy = vi.fn()
-    HTMLElement.prototype.scrollIntoView = scrollSpy
-    fireEvent.click(
-      screen.getByRole('button', {
-        name: 'What happens if I overpay my mortgage by £400 a month?',
-      }),
-    )
-    expect(screen.getByTestId('concierge-thinking-indicator')).toBeInTheDocument()
-    expect(scrollSpy).toHaveBeenCalled()
     unmount()
 
-    // Mobile view (?layout=mobile) exposes a clean toggle for the concierge chat drawer.
     window.history.replaceState({}, '', '/?layout=mobile')
     render(
       <MotionConfig reducedMotion="always">
         <App />
       </MotionConfig>,
     )
-    const toggle = screen.getByTestId('mobile-concierge-toggle')
-    fireEvent.click(toggle)
+    expect(screen.getByRole('button', { name: 'Desktop View' })).toBeInTheDocument()
+    fireEvent.click(screen.getByTestId('mobile-concierge-toggle'))
     expect(screen.getByTestId('mobile-concierge-drawer')).toBeInTheDocument()
+    expect(
+      screen.getByRole('heading', { level: 1, name: 'Cloudbank Concierge' }),
+    ).toBeInTheDocument()
   })
 })

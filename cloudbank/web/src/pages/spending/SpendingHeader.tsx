@@ -1,5 +1,9 @@
 import { ChevronLeft } from 'lucide-react'
-import { useSpendingView, type SpendingView } from '../../agent/SpendingViewProvider'
+import {
+  useBankingViewState,
+  type SpendingView,
+} from '../../agent/BankingViewStateProvider'
+import { SegmentedTabs } from '../../components/SegmentedTabs'
 import { usePersona } from '../../personas/PersonaProvider'
 import {
   OFFSET_TO_PERIOD,
@@ -12,14 +16,25 @@ interface Props {
   showPeriodSelector?: boolean
 }
 
-const SUBVIEW_TABS: Array<{ id: SpendingView; label: string }> = [
+export type SpendingTopTabId = 'overview' | 'subscriptions' | 'trend'
+
+export const SPENDING_TAB_ID_PREFIX = 'spending'
+
+export const SPENDING_SUBVIEW_TABS: ReadonlyArray<{
+  id: SpendingTopTabId
+  label: string
+}> = [
   { id: 'overview', label: 'Overview' },
   { id: 'subscriptions', label: 'Subscriptions' },
   { id: 'trend', label: '3-Month Trend' },
 ]
 
+export function isSpendingTopSubview(view: SpendingView): view is SpendingTopTabId {
+  return view === 'overview' || view === 'subscriptions' || view === 'trend'
+}
+
 export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props) {
-  const { view, period, setView, setPeriod } = useSpendingView()
+  const { view, period, setView, setPeriod } = useBankingViewState()
   const { demoDate } = usePersona()
 
   const periodOptions: Array<{ id: SpendingPeriod; label: string }> = [
@@ -28,7 +43,7 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
     { id: OFFSET_TO_PERIOD[2], label: shortMonthForOffset(demoDate, 2) },
   ]
 
-  const isTopSubview = view === 'overview' || view === 'subscriptions' || view === 'trend'
+  const isTopSubview = isSpendingTopSubview(view)
 
   return (
     <div className="pt-4 pb-3 border-b border-brand-divider">
@@ -39,12 +54,12 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
               type="button"
               aria-label="Back to Spending overview"
               onClick={() => setView({ view: 'overview' })}
-              className="w-8 h-8 rounded-full bg-white border border-brand-divider flex items-center justify-center text-brand-text shrink-0 hover:bg-[#faf9f6]"
+              className="w-9 h-9 rounded-full bg-white border border-brand-border-strong flex items-center justify-center text-brand-text shrink-0 hover:bg-[#faf9f6]"
             >
-              <ChevronLeft size={18} />
+              <ChevronLeft size={18} aria-hidden="true" />
             </button>
           )}
-          <h1 className="text-[22px] font-bold tracking-[-0.02em] text-brand-text truncate leading-tight">
+          <h1 className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text truncate leading-tight">
             {breadcrumb ? `Spending › ${breadcrumb}` : 'Spending'}
           </h1>
         </div>
@@ -53,7 +68,7 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
           <div
             role="group"
             aria-label="Statement month"
-            className="inline-flex rounded-lg border border-brand-divider bg-[#faf9f6] p-0.5 shrink-0"
+            className="inline-flex rounded-lg border border-brand-border-strong bg-[#faf9f6] p-0.5 shrink-0"
           >
             {periodOptions.map((opt) => {
               const active = period === opt.id
@@ -65,9 +80,9 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
                   data-active={active}
                   onClick={() => setPeriod(opt.id)}
                   className={
-                    'px-2.5 py-1 rounded-md text-[12px] font-semibold transition-colors ' +
+                    'min-h-8 px-2.5 py-1 rounded-md text-[0.75rem] font-semibold transition-colors ' +
                     (active
-                      ? 'bg-white text-brand-green border border-brand-divider'
+                      ? 'bg-white text-brand-green border border-brand-border-strong'
                       : 'text-brand-muted hover:text-brand-text')
                   }
                 >
@@ -80,29 +95,13 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
       </div>
 
       {isTopSubview && (
-        <div className="flex items-center gap-4 mt-3" role="tablist" aria-label="Spending views">
-          {SUBVIEW_TABS.map((tab) => {
-            const active = view === tab.id
-            return (
-              <button
-                key={tab.id}
-                type="button"
-                role="tab"
-                aria-selected={active}
-                data-active={active}
-                onClick={() => setView({ view: tab.id })}
-                className={
-                  'text-[13px] pb-1 border-b-2 transition-colors ' +
-                  (active
-                    ? 'border-brand-green text-brand-green font-semibold'
-                    : 'border-transparent text-brand-muted hover:text-brand-text')
-                }
-              >
-                {tab.label}
-              </button>
-            )
-          })}
-        </div>
+        <SegmentedTabs
+          idPrefix={SPENDING_TAB_ID_PREFIX}
+          ariaLabel="Spending views"
+          tabs={SPENDING_SUBVIEW_TABS}
+          activeId={view}
+          onSelect={(nextId) => setView({ view: nextId })}
+        />
       )}
     </div>
   )

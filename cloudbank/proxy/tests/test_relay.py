@@ -1,4 +1,4 @@
-"""Tests for the hardened Relay: keepalive, idle expiry, 3-tier UI sync, diagnostics, search, and farewell drain."""
+"""Tests for the hardened Relay: TaskGroup lifecycle, resume state, keepalive, idle expiry, 3-tier UI sync, and farewell drain."""
 from __future__ import annotations
 
 import asyncio
@@ -7,15 +7,25 @@ import json
 from typing import Any
 
 import pytest
+import websockets.exceptions
 
 from conftest import FakeUpstream
-from proxy.protocol import MAX_CLIENT_FRAME_BYTES, AudioFrame, ClientStart, ClientText
+from proxy.protocol import (
+    MAX_CLIENT_FRAME_BYTES,
+    AudioFrame,
+    BrowserDisconnectError,
+    ClientStart,
+    ClientStop,
+    ClientText,
+)
 from proxy.relay import (
     SILENCE_100MS_16KHZ_B64,
     SILENCE_100MS_16KHZ_BYTES,
     Relay,
-    _drain_exceptions,
 )
+
+PCM_CHUNK_A = base64.b64encode(b"\x01\x00\x02\x00").decode("ascii")
+PCM_CHUNK_B = base64.b64encode(b"\x03\x00\x04\x00").decode("ascii")
 
 
 class FakeBrowser:
@@ -27,7 +37,7 @@ class FakeBrowser:
     async def receive_text(self) -> str:
         item = await self._inbox.get()
         if item is None:
-            raise asyncio.CancelledError
+            raise BrowserDisconnectError()
         return item
 
     async def send_text(self, raw: str) -> None:
@@ -45,39 +55,27 @@ class FakeBrowser:
 
 
 @pytest.mark.asyncio
-async def test_drain_exceptions_consumes_all_failures_and_ignores_cancelled() -> None:
-    async def boom(msg: str) -> None:
-        raise RuntimeError(msg)
-
-    t1 = asyncio.create_task(boom("upstream died"))
-    t2 = asyncio.create_task(boom("browser died"))
-    await asyncio.gather(t1, t2, return_exceptions=True)
-    assert [str(e) for e in _drain_exceptions([t1, t2])] == [
-        "upstream died",
-        "browser died",
-    ]
-
-
-@pytest.mark.asyncio
 async def test_relays_config_variables_ready_audio_text_and_transcript(
     fake_upstream: FakeUpstream,
 ) -> None:
-    assert not hasattr(Relay, "_in_flight_calls")
+    assert "_in_flight_calls" not in Relay.__dataclass_fields__
+    assert "_emitted_ui_keys" not in Relay.__dataclass_fields__
+
     browser = FakeBrowser()
     relay = Relay(
         browser=browser,
         upstream=fake_upstream,
-        app_resource="projects/p/locations/eu/apps/cloudbank",
+        app_resource="projects/demo-proj-01/locations/eu/apps/cloudbank",
         session_id="3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13",
         persona_variables={"persona_id": "chloe", "first_name": "Chloe"},
     )
     task = asyncio.create_task(
-        relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+        relay.run(start=ClientStart(type="start", persona="chloe"))
     )
     try:
         cfg = await fake_upstream.recv_from_proxy()
         assert cfg["config"]["session"] == (
-            "projects/p/locations/eu/apps/cloudbank/sessions/3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13"
+            "projects/demo-proj-01/locations/eu/apps/cloudbank/sessions/3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13"
         )
         assert cfg["config"]["inputAudioConfig"] == {
             "audioEncoding": "LINEAR16",
@@ -86,24 +84,27 @@ async def test_relays_config_variables_ready_audio_text_and_transcript(
         vars_frame = await fake_upstream.recv_from_proxy()
         assert vars_frame["realtimeInput"]["variables"]["first_name"] == "Chloe"
 
-        await browser.push(AudioFrame(data="AAAA").model_dump_json())
-        assert (await fake_upstream.recv_from_proxy())["realtimeInput"]["audio"] == "AAAA"
+        await browser.push(AudioFrame(data=PCM_CHUNK_A).model_dump_json())
+        assert (
+            await fake_upstream.recv_from_proxy()
+        )["realtimeInput"]["audio"] == PCM_CHUNK_A
 
         await browser.push(ClientText(type="text", text="Hello").model_dump_json())
         assert (await fake_upstream.recv_from_proxy())["realtimeInput"]["text"] == "Hello"
 
-        # Oversized, malformed, invalid-base64, and duplicate mid-session start frames are dropped safely
-        await browser.push("x" * (MAX_CLIENT_FRAME_BYTES + 1))
+        # Oversized UTF-8, malformed, odd-byte PCM, invalid-base64, and mid-session start frames are dropped safely
+        await browser.push("\U0001f600" * ((MAX_CLIENT_FRAME_BYTES // 4) + 10))
         await browser.push("{not json")
+        await browser.push('{"type":"audio","data":"AAAA"}')  # 3 decoded bytes -> odd PCM16
         await browser.push('{"type":"audio","data":"!!!not-base64!!!"}')
         await browser.push('{"type":"tool_response","id":"1","response":{}}')
-        await browser.push(
-            '{"type":"start","persona":"david","variables":{"injected":"bad"}}'
-        )
-        await browser.push(AudioFrame(data="BBBB").model_dump_json())
+        await browser.push('{"type":"start","persona":"david"}')
+        await browser.push(AudioFrame(data=PCM_CHUNK_B).model_dump_json())
         next_upstream = await fake_upstream.recv_from_proxy()
-        assert next_upstream == {"realtimeInput": {"audio": "BBBB"}}
+        assert next_upstream == {"realtimeInput": {"audio": PCM_CHUNK_B}}
 
+        # Odd-byte upstream audio is also dropped safely
+        await fake_upstream.inject({"sessionOutput": {"audio": "AAAA"}})
         await fake_upstream.inject(
             {"recognitionResult": {"transcript": "Hello there", "isFinal": True}}
         )
@@ -116,6 +117,7 @@ async def test_relays_config_variables_ready_audio_text_and_transcript(
             "type": "ready",
             "sessionId": "3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13",
         }
+        assert not any(m["type"] == "audio" for m in msgs)
         assert {"type": "transcript", "text": "Hello there", "isFinal": True} in msgs
         assert {"type": "interrupt"} in msgs
         assert {
@@ -123,8 +125,86 @@ async def test_relays_config_variables_ready_audio_text_and_transcript(
             "sessionId": "3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13",
         } in msgs
     finally:
+        await browser.push(ClientStop(type="stop").model_dump_json())
+        await task
+    assert relay.ended_cleanly is True
+
+
+@pytest.mark.asyncio
+async def test_session_resume_skips_variable_reseeding_and_honors_last_ui_seq(
+    fake_upstream: FakeUpstream,
+) -> None:
+    browser = FakeBrowser()
+    sid = "3f1c8a2e-9b47-4d6a-8e21-5c7b0d9f4a13"
+    relay = Relay(
+        browser=browser,
+        upstream=fake_upstream,
+        app_resource="projects/demo-proj-01/locations/eu/apps/cloudbank",
+        session_id=sid,
+        persona_variables={"persona_id": "chloe", "first_name": "Chloe"},
+    )
+    task = asyncio.create_task(
+        relay.run(
+            start=ClientStart(
+                type="start",
+                persona="chloe",
+                sessionId=sid,
+                lastUiSeq=4,
+            )
+        )
+    )
+    try:
+        first_frame = await fake_upstream.recv_from_proxy()
+        assert first_frame["config"]["session"].endswith(f"/sessions/{sid}")
+
+        # Next client frame must immediately be audio (no realtimeInput.variables sent on resume)
+        await browser.push(AudioFrame(data=PCM_CHUNK_A).model_dump_json())
+        second_frame = await fake_upstream.recv_from_proxy()
+        assert second_frame == {"realtimeInput": {"audio": PCM_CHUNK_A}}
+
+        # Stale Tier 3 updatedVariables carrying seq=4 on a non-UI turn is suppressed
+        await fake_upstream.inject(
+            {
+                "sessionOutput": {
+                    "text": "Anything else?",
+                    "turnCompleted": True,
+                    "turnIndex": 0,
+                    "diagnosticInfo": {
+                        "messages": [
+                            {
+                                "chunks": [
+                                    {
+                                        "updatedVariables": {
+                                            "ui_view_state": {
+                                                "seq": 4.0,
+                                                "page": "spending",
+                                                "view": "subscriptions",
+                                            }
+                                        }
+                                    }
+                                ]
+                            }
+                        ]
+                    },
+                }
+            }
+        )
+        # Fresh seq=5 update emits cleanly
+        await fake_upstream.inject(
+            {"sessionOutput": {"payload": {"seq": 5, "page": "savings"}}}
+        )
+        await asyncio.sleep(0.05)
+
+        msgs = browser.parsed_messages()
+        ui_msgs = [m for m in msgs if m["type"] == "ui_state"]
+        assert ui_msgs == [
+            {"type": "ui_state", "tier": 1, "state": {"seq": 5, "page": "savings"}}
+        ]
+        # turnIndex=0 is preserved (not treated as falsy None)
+        tc_msgs = [m for m in msgs if m["type"] == "turn_complete"]
+        assert tc_msgs == [{"type": "turn_complete", "turnIndex": 0}]
+    finally:
         await browser.close()
-        await fake_upstream.close()
         await task
 
 
@@ -144,11 +224,17 @@ async def test_silence_keepalive_streams_16khz_pcm_and_idle_timeout_emits_sessio
         keepalive_interval_seconds=0.04,
         max_idle_seconds=0.14,
     )
-    assert Relay(browser=browser, upstream=fake_upstream, app_resource="apps/x", session_id="s-def").max_idle_seconds == 900.0
-    assert Relay(browser=browser, upstream=fake_upstream, app_resource="apps/x", session_id="s-def").keepalive_interval_seconds == 10.0
+    default_relay = Relay(
+        browser=browser,
+        upstream=fake_upstream,
+        app_resource="apps/x",
+        session_id="s-def",
+    )
+    assert default_relay.max_idle_seconds == 900.0
+    assert default_relay.keepalive_interval_seconds == 10.0
 
     task = asyncio.create_task(
-        relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+        relay.run(start=ClientStart(type="start", persona="chloe"))
     )
     cfg = await fake_upstream.recv_from_proxy()
     assert "config" in cfg
@@ -157,9 +243,10 @@ async def test_silence_keepalive_streams_16khz_pcm_and_idle_timeout_emits_sessio
     keepalive_frame = await fake_upstream.recv_from_proxy(timeout=1.0)
     assert keepalive_frame == {"realtimeInput": {"audio": SILENCE_100MS_16KHZ_B64}}
 
-    # Idle watchdog expires and emits ServerSessionExpired
+    # Idle watchdog expires via asyncio.timeout and emits ServerSessionExpired
     await asyncio.wait_for(task, timeout=1.5)
     assert relay.ended_cleanly is True
+    assert browser.closed is True
     msgs = browser.parsed_messages()
     assert any(m["type"] == "session_expired" for m in msgs)
 
@@ -176,7 +263,7 @@ async def test_three_tier_ui_state_extraction_float_seq_coercion_and_session_res
         session_id="sess-a",
     )
     task = asyncio.create_task(
-        relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+        relay.run(start=ClientStart(type="start", persona="chloe"))
     )
     try:
         # Tier 1 partial payload (seq=1) -> emitted once with tier=1
@@ -193,7 +280,7 @@ async def test_three_tier_ui_state_extraction_float_seq_coercion_and_session_res
                 }
             }
         )
-        # Duplicate seq=1 in Tier 2 payload AND Tier 3 updatedVariables on turnCompleted -> deduplicated!
+        # Duplicate seq=1 in Tier 2 payload and Tier 3 updatedVariables on turnCompleted -> deduplicated
         await fake_upstream.inject(
             {
                 "sessionOutput": {
@@ -231,7 +318,7 @@ async def test_three_tier_ui_state_extraction_float_seq_coercion_and_session_res
             }
         )
 
-        # Turn 2: Tier 1/2 absent, Tier 3 delivers seq=3.0 as float on turn_completed=True (snake_case & camelCase)
+        # Turn 2: Tier 1/2 absent, Tier 3 ignored when turn_completed=False
         await fake_upstream.inject(
             {
                 "session_output": {
@@ -254,8 +341,9 @@ async def test_three_tier_ui_state_extraction_float_seq_coercion_and_session_res
                     },
                 }
             }
-        )  # Not turn_completed -> Tier 3 ignored!
+        )
 
+        # Tier 3 delivers seq=3.0 as float on turn_completed=True
         await fake_upstream.inject(
             {
                 "session_output": {
@@ -335,7 +423,7 @@ async def test_three_tier_ui_state_extraction_float_seq_coercion_and_session_res
         await fake_upstream.close()
         await task
 
-    # New session resets deduplication cursor so seq=1 emits cleanly again
+    # New non-resumed session resets deduplication cursor so seq=1 emits cleanly again
     upstream_b = FakeUpstream()
     browser_b = FakeBrowser()
     relay_b = Relay(
@@ -345,7 +433,7 @@ async def test_three_tier_ui_state_extraction_float_seq_coercion_and_session_res
         session_id="sess-b",
     )
     task_b = asyncio.create_task(
-        relay_b.run(start=ClientStart(type="start", persona="david", variables={}))
+        relay_b.run(start=ClientStart(type="start", persona="david"))
     )
     try:
         await upstream_b.inject(
@@ -372,7 +460,7 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
         session_id="sess-farewell",
     )
     task = asyncio.create_task(
-        relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+        relay.run(start=ClientStart(type="start", persona="chloe"))
     )
     try:
         await fake_upstream.inject(
@@ -392,10 +480,9 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
             }
         )
 
-        chunk1 = base64.b64encode(b"farewell-pcm-1").decode("ascii")
-        chunk2 = base64.b64encode(b"farewell-pcm-2").decode("ascii")
+        chunk1 = base64.b64encode(b"farewell-pcm01").decode("ascii")
+        chunk2 = base64.b64encode(b"farewell-pcm02").decode("ascii")
 
-        # Farewell turn where endSession arrives alongside text BEFORE trailing TTS audio chunks!
         await fake_upstream.inject(
             {
                 "sessionOutput": {
@@ -429,7 +516,6 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
             }
         ]
 
-        # Every farewell audio frame MUST precede ServerEnd, and ServerEnd emits exactly once
         end_indices = [i for i, m in enumerate(msgs) if m["type"] == "end"]
         assert len(end_indices) == 1
         end_idx = end_indices[0]
@@ -448,10 +534,8 @@ async def test_forwards_search_suggestions_and_drains_farewell_audio_before_end(
 
 
 @pytest.mark.asyncio
-async def test_f4_1_held_end_session_flushed_even_when_upstream_drops_with_connection_closed() -> None:
-    """Regression F4-1: held ServerEnd must still be delivered if upstream drops abnormally before turnCompleted."""
-    import websockets.exceptions
-
+async def test_held_end_session_flushed_when_upstream_drops_with_connection_closed() -> None:
+    """Held ServerEnd must still be delivered if upstream drops abnormally before turnCompleted."""
     chunk = base64.b64encode(b"farewell-pcm").decode("ascii")
 
     class DroppingUpstream:
@@ -482,10 +566,10 @@ async def test_f4_1_held_end_session_flushed_even_when_upstream_drops_with_conne
         browser=browser,
         upstream=upstream,
         app_resource="apps/x",
-        session_id="sess-f4-1",
+        session_id="sess-drop",
     )
     with pytest.raises(websockets.exceptions.ConnectionClosedError):
-        await relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+        await relay.run(start=ClientStart(type="start", persona="chloe"))
 
     assert relay.ended_cleanly is True
     msgs = browser.parsed_messages()
@@ -494,22 +578,23 @@ async def test_f4_1_held_end_session_flushed_even_when_upstream_drops_with_conne
 
 
 @pytest.mark.asyncio
-async def test_emits_server_end_from_diagnostic_tool_call_signal_alone(
+async def test_emits_server_end_from_diagnostic_tool_call_or_released_variable(
     fake_upstream: FakeUpstream,
 ) -> None:
-    """T7-1a: toolCall displayName=='end_session' alone triggers ServerEnd on turnCompleted."""
-    browser = FakeBrowser()
-    relay = Relay(
-        browser=browser,
+    chunk = base64.b64encode(b"farewell-pcm").decode("ascii")
+
+    # 1. toolCall displayName == 'end_session'
+    browser_tc = FakeBrowser()
+    relay_tc = Relay(
+        browser=browser_tc,
         upstream=fake_upstream,
         app_resource="apps/x",
-        session_id="sess-diag-tc-only",
+        session_id="sess-diag-tc",
     )
-    task = asyncio.create_task(
-        relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+    task_tc = asyncio.create_task(
+        relay_tc.run(start=ClientStart(type="start", persona="chloe"))
     )
     try:
-        chunk = base64.b64encode(b"farewell-pcm").decode("ascii")
         await fake_upstream.inject({"sessionOutput": {"audio": chunk, "turnIndex": 1}})
         await fake_upstream.inject(
             {
@@ -535,35 +620,33 @@ async def test_emits_server_end_from_diagnostic_tool_call_signal_alone(
             }
         )
         await asyncio.sleep(0.05)
-
-        msgs = browser.parsed_messages()
-        assert [m["type"] for m in msgs] == ["ready", "audio", "turn_complete", "end"]
-        assert relay.ended_cleanly is True
+        assert [m["type"] for m in browser_tc.parsed_messages()] == [
+            "ready",
+            "audio",
+            "turn_complete",
+            "end",
+        ]
+        assert relay_tc.ended_cleanly is True
     finally:
-        await browser.close()
+        await browser_tc.close()
         await fake_upstream.close()
-        await task
+        await task_tc
 
-
-@pytest.mark.asyncio
-async def test_emits_server_end_from_diagnostic_call_complete_released_signal_alone(
-    fake_upstream: FakeUpstream,
-) -> None:
-    """T7-1b: updatedVariables call_complete=='released' alone triggers ServerEnd on turnCompleted."""
-    browser = FakeBrowser()
-    relay = Relay(
-        browser=browser,
-        upstream=fake_upstream,
+    # 2. updatedVariables call_complete == 'released'
+    upstream_var = FakeUpstream()
+    browser_var = FakeBrowser()
+    relay_var = Relay(
+        browser=browser_var,
+        upstream=upstream_var,
         app_resource="apps/x",
-        session_id="sess-diag-var-only",
+        session_id="sess-diag-var",
     )
-    task = asyncio.create_task(
-        relay.run(start=ClientStart(type="start", persona="chloe", variables={}))
+    task_var = asyncio.create_task(
+        relay_var.run(start=ClientStart(type="start", persona="chloe"))
     )
     try:
-        chunk = base64.b64encode(b"farewell-pcm").decode("ascii")
-        await fake_upstream.inject({"sessionOutput": {"audio": chunk, "turnIndex": 1}})
-        await fake_upstream.inject(
+        await upstream_var.inject({"sessionOutput": {"audio": chunk, "turnIndex": 1}})
+        await upstream_var.inject(
             {
                 "sessionOutput": {
                     "turnCompleted": True,
@@ -582,11 +665,35 @@ async def test_emits_server_end_from_diagnostic_call_complete_released_signal_al
             }
         )
         await asyncio.sleep(0.05)
-
-        msgs = browser.parsed_messages()
-        assert [m["type"] for m in msgs] == ["ready", "audio", "turn_complete", "end"]
-        assert relay.ended_cleanly is True
+        assert [m["type"] for m in browser_var.parsed_messages()] == [
+            "ready",
+            "audio",
+            "turn_complete",
+            "end",
+        ]
+        assert relay_var.ended_cleanly is True
     finally:
-        await browser.close()
-        await fake_upstream.close()
+        await browser_var.close()
+        await upstream_var.close()
+        await task_var
+
+
+@pytest.mark.asyncio
+async def test_relay_task_group_propagates_external_cancellation_cleanly(
+    fake_upstream: FakeUpstream,
+) -> None:
+    browser = FakeBrowser()
+    relay = Relay(
+        browser=browser,
+        upstream=fake_upstream,
+        app_resource="apps/x",
+        session_id="sess-cancel",
+    )
+    task = asyncio.create_task(
+        relay.run(start=ClientStart(type="start", persona="chloe"))
+    )
+    await fake_upstream.recv_from_proxy()
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
         await task
+    assert fake_upstream.closed is True

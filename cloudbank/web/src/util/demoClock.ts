@@ -53,6 +53,14 @@ function pad2(n: number): string {
   return n < 10 ? `0${n}` : `${n}`
 }
 
+function monthNameAt(zeroBasedMonth: number): string {
+  return MONTH_NAMES[zeroBasedMonth] ?? 'January'
+}
+
+function shortMonthNameAt(zeroBasedMonth: number): string {
+  return SHORT_MONTH_NAMES[zeroBasedMonth] ?? 'Jan'
+}
+
 export function formatIsoDate(date: Date): string {
   const y = date.getFullYear()
   const m = date.getMonth() + 1
@@ -114,14 +122,14 @@ export function monthNameForOffset(demoDate: string, offset: 0 | 1 | 2): string 
   const { year, month } = parseDemoDateComponents(demoDate)
   const totalMonths = year * 12 + (month - 1) - offset
   const idx = ((totalMonths % 12) + 12) % 12
-  return MONTH_NAMES[idx]
+  return monthNameAt(idx)
 }
 
 export function shortMonthForOffset(demoDate: string, offset: 0 | 1 | 2): string {
   const { year, month } = parseDemoDateComponents(demoDate)
   const totalMonths = year * 12 + (month - 1) - offset
   const idx = ((totalMonths % 12) + 12) % 12
-  return SHORT_MONTH_NAMES[idx]
+  return shortMonthNameAt(idx)
 }
 
 export function targetYearMonth(
@@ -136,7 +144,7 @@ export function targetYearMonth(
   return {
     targetYear,
     targetMonth,
-    label: `${MONTH_NAMES[targetMonth - 1]} ${targetYear}`,
+    label: `${monthNameAt(targetMonth - 1)} ${targetYear}`,
   }
 }
 
@@ -152,7 +160,7 @@ export function nextPaymentDateLabel(dayOfMonth: number, demoDate: string): stri
   }
   const lastDay = new Date(targetYear, targetMonth, 0).getDate()
   const clampedDay = Math.min(dayOfMonth, lastDay)
-  return `${clampedDay} ${MONTH_NAMES[targetMonth - 1]} ${targetYear}`
+  return `${clampedDay} ${monthNameAt(targetMonth - 1)} ${targetYear}`
 }
 
 export function formatIsoDayMonthYear(isoDate: string): string {
@@ -160,7 +168,7 @@ export function formatIsoDayMonthYear(isoDate: string): string {
   const year = Number(isoDate.slice(0, 4))
   const month = Number(isoDate.slice(5, 7))
   const day = Number(isoDate.slice(8, 10))
-  return `${day} ${MONTH_NAMES[month - 1]} ${year}`
+  return `${day} ${monthNameAt(month - 1)} ${year}`
 }
 
 export function resolveTimeOfDay(

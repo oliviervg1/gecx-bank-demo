@@ -5,15 +5,15 @@ import { SavingsPage } from './pages/savings/SavingsPage'
 import { MortgagePage } from './pages/mortgage/MortgagePage'
 import { ProfilePage } from './pages/ProfilePage'
 import { AgentProvider } from './agent/AgentProvider'
-import { SpendingViewProvider } from './agent/SpendingViewProvider'
+import { BankingViewStateProvider } from './agent/BankingViewStateProvider'
+import { AuthSessionProvider } from './auth/AuthProvider'
 import { PersonaProvider } from './personas/PersonaProvider'
-import { PageProvider, usePage } from './pages/PageProvider'
+import { PageProvider, usePage, type PageId } from './pages/PageProvider'
 import { ToastProvider } from './components/ToastProvider'
 import { WorkbenchLayout } from './workbench/WorkbenchLayout'
 
-function CurrentPage() {
-  const { page } = usePage()
-  switch (page) {
+function CurrentPage({ targetPage }: { targetPage: PageId }) {
+  switch (targetPage) {
     case 'home':
       return <HomePage />
     case 'spending':
@@ -25,7 +25,7 @@ function CurrentPage() {
     case 'profile':
       return <ProfilePage />
     default: {
-      const _exhaustive: never = page
+      const _exhaustive: never = targetPage
       throw new Error(`unhandled page: ${String(_exhaustive)}`)
     }
   }
@@ -35,7 +35,7 @@ function BankingRoutes() {
   const { page, direction } = usePage()
   return (
     <PageTransition pageKey={page} direction={direction}>
-      <CurrentPage />
+      <CurrentPage targetPage={page} />
     </PageTransition>
   )
 }
@@ -44,13 +44,15 @@ export default function App() {
   return (
     <PersonaProvider>
       <PageProvider>
-        <SpendingViewProvider>
+        <BankingViewStateProvider>
           <AgentProvider>
-            <ToastProvider>
-              <WorkbenchLayout bankingContent={<BankingRoutes />} />
-            </ToastProvider>
+            <AuthSessionProvider>
+              <ToastProvider>
+                <WorkbenchLayout bankingContent={<BankingRoutes />} />
+              </ToastProvider>
+            </AuthSessionProvider>
           </AgentProvider>
-        </SpendingViewProvider>
+        </BankingViewStateProvider>
       </PageProvider>
     </PersonaProvider>
   )

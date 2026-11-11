@@ -5,9 +5,11 @@ from __future__ import annotations
 import math
 from typing import Any
 
-import pytest
-
-from conftest import load_controller_namespace, make_seeded_state
+from conftest import (
+    CONTROLLER_NAMES,
+    load_controller_namespace,
+    make_seeded_state,
+)
 
 
 def test_half_up_parity_vectors(
@@ -178,10 +180,29 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
         )
         assert sim == edge["expected"], edge["id"]
 
+    for ren_edge in parity_vectors["mortgage_renewal_edges"]:
+        pmt = mg_ns["_renewal_payment_pence"](
+            ren_edge["balance_pence"],
+            ren_edge["rate_bps"],
+            ren_edge["term_remaining_months"],
+        )
+        assert pmt == ren_edge["expected_payment_pence"], ren_edge["id"]
+
     for row in parity_vectors["mortgage_overpayments"]:
-        p_state = make_seeded_state(row["persona"], struct_fixtures)
-        p_ns = load_controller_namespace("assist_mortgages", p_state)
-        mg = p_ns["_normalize_snapshot"](p_state["customer_snapshot"])["mortgage"]
+        if "synthetic" in row:
+            syn = row["synthetic"]
+            p_ns = mg_ns
+            mg = {
+                "balance_pence": syn["balance_pence"],
+                "interest_rate_bps": syn["interest_rate_bps"],
+                "annual_overpayment_allowance_pence": syn["annual_overpayment_allowance_pence"],
+                "overpaid_this_year_pence": syn["overpaid_this_year_pence"],
+                "next_payment": {"amount_pence": syn["scheduled_payment_pence"]},
+            }
+        else:
+            p_state = make_seeded_state(row["persona"], struct_fixtures)
+            p_ns = load_controller_namespace("assist_mortgages", p_state)
+            mg = p_ns["_normalize_snapshot"](p_state["customer_snapshot"])["mortgage"]
         res = p_ns["_project_overpayment"](
             mg,
             row["monthly_overpayment_pence"],
@@ -189,6 +210,8 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
         )
         for key, val in row["expected"].items():
             assert res[key] == val, f"{row['id']}:{key}"
+        assert res["baseline_paid_off"] == row["expected"].get("baseline_paid_off", True)
+        assert res["paid_off"] == row["expected"].get("paid_off", True)
 
     for persona, ren_exp in parity_vectors["mortgage_renewals"].items():
         p_state = make_seeded_state(persona, struct_fixtures)
@@ -204,7 +227,6 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
             )
             assert pmt == exp_opt["payment_pence"], (persona, exp_opt["id"])
             assert pmt - ren_exp["current_payment_pence"] == exp_opt["delta_pence"]
-            # Confirm pmt pays off within term while pmt - 1 does not
             assert p_ns["_simulate_mortgage"](
                 mg["balance_pence"], opt["rate_bps"], pmt, mg["term_remaining_months"]
             )["paid_off"]
@@ -240,3 +262,49 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
     assert "£189,000" in tom_resp["agent_action"]
     assert "£224,000" in tom_resp["agent_action"]
     assert "£20,800" in tom_resp["agent_action"]
+
+
+def test_vendor_matching_and_calendar_date_parity_vectors(
+    parity_vectors: dict[str, Any],
+    struct_fixtures: dict[str, dict[str, Any]],
+) -> None:
+    """Assert vendor_matching_cases (including Unicode) and calendar_date_cases across controllers."""
+    for case in parity_vectors["vendor_matching_cases"]:
+        if "persona" in case:
+            state = make_seeded_state(case["persona"], struct_fixtures)
+            ns = load_controller_namespace("assist_everyday_banking", state)
+            txns = ns["_normalize_snapshot"](state["customer_snapshot"])["transactions"]
+        else:
+            state = make_seeded_state("chloe", struct_fixtures)
+            ns = load_controller_namespace("assist_everyday_banking", state)
+            txns = [
+                {
+                    "id": str(item["id"]),
+                    "month_offset": int(item["month_offset"]),
+                    "day": int(item["day"]),
+                    "vendor": str(item["vendor"]),
+                    "category": str(item["category"]),
+                    "amount_pence": int(item["amount_pence"]),
+                    "is_subscription": bool(item.get("is_subscription")),
+                    "is_anomaly": bool(item.get("is_anomaly")),
+                }
+                for item in case["synthetic_transactions"]
+            ]
+            raw_norm, stem_norm = ns["_normalize_vendor_forms"](txns[0]["vendor"])
+            assert raw_norm == case["expected_normalized_raw"], case["id"]
+            assert stem_norm == case["expected_normalized_stem"], case["id"]
+
+        canonical, matched = ns["_match_vendor_rows"](txns, case["query"])
+        assert canonical == case["expected_canonical"], case["id"]
+        assert len(matched) == case["expected_match_count"], case["id"]
+
+    for date_case in parity_vectors["calendar_date_cases"]:
+        expected_tuple = tuple(date_case["resolved"])
+        for ctrl_name in CONTROLLER_NAMES:
+            d_state = make_seeded_state(
+                "chloe", struct_fixtures, demo_date=date_case["raw"]
+            )
+            d_ns = load_controller_namespace(ctrl_name, d_state)
+            assert d_ns["_parse_demo_date"]() == expected_tuple, (
+                f"{ctrl_name}:{date_case['id']}"
+            )

@@ -26,6 +26,7 @@ export interface MortgageOverpaymentResult {
   first_year_overpayment_pence: number
   exceeds_allowance: boolean
   excess_over_allowance_pence: number
+  baseline_paid_off: boolean
   paid_off: boolean
 }
 
@@ -92,6 +93,12 @@ export function renewalPaymentPence(
   rateBps: number,
   termRemainingMonths: number,
 ): number {
+  if (balancePence <= 0) {
+    return 0
+  }
+  if (termRemainingMonths <= 0) {
+    return balancePence + halfUp(balancePence * rateBps, 120_000)
+  }
   let low = halfUp(balancePence * rateBps, 120_000) + 1
   let high = balancePence + low
   while (low < high) {
@@ -133,18 +140,22 @@ export function projectOverpayment(
   )
   const exceeds = firstYearOverpay > remainingAllowance
   const excess = Math.max(0, firstYearOverpay - remainingAllowance)
+  const bothAmortize = Boolean(base.paid_off && proj.paid_off)
 
   return {
     baseline_months: base.months,
     projected_months: proj.months,
-    months_saved: Math.max(0, base.months - proj.months),
+    months_saved: bothAmortize ? Math.max(0, base.months - proj.months) : 0,
     baseline_interest_pence: base.total_interest_pence,
     projected_interest_pence: proj.total_interest_pence,
-    interest_saved_pence: Math.max(0, base.total_interest_pence - proj.total_interest_pence),
+    interest_saved_pence: bothAmortize
+      ? Math.max(0, base.total_interest_pence - proj.total_interest_pence)
+      : 0,
     remaining_allowance_pence: remainingAllowance,
     first_year_overpayment_pence: firstYearOverpay,
     exceeds_allowance: exceeds,
     excess_over_allowance_pence: excess,
+    baseline_paid_off: base.paid_off,
     paid_off: proj.paid_off,
   }
 }
