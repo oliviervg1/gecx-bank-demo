@@ -372,11 +372,6 @@ export function ConciergePanel() {
                   <span className="font-medium">
                     {turn.role === 'user' ? 'You' : 'Cloudbank Concierge'}
                   </span>
-                  {turn.interrupted && (
-                    <span data-testid="interrupted-badge" className="text-[11px] text-brand-muted">
-                      (Interrupted)
-                    </span>
-                  )}
                 </div>
 
                 {turn.text && (

@@ -191,8 +191,11 @@ def test_docs_backticked_identifiers_and_links_exist_in_codebase() -> None:
         f"Docs reference identifiers that do not exist in codebase: {unknown_identifiers}"
     )
 
-    # QA tester guide must never leak internal agent, tool, callback, or state identifiers.
+    # QA tester guide must never leak internal identifiers or quote '.00' in Expected reply lines.
     qa_text = (DOCS_DIR / "guides" / "qa_tester_guide.md").read_text(encoding="utf-8")
+    for line in qa_text.splitlines():
+        if "**Expected reply:**" in line:
+            assert ".00" not in line, f"QA Expected reply quotes '.00' instead of whole pounds: {line}"
     for internal_tok in (
         "root_agent",
         "everyday_banking_agent",
@@ -389,6 +392,8 @@ def test_push_hooks_gate_manage_ces_app_push_subcommand(tmp_path: Path) -> None:
     for exec_cmd in (
         "cd cloudbank && ./push.sh",
         "cd cloudbank\n./push.sh",
+        "git status\n./cloudbank/push.sh",
+        "git add cloudbank/push.sh\n./cloudbank/push.sh",
         "timeout 900 ./cloudbank/push.sh",
         "sudo ./cloudbank/push.sh",
         "exec ./cloudbank/push.sh",

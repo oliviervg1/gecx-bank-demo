@@ -42,7 +42,7 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 
 | Row | Scenario | Deterministic Transition |
 | :--- | :--- | :--- |
-| **1** | Deliberate PTT barge-in during `agentSpeaking` | Flushes `AudioPlayer`, increments `playbackEpoch` to drop in-flight audio frames, marks active assistant turn `interrupted: true` (`(Interrupted)`), starts capture. |
+| **1** | Deliberate PTT barge-in during `agentSpeaking` | Flushes `AudioPlayer`, increments `playbackEpoch` to drop in-flight audio frames, marks active assistant turn `interrupted: true` so the next reply opens a fresh bubble cleanly, starts capture. |
 | **2** | `turn_complete` arrives while TTS buffer is still playing | Sets `turnCompletedWhileSpeaking = true` and stays in `agentSpeaking` until `PLAYER_DRAINED` fires for the matching `playbackEpoch`. |
 | **3** | Text/silent turn with zero audio chunks | Transitions `thinking → ready` on `turn_complete`; guarded by a `15,000 ms` `THINKING_WATCHDOG` timer. |
 | **4** | `ServerEnd` (`end_session` on farewell) | Enters `drainingFarewell` while TTS plays (`relay.py` also flushes held `ServerEnd` on upstream close), transitioning to `ended` once `PLAYER_DRAINED` completes; holding PTT during drain flushes audio and starts a fresh session. |
@@ -54,7 +54,7 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 | **10** | Keyboard Spacebar repeat / window blur | Ignores `event.repeat` keydowns and dispatches `PTT_RELEASE` on `window` `blur` or `visibilitychange`. |
 | **11** | `PERSONA_SWITCH` or text-bar `CLIENT_TEXT_SUBMIT` | `PERSONA_SWITCH` closes the active socket, resets UI/turns/`seenUiSeqKey`, and opens a new session for the selected customer; `CLIENT_TEXT_SUBMIT` barges in cleanly or connects-then-sends if disconnected/paused/ended. |
 
-> **Note on `bargeInAwareness: true`:** When a caller interrupts speech mid-sentence, CX Agent Studio tells the model on the next turn that its prior response was interrupted so it can adapt naturally; the `(Interrupted)` label in `ConciergePanel` marks the turn boundary rather than the exact millisecond syllable cut-off.
+> **Note on `bargeInAwareness: true`:** When a caller interrupts speech mid-sentence, CX Agent Studio tells the model on the next turn that its prior response was interrupted so it can adapt naturally, while `sessionMachine.ts` seals the interrupted turn boundary quietly without surfacing an error-like badge in `ConciergePanel`.
 
 ---
 
@@ -63,7 +63,7 @@ All WebSocket, microphone, audio-playback, and persona transitions live in the p
 `WorkbenchLayout.tsx` pairs the 5-tab banking app on the left with `ConciergePanel.tsx` on the right on a warm stone canvas (`#f7f6f2`), unified `#ffffff` surfaces, and `1px #e5e3dc` hairlines (zero drop-shadows and zero technical telemetry on screen):
 
 - **Plain-English Domain Pill:** Maps active specialist state to at most one subtle header pill (`Everyday Banking`, `Savings`, or `Mortgages`) — never exposing internal `snake_case` agent IDs, tool names, model IDs, or sequence numbers.
-- **Stream Sanitizer (`streamSanitizer.ts`):** `sanitizeAgentProse` strips inline Composite v2 audio tags (`<warm>`, `<reassuring>`, etc.), platform XML envelopes, and `[Diagnosis context: ...]` notes while `appendOrUpdateAssistantText` in `sessionMachine.ts` accumulates both cumulative and per-segment `ServerText` frames across multi-agent turns.
+- **Stream Sanitizer (`streamSanitizer.ts`):** `sanitizeAgentProse` strips inline Composite v2 audio tags (`<warm>`, `<reassuring>`, etc.), platform XML envelopes, and `[Diagnosis context: ...]` notes, and normalises 4+-letter ALL-CAPS TTS lexical-stress words (`HIGHER` → `higher`) while preserving genuine banking and geographic acronyms (`AER`, `ERC`, `GBP`, `UK`, `ISA`, `SVR`, `FCA`, `APR`, `BACS`, `CHAPS`, `PIN`), as `appendOrUpdateAssistantText` in `sessionMachine.ts` accumulates cumulative and per-segment `ServerText` frames across multi-agent turns.
 - **Sandboxed Google Search Chips:** Renders `SessionOutput.google_search_suggestions` HTML inside `<iframe sandbox="allow-popups allow-popups-to-escape-sandbox">` (scripts disabled) alongside `http(s)`-validated citation links.
 
 ---
