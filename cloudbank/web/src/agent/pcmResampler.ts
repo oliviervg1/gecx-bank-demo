@@ -1,5 +1,5 @@
 // Stateful cross-rate fractional box-average resampler (16 / 44.1 / 48 kHz -> 16 kHz)
-// emitting fixed 1,600-sample (100 ms) chunks and flushing partial speech on PTT release.
+// shared between the bundled TypeScript AudioWorklet and offline unit tests.
 
 export const TARGET_SAMPLE_RATE = 16000
 export const CHUNK_SAMPLES_100MS = 1600
@@ -28,7 +28,7 @@ export function createStatefulResampler(
       if (!input || input.length === 0) return emitted
 
       for (let i = 0; i < input.length; i++) {
-        const sample = input[i]
+        const sample = input[i] ?? 0
         let rem = 1.0
         while (rem > 1e-9) {
           const need = ratio - accWeight

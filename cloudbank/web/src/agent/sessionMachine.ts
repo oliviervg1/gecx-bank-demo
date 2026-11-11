@@ -1,6 +1,6 @@
-// Pure deterministic reducer and effect descriptors for BidiRunSession voice + text lifecycle.
-// Covers all 11 transition rows from agreed_plan_resolutions.md §5.3.
+// Pure deterministic reducer and effect descriptors for BidiRunSession voice and text lifecycle.
 
+import { getFixture } from '../data/fixture'
 import type {
   PersonaId,
   ServerMsg,
@@ -11,6 +11,11 @@ import type {
 import { sanitizeAgentProse } from './streamSanitizer'
 
 export const THINKING_WATCHDOG_MS = 15_000
+export const WS_CONNECT_TIMEOUT_MS = 10_000
+export const MAX_RESUME_ATTEMPTS = 3
+export const RESUME_BACKOFF_DELAYS_MS = [250, 500, 1000] as const
+
+export type InputMode = 'ptt' | 'continuous'
 
 export type SessionPhase =
   | 'disconnected'
@@ -41,10 +46,13 @@ export type PendingPostConnectAction =
 export interface SessionMachineState {
   phase: SessionPhase
   persona: PersonaId
+  inputMode: InputMode
+  micActive: boolean
   connectionEpoch: number
   playbackEpoch: number
   sessionId: string | null
   resumeSessionId: string | null
+  resumeAttempts: number
   seenUiSeqKey: { sessionId: string; maxSeq: number }
   playerActive: boolean
   turnCompletedWhileSpeaking: boolean
@@ -60,9 +68,18 @@ export interface SessionMachineState {
 }
 
 export type SessionEffect =
-  | { type: 'OPEN_WS'; epoch: number; persona: PersonaId; sessionId: string | null }
+  | {
+      type: 'OPEN_WS'
+      epoch: number
+      persona: PersonaId
+      sessionId: string | null
+      lastUiSeq?: number
+    }
   | { type: 'CLOSE_WS' }
+  | { type: 'SCHEDULE_RECONNECT'; epoch: number; attempt: number; baseDelayMs: number }
+  | { type: 'CLEAR_RECONNECT_TIMER' }
   | { type: 'START_MIC_CAPTURE' }
+  | { type: 'UNMUTE_MIC' }
   | { type: 'FLUSH_MIC_AND_SEND_SILENCE' }
   | { type: 'STOP_TRAILING_SILENCE' }
   | { type: 'STOP_MIC_CAPTURE' }
@@ -76,7 +93,7 @@ export type SessionEffect =
 
 export type SessionEvent =
   | { type: 'CONNECT_REQUESTED' }
-  | { type: 'DISCONNECT_REQUESTED' }
+  | { type: 'DISCONNECT_REQUESTED'; clearTurns?: boolean }
   | { type: 'PERSONA_SWITCH'; persona: PersonaId }
   | { type: 'PTT_PRESS' }
   | { type: 'PTT_RELEASE' }
@@ -85,6 +102,7 @@ export type SessionEvent =
   | { type: 'CLIENT_TEXT_SUBMIT'; text: string }
   | { type: 'SERVER_MESSAGE'; epoch: number; msg: ServerMsg }
   | { type: 'WS_CLOSED'; epoch: number; reason?: string }
+  | { type: 'RECONNECT_TIMER_FIRED'; epoch: number }
   | { type: 'PLAYER_DRAINED'; playbackEpoch: number }
   | { type: 'THINKING_WATCHDOG_FIRED'; epoch: number }
 
@@ -93,14 +111,30 @@ export interface TransitionResult {
   effects: SessionEffect[]
 }
 
-export function createInitialSessionState(persona: PersonaId = 'chloe'): SessionMachineState {
+export function computeReconnectDelayMs(
+  attempt: number,
+  random: () => number = Math.random,
+): number {
+  const idx = Math.max(0, Math.min(RESUME_BACKOFF_DELAYS_MS.length - 1, attempt - 1))
+  const base = RESUME_BACKOFF_DELAYS_MS[idx] ?? 1000
+  const jitterFactor = 0.85 + Math.max(0, Math.min(1, random())) * 0.3
+  return Math.max(50, Math.trunc(base * jitterFactor))
+}
+
+export function createInitialSessionState(
+  persona: PersonaId = 'chloe',
+  inputMode: InputMode = 'ptt',
+): SessionMachineState {
   return {
     phase: 'disconnected',
     persona,
+    inputMode,
+    micActive: false,
     connectionEpoch: 0,
     playbackEpoch: 0,
     sessionId: null,
     resumeSessionId: null,
+    resumeAttempts: 0,
     seenUiSeqKey: { sessionId: '', maxSeq: 0 },
     playerActive: false,
     turnCompletedWhileSpeaking: false,
@@ -113,6 +147,45 @@ export function createInitialSessionState(persona: PersonaId = 'chloe'): Session
     activeAgentName: 'root_agent',
     latestUiState: null,
     latestUiTier: null,
+  }
+}
+
+function buildOpenWsEffect(
+  epoch: number,
+  persona: PersonaId,
+  sessionId: string | null,
+  seenUiSeqKey: { sessionId: string; maxSeq: number },
+): SessionEffect {
+  if (sessionId && seenUiSeqKey.sessionId === sessionId && seenUiSeqKey.maxSeq > 0) {
+    return {
+      type: 'OPEN_WS',
+      epoch,
+      persona,
+      sessionId,
+      lastUiSeq: seenUiSeqKey.maxSeq,
+    }
+  }
+  return {
+    type: 'OPEN_WS',
+    epoch,
+    persona,
+    sessionId,
+  }
+}
+
+function finishAgentTurnPhase(state: SessionMachineState): {
+  nextPhase: SessionPhase
+  extraEffects: SessionEffect[]
+} {
+  if (state.inputMode === 'continuous' && state.micActive) {
+    return {
+      nextPhase: 'capturing',
+      extraEffects: [{ type: 'UNMUTE_MIC' }],
+    }
+  }
+  return {
+    nextPhase: 'ready',
+    extraEffects: [],
   }
 }
 
@@ -143,8 +216,9 @@ function appendOrUpdateAssistantText(
   turns: ConversationTurn[],
   rawText: string,
   partial: boolean,
+  persona: PersonaId,
 ): ConversationTurn[] {
-  const clean = sanitizeAgentProse(rawText)
+  const clean = sanitizeAgentProse(rawText, getFixture(persona))
   if (!clean) return turns
   const next = [...turns]
   const last = next[next.length - 1]
@@ -154,16 +228,13 @@ function appendOrUpdateAssistantText(
       clean.startsWith(last.text) ||
       clean.toLowerCase().startsWith(last.text.toLowerCase())
     ) {
-      // Cumulative text growth: replace with extended prefix.
       next[next.length - 1] = { ...last, text: clean, partial }
       return next
     }
     if (last.text.endsWith(clean)) {
-      // Final repeat of an already-appended trailing segment.
       next[next.length - 1] = { ...last, partial }
       return next
     }
-    // Per-segment / incremental text (e.g. pacing phrase then answer): append cleanly.
     const needsSpace = !/^[,.;:!?)]/.test(clean)
     next[next.length - 1] = {
       ...last,
@@ -186,17 +257,25 @@ function appendOrUpdateAssistantText(
   return next
 }
 
-function finalizeOpenTurns(turns: ConversationTurn[]): ConversationTurn[] {
+function finalizeOpenTurns(
+  turns: ConversationTurn[],
+  preserveUserPartial: boolean = false,
+): ConversationTurn[] {
   if (turns.length === 0 || !turns.some((t) => t.partial)) return turns
-  return turns.map((t) => (t.partial ? { ...t, partial: false } : t))
+  return turns.map((t) => {
+    if (!t.partial) return t
+    if (preserveUserPartial && t.role === 'user') return t
+    return { ...t, partial: false }
+  })
 }
 
 function markActiveAssistantInterrupted(turns: ConversationTurn[]): ConversationTurn[] {
   if (turns.length === 0) return turns
   const next = [...turns]
   for (let i = next.length - 1; i >= 0; i--) {
-    if (next[i].role === 'assistant') {
-      next[i] = { ...next[i], interrupted: true, partial: false }
+    const item = next[i]
+    if (item && item.role === 'assistant') {
+      next[i] = { ...item, interrupted: true, partial: false }
       break
     }
   }
@@ -209,8 +288,9 @@ function attachSearchSuggestions(
 ): ConversationTurn[] {
   const next = [...turns]
   for (let i = next.length - 1; i >= 0; i--) {
-    if (next[i].role === 'assistant') {
-      next[i] = { ...next[i], searchSuggestions: suggestions }
+    const item = next[i]
+    if (item && item.role === 'assistant') {
+      next[i] = { ...item, searchSuggestions: suggestions }
       return next
     }
   }
@@ -245,7 +325,6 @@ export function reduceSessionMachine(
   event: SessionEvent,
 ): TransitionResult {
   switch (event.type) {
-    // Row 8: StrictMode idempotent mount — ignore duplicate connect if already connecting/live.
     case 'CONNECT_REQUESTED': {
       if (
         state.phase === 'connecting' ||
@@ -263,16 +342,13 @@ export function reduceSessionMachine(
           ...state,
           phase: 'connecting',
           connectionEpoch: nextEpoch,
+          resumeAttempts: 0,
           errorMessage: null,
           micDenied: false,
         },
         effects: [
-          {
-            type: 'OPEN_WS',
-            epoch: nextEpoch,
-            persona: state.persona,
-            sessionId: sessionIdToJoin,
-          },
+          { type: 'CLEAR_RECONNECT_TIMER' },
+          buildOpenWsEffect(nextEpoch, state.persona, sessionIdToJoin, state.seenUiSeqKey),
         ],
       }
     }
@@ -283,17 +359,31 @@ export function reduceSessionMachine(
         state: {
           ...state,
           phase: 'disconnected',
+          micActive: false,
           connectionEpoch: nextEpoch,
           playbackEpoch: state.playbackEpoch + 1,
           sessionId: null,
           resumeSessionId: null,
+          resumeAttempts: 0,
+          seenUiSeqKey: { sessionId: '', maxSeq: 0 },
           playerActive: false,
           turnCompletedWhileSpeaking: false,
           pendingGoAwaySessionId: null,
           pendingPostConnect: null,
           userHasFloor: false,
+          ...(event.clearTurns
+            ? {
+                turns: [],
+                activeAgentName: 'root_agent',
+                latestUiState: null,
+                latestUiTier: null,
+                errorMessage: null,
+                micDenied: false,
+              }
+            : {}),
         },
         effects: [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'STOP_MIC_CAPTURE' },
           { type: 'FLUSH_PLAYER' },
@@ -302,7 +392,6 @@ export function reduceSessionMachine(
       }
     }
 
-    // Row 11: PERSONA_SWITCH valid from ANY state; tears down WS, resets UI/seq/stream, opens fresh session.
     case 'PERSONA_SWITCH': {
       if (event.persona === state.persona && state.phase === 'ready' && state.turns.length === 0) {
         return { state, effects: [] }
@@ -311,12 +400,13 @@ export function reduceSessionMachine(
       const nextPlaybackEpoch = state.playbackEpoch + 1
       return {
         state: {
-          ...createInitialSessionState(event.persona),
+          ...createInitialSessionState(event.persona, state.inputMode),
           phase: 'connecting',
           connectionEpoch: nextEpoch,
           playbackEpoch: nextPlaybackEpoch,
         },
         effects: [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'STOP_MIC_CAPTURE' },
           { type: 'FLUSH_PLAYER' },
@@ -332,14 +422,11 @@ export function reduceSessionMachine(
       }
     }
 
-    // Rows 1, 4, 9, 10: PTT_PRESS handles key-repeat ignore, barge-in epoch flush, drainingFarewell/ended/paused/error fresh start.
     case 'PTT_PRESS': {
-      // Row 10: Ignore auto-repeat while already capturing.
       if (state.phase === 'capturing') {
         return { state, effects: [] }
       }
 
-      // Row 4 / Row 9 / paused / disconnected: connect fresh (clearing micDenied) and queue capture.
       if (
         state.phase === 'disconnected' ||
         state.phase === 'ended' ||
@@ -347,12 +434,12 @@ export function reduceSessionMachine(
         state.phase === 'drainingFarewell' ||
         state.phase === 'error'
       ) {
-        // If error was solely micDenied while WS is still open (sessionId !== null), retry mic directly without tearing down WS!
         if (state.phase === 'error' && state.micDenied && state.sessionId !== null) {
           return {
             state: {
               ...state,
               phase: 'capturing',
+              micActive: true,
               micDenied: false,
               errorMessage: null,
               userHasFloor: false,
@@ -364,6 +451,7 @@ export function reduceSessionMachine(
         const nextEpoch = state.connectionEpoch + 1
         const nextPlayback = state.playbackEpoch + 1
         const effects: SessionEffect[] = [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'FLUSH_PLAYER' },
         ]
@@ -380,10 +468,12 @@ export function reduceSessionMachine(
           state: {
             ...state,
             phase: 'connecting',
+            micActive: true,
             connectionEpoch: nextEpoch,
             playbackEpoch: nextPlayback,
             sessionId: null,
             resumeSessionId: null,
+            resumeAttempts: 0,
             playerActive: false,
             turnCompletedWhileSpeaking: false,
             pendingGoAwaySessionId: null,
@@ -400,6 +490,7 @@ export function reduceSessionMachine(
         return {
           state: {
             ...state,
+            micActive: true,
             pendingPostConnect: { kind: 'capture' },
             userHasFloor: false,
           },
@@ -407,12 +498,13 @@ export function reduceSessionMachine(
         }
       }
 
-      // Row 1: Deliberate barge-in during agentSpeaking flushes player + increments playbackEpoch + marks interrupted.
+      // Deliberate barge-in during agentSpeaking flushes player, bumps playbackEpoch, and claims floor.
       if (state.phase === 'agentSpeaking') {
         return {
           state: {
             ...state,
             phase: 'capturing',
+            micActive: true,
             playbackEpoch: state.playbackEpoch + 1,
             playerActive: false,
             turnCompletedWhileSpeaking: false,
@@ -427,11 +519,35 @@ export function reduceSessionMachine(
         }
       }
 
-      // Ready or thinking -> start capturing immediately.
+      // Pressing PTT during `thinking` immediately claims the floor and bumps playbackEpoch so
+      // an arriving audio chunk from the previous turn cannot mute the user's held utterance.
+      if (state.phase === 'thinking') {
+        return {
+          state: {
+            ...state,
+            phase: 'capturing',
+            micActive: true,
+            playbackEpoch: state.playbackEpoch + 1,
+            playerActive: false,
+            turnCompletedWhileSpeaking: false,
+            userHasFloor: true,
+            micDenied: false,
+            errorMessage: null,
+          },
+          effects: [
+            { type: 'CLEAR_THINKING_WATCHDOG' },
+            { type: 'STOP_TRAILING_SILENCE' },
+            { type: 'START_MIC_CAPTURE' },
+          ],
+        }
+      }
+
+      // Ready -> start capturing immediately.
       return {
         state: {
           ...state,
           phase: 'capturing',
+          micActive: true,
           userHasFloor: false,
           micDenied: false,
           errorMessage: null,
@@ -443,21 +559,24 @@ export function reduceSessionMachine(
       }
     }
 
-    // Row 10 + Row 3: PTT_RELEASE flushes worklet, sends trailing silence (<=2.5s), and starts 15s thinking watchdog.
     case 'PTT_RELEASE': {
+      if (state.inputMode === 'continuous') {
+        return { state, effects: [] }
+      }
       if (state.phase === 'connecting' && state.pendingPostConnect?.kind === 'capture') {
         return {
-          state: { ...state, pendingPostConnect: null, userHasFloor: false },
+          state: { ...state, micActive: false, pendingPostConnect: null, userHasFloor: false },
           effects: [],
         }
       }
       if (state.phase !== 'capturing') {
-        return { state: { ...state, userHasFloor: false }, effects: [] }
+        return { state: { ...state, micActive: false, userHasFloor: false }, effects: [] }
       }
       return {
         state: {
           ...state,
           phase: 'thinking',
+          micActive: false,
           userHasFloor: false,
         },
         effects: [
@@ -474,19 +593,37 @@ export function reduceSessionMachine(
     case 'STOP_MIC_ONLY': {
       if (state.phase === 'capturing') {
         return {
-          state: { ...state, phase: 'ready', userHasFloor: false },
+          state: { ...state, phase: 'ready', micActive: false, userHasFloor: false },
           effects: [{ type: 'STOP_MIC_CAPTURE' }],
         }
       }
-      return { state, effects: [{ type: 'STOP_MIC_CAPTURE' }] }
+      if (state.phase === 'agentSpeaking' && state.inputMode === 'continuous') {
+        return {
+          state: {
+            ...state,
+            phase: 'ready',
+            micActive: false,
+            userHasFloor: false,
+            playbackEpoch: state.playbackEpoch + 1,
+            playerActive: false,
+            turnCompletedWhileSpeaking: false,
+            turns: markActiveAssistantInterrupted(state.turns),
+          },
+          effects: [{ type: 'FLUSH_PLAYER' }, { type: 'STOP_MIC_CAPTURE' }],
+        }
+      }
+      return {
+        state: { ...state, micActive: false, userHasFloor: false },
+        effects: [{ type: 'STOP_MIC_CAPTURE' }],
+      }
     }
 
-    // Row 9: Mic permission denied surfaces actionable error and retries cleanly on next press.
     case 'MIC_DENIED': {
       return {
         state: {
           ...state,
           phase: 'error',
+          micActive: false,
           micDenied: true,
           userHasFloor: false,
           errorMessage:
@@ -497,7 +634,6 @@ export function reduceSessionMachine(
       }
     }
 
-    // Row 11: Text input bar submit barges in if agentSpeaking or connects-then-sends if disconnected/ended/paused.
     case 'CLIENT_TEXT_SUBMIT': {
       const clean = event.text.trim()
       if (!clean) return { state, effects: [] }
@@ -524,6 +660,7 @@ export function reduceSessionMachine(
       ) {
         const nextEpoch = state.connectionEpoch + 1
         const effects: SessionEffect[] = [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'FLUSH_PLAYER' },
         ]
@@ -544,6 +681,7 @@ export function reduceSessionMachine(
             playbackEpoch: state.playbackEpoch + 1,
             sessionId: null,
             resumeSessionId: null,
+            resumeAttempts: 0,
             playerActive: false,
             pendingPostConnect: { kind: 'text', text: clean },
             userHasFloor: false,
@@ -594,7 +732,6 @@ export function reduceSessionMachine(
       }
     }
 
-    // Row 7: Connection epochs drop stale events from any closed/superseded socket.
     case 'SERVER_MESSAGE': {
       if (event.epoch !== state.connectionEpoch) {
         return { state, effects: [] }
@@ -607,24 +744,28 @@ export function reduceSessionMachine(
         return { state, effects: [] }
       }
 
-      // Row 4: Farewell audio finished draining -> transition cleanly to 'ended'.
       if (state.phase === 'drainingFarewell') {
         return {
           state: {
             ...state,
             phase: 'ended',
+            micActive: false,
             playerActive: false,
             sessionId: null,
             resumeSessionId: null,
+            resumeAttempts: 0,
           },
           effects: [{ type: 'CLOSE_WS' }],
         }
       }
 
-      // Row 6: Deferred GoAway reconnect fires now that agent speech has finished playing!
       if (state.pendingGoAwaySessionId) {
         const nextEpoch = state.connectionEpoch + 1
         const resumeId = state.pendingGoAwaySessionId
+        const rearmCapture =
+          state.inputMode === 'continuous' && state.micActive
+            ? ({ kind: 'capture' } as const)
+            : state.pendingPostConnect
         return {
           state: {
             ...state,
@@ -634,50 +775,77 @@ export function reduceSessionMachine(
             turnCompletedWhileSpeaking: false,
             pendingGoAwaySessionId: null,
             resumeSessionId: resumeId,
+            resumeAttempts: 0,
+            pendingPostConnect: rearmCapture,
           },
           effects: [
+            { type: 'CLEAR_RECONNECT_TIMER' },
             { type: 'CLOSE_WS' },
-            {
-              type: 'OPEN_WS',
-              epoch: nextEpoch,
-              persona: state.persona,
-              sessionId: resumeId,
-            },
+            buildOpenWsEffect(nextEpoch, state.persona, resumeId, state.seenUiSeqKey),
           ],
         }
       }
 
-      // Row 2: turnCompleted arrived earlier while player was still active -> now return to 'ready'.
       if (state.phase === 'agentSpeaking') {
+        if (!state.turnCompletedWhileSpeaking) {
+          return {
+            state: {
+              ...state,
+              playerActive: false,
+            },
+            effects: [],
+          }
+        }
+        const { nextPhase, extraEffects } = finishAgentTurnPhase(state)
         return {
           state: {
             ...state,
-            phase: state.turnCompletedWhileSpeaking ? 'ready' : 'agentSpeaking',
+            phase: nextPhase,
             playerActive: false,
             turnCompletedWhileSpeaking: false,
           },
-          effects: [],
+          effects: extraEffects,
         }
       }
 
       return { state: { ...state, playerActive: false }, effects: [] }
     }
 
-    // Row 3: 15s thinking watchdog unfreezes the session if an upstream turn produces zero output/turnComplete.
     case 'THINKING_WATCHDOG_FIRED': {
       if (event.epoch !== state.connectionEpoch || state.phase !== 'thinking') {
         return { state, effects: [] }
       }
+      const { nextPhase, extraEffects } = finishAgentTurnPhase(state)
       return {
         state: {
           ...state,
-          phase: 'ready',
+          phase: nextPhase,
         },
-        effects: [{ type: 'STOP_TRAILING_SILENCE' }],
+        effects: [{ type: 'STOP_TRAILING_SILENCE' }, ...extraEffects],
       }
     }
 
-    // Row 5: Normal WS close after 'end' / 'drainingFarewell' / 'paused' never triggers an error.
+    case 'RECONNECT_TIMER_FIRED': {
+      if (
+        event.epoch !== state.connectionEpoch ||
+        state.phase !== 'connecting' ||
+        state.resumeSessionId === null
+      ) {
+        return { state, effects: [] }
+      }
+      return {
+        state,
+        effects: [
+          buildOpenWsEffect(
+            state.connectionEpoch,
+            state.persona,
+            state.resumeSessionId,
+            state.seenUiSeqKey,
+          ),
+        ],
+      }
+    }
+
     case 'WS_CLOSED': {
       if (event.epoch !== state.connectionEpoch) {
         return { state, effects: [] }
@@ -690,44 +858,50 @@ export function reduceSessionMachine(
       ) {
         return { state, effects: [{ type: 'STOP_MIC_CAPTURE' }] }
       }
-      // If GoAway arrived while speaking and audio is still draining, let PLAYER_DRAINED open the resumed WS once.
       if (state.pendingGoAwaySessionId && state.playerActive) {
         return { state, effects: [{ type: 'STOP_MIC_CAPTURE' }] }
       }
-      // If GoAway set resumeSessionId right before upstream closed the socket, reconnect with same sessionId!
       if (state.resumeSessionId) {
-        const nextEpoch = state.connectionEpoch + 1
-        const resumeId = state.resumeSessionId
-        return {
-          state: {
-            ...state,
-            phase: 'connecting',
-            connectionEpoch: nextEpoch,
-            pendingGoAwaySessionId: null,
-          },
-          effects: [
-            {
-              type: 'OPEN_WS',
-              epoch: nextEpoch,
-              persona: state.persona,
-              sessionId: resumeId,
+        if (state.resumeAttempts < MAX_RESUME_ATTEMPTS) {
+          const attempt = state.resumeAttempts + 1
+          const baseDelayMs = RESUME_BACKOFF_DELAYS_MS[attempt - 1] ?? 1000
+          const nextEpoch = state.connectionEpoch + 1
+          return {
+            state: {
+              ...state,
+              phase: 'connecting',
+              connectionEpoch: nextEpoch,
+              resumeAttempts: attempt,
+              pendingGoAwaySessionId: null,
             },
-          ],
+            effects: [
+              {
+                type: 'SCHEDULE_RECONNECT',
+                epoch: nextEpoch,
+                attempt,
+                baseDelayMs,
+              },
+            ],
+          }
         }
       }
       return {
         state: {
           ...state,
           phase: 'error',
+          micActive: false,
           sessionId: null,
+          resumeSessionId: null,
+          resumeAttempts: 0,
           playerActive: false,
           userHasFloor: false,
           errorMessage:
             state.errorMessage ??
             event.reason ??
-            'Connection lost. Check that the localhost proxy is running on port 8080.',
+            'Connection lost. Check that the localhost proxy is running.',
         },
         effects: [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'STOP_MIC_CAPTURE' },
         ],
@@ -742,16 +916,23 @@ function reduceServerMessage(
 ): TransitionResult {
   switch (msg.type) {
     case 'ready': {
-      const seenUiSeqKey = { sessionId: msg.sessionId, maxSeq: 0 }
+      // Preserve seenUiSeqKey.maxSeq when GoAway resumes on the identical sessionId so stale
+      // Tier 3 updatedVariables cannot replay old tab navigation; reset to 0 on new sessionIds.
+      const seenUiSeqKey =
+        state.seenUiSeqKey.sessionId === msg.sessionId
+          ? state.seenUiSeqKey
+          : { sessionId: msg.sessionId, maxSeq: 0 }
 
       const pending = state.pendingPostConnect
-      if (pending?.kind === 'capture') {
+      if (pending?.kind === 'capture' || (state.inputMode === 'continuous' && state.micActive)) {
         return {
           state: {
             ...state,
             phase: 'capturing',
+            micActive: true,
             sessionId: msg.sessionId,
             resumeSessionId: null,
+            resumeAttempts: 0,
             seenUiSeqKey,
             pendingPostConnect: null,
             errorMessage: null,
@@ -766,6 +947,7 @@ function reduceServerMessage(
             phase: 'thinking',
             sessionId: msg.sessionId,
             resumeSessionId: null,
+            resumeAttempts: 0,
             seenUiSeqKey,
             pendingPostConnect: null,
             errorMessage: null,
@@ -786,6 +968,7 @@ function reduceServerMessage(
           phase: 'ready',
           sessionId: msg.sessionId,
           resumeSessionId: null,
+          resumeAttempts: 0,
           seenUiSeqKey,
           errorMessage: null,
         },
@@ -808,7 +991,7 @@ function reduceServerMessage(
       return {
         state: {
           ...state,
-          turns: appendOrUpdateAssistantText(state.turns, msg.text, msg.partial),
+          turns: appendOrUpdateAssistantText(state.turns, msg.text, msg.partial, state.persona),
         },
         effects: [
           { type: 'STOP_TRAILING_SILENCE' },
@@ -819,7 +1002,6 @@ function reduceServerMessage(
 
     case 'audio': {
       if (state.userHasFloor) {
-        // User barged in and is still holding PTT: drop residual server audio chunks.
         return { state, effects: [{ type: 'STOP_TRAILING_SILENCE' }] }
       }
       const nextPhase: SessionPhase =
@@ -895,9 +1077,9 @@ function reduceServerMessage(
       }
     }
 
-    // Rows 2 & 3: turn_complete waits for player drain if playerActive, else transitions immediately to 'ready'.
     case 'turn_complete': {
-      const finalizedTurns = finalizeOpenTurns(state.turns)
+      const preserveHeldUser = state.phase === 'capturing' && state.userHasFloor
+      const finalizedTurns = finalizeOpenTurns(state.turns, preserveHeldUser)
       const effects: SessionEffect[] = [
         { type: 'STOP_TRAILING_SILENCE' },
         { type: 'CLEAR_THINKING_WATCHDOG' },
@@ -916,18 +1098,29 @@ function reduceServerMessage(
           effects,
         }
       }
+      if (state.phase === 'capturing') {
+        return {
+          state: {
+            ...state,
+            phase: 'capturing',
+            turnCompletedWhileSpeaking: false,
+            turns: finalizedTurns,
+          },
+          effects,
+        }
+      }
+      const { nextPhase, extraEffects } = finishAgentTurnPhase(state)
       return {
         state: {
           ...state,
-          phase: state.phase === 'capturing' ? 'capturing' : 'ready',
+          phase: nextPhase,
           turnCompletedWhileSpeaking: false,
           turns: finalizedTurns,
         },
-        effects,
+        effects: [...effects, ...extraEffects],
       }
     }
 
-    // Row 6: ServerGoAway reconnects with the SAME sessionId (deferred if agentSpeaking / playerActive).
     case 'go_away': {
       if (state.phase === 'agentSpeaking' || state.playerActive) {
         return {
@@ -935,30 +1128,30 @@ function reduceServerMessage(
             ...state,
             pendingGoAwaySessionId: msg.sessionId,
             resumeSessionId: msg.sessionId,
+            resumeAttempts: 0,
           },
           effects: [],
         }
       }
       const nextEpoch = state.connectionEpoch + 1
       const rearmCapture =
-        state.phase === 'capturing' ? ({ kind: 'capture' } as const) : state.pendingPostConnect
+        state.phase === 'capturing' || (state.inputMode === 'continuous' && state.micActive)
+          ? ({ kind: 'capture' } as const)
+          : state.pendingPostConnect
       return {
         state: {
           ...state,
           phase: 'connecting',
           connectionEpoch: nextEpoch,
           resumeSessionId: msg.sessionId,
+          resumeAttempts: 0,
           pendingPostConnect: rearmCapture,
         },
         effects: [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'CLOSE_WS' },
-          {
-            type: 'OPEN_WS',
-            epoch: nextEpoch,
-            persona: state.persona,
-            sessionId: msg.sessionId,
-          },
+          buildOpenWsEffect(nextEpoch, state.persona, msg.sessionId, state.seenUiSeqKey),
         ],
       }
     }
@@ -968,13 +1161,16 @@ function reduceServerMessage(
         state: {
           ...state,
           phase: 'paused',
+          micActive: false,
           sessionId: null,
           resumeSessionId: null,
+          resumeAttempts: 0,
           playerActive: false,
           userHasFloor: false,
           errorMessage: null,
         },
         effects: [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'STOP_MIC_CAPTURE' },
           { type: 'CLOSE_WS' },
@@ -983,25 +1179,34 @@ function reduceServerMessage(
     }
 
     case 'interrupt': {
+      const nextPhase =
+        state.phase === 'capturing'
+          ? 'capturing'
+          : state.inputMode === 'continuous' && state.micActive
+            ? 'capturing'
+            : 'ready'
+      const extra: SessionEffect[] =
+        nextPhase === 'capturing' && state.phase !== 'capturing' ? [{ type: 'UNMUTE_MIC' }] : []
       return {
         state: {
           ...state,
           playbackEpoch: state.playbackEpoch + 1,
           playerActive: false,
           turnCompletedWhileSpeaking: false,
-          phase: state.phase === 'capturing' ? 'capturing' : 'ready',
+          phase: nextPhase,
           turns: markActiveAssistantInterrupted(state.turns),
         },
         effects: [
           { type: 'STOP_TRAILING_SILENCE' },
           { type: 'FLUSH_PLAYER' },
+          ...extra,
         ],
       }
     }
 
-    // Row 4: ServerEnd waits for farewell audio drain if playerActive, else transitions straight to 'ended'.
     case 'end': {
       const effects: SessionEffect[] = [
+        { type: 'CLEAR_RECONNECT_TIMER' },
         { type: 'STOP_TRAILING_SILENCE' },
         { type: 'CLEAR_THINKING_WATCHDOG' },
         { type: 'STOP_MIC_CAPTURE' },
@@ -1011,7 +1216,9 @@ function reduceServerMessage(
           state: {
             ...state,
             phase: 'drainingFarewell',
+            micActive: false,
             resumeSessionId: null,
+            resumeAttempts: 0,
           },
           effects,
         }
@@ -1021,8 +1228,10 @@ function reduceServerMessage(
         state: {
           ...state,
           phase: 'ended',
+          micActive: false,
           sessionId: null,
           resumeSessionId: null,
+          resumeAttempts: 0,
           playerActive: false,
           userHasFloor: false,
         },
@@ -1035,13 +1244,16 @@ function reduceServerMessage(
         state: {
           ...state,
           phase: 'error',
+          micActive: false,
           sessionId: null,
           resumeSessionId: null,
+          resumeAttempts: 0,
           playerActive: false,
           userHasFloor: false,
           errorMessage: msg.message,
         },
         effects: [
+          { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'STOP_TRAILING_SILENCE' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'STOP_MIC_CAPTURE' },

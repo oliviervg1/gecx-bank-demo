@@ -5,7 +5,7 @@ export type IconTone = 'green' | 'gold' | 'muted'
 
 const TONE_STYLES: Record<IconTone, { background: string; color: string }> = {
   green: { background: 'rgba(10, 77, 53, 0.08)', color: '#0a4d35' },
-  gold: { background: 'rgba(184, 137, 46, 0.12)', color: '#b8892e' },
+  gold: { background: 'rgba(184, 137, 46, 0.12)', color: '#8a6318' },
   muted: { background: 'rgba(99, 97, 91, 0.10)', color: '#63615b' },
 }
 
@@ -37,7 +37,7 @@ export function IconBadge({
         ...style,
       }}
     >
-      <Icon size={iconSize} strokeWidth={1.75} />
+      <Icon size={iconSize} strokeWidth={1.75} aria-hidden="true" />
     </div>
   )
 }

@@ -22,7 +22,7 @@ function validateAgainstSchema(
     const refPath = node.$ref.replace(/^#\//, '').split('/')
     let resolved: unknown = rootSchema
     for (const seg of refPath) {
-      resolved = (resolved as Record<string, unknown>)?.[seg]
+      resolved = (resolved as Record<string, unknown> | undefined)?.[seg]
     }
     if (!resolved || typeof resolved !== 'object') {
       return [`${path}: unresolved $ref ${node.$ref}`]
@@ -144,7 +144,9 @@ describe('Shared JSON Schema validation (customer_snapshot.schema.json)', () => 
   })
 
   it('rejects hostile or non-conforming mutations against customer_snapshot.schema.json', () => {
-    const validClone = structuredClone(fixtures[0][1]) as Record<string, any>
+    const firstEntry = fixtures[0]
+    expect(firstEntry).toBeDefined()
+    const validClone = structuredClone(firstEntry![1]) as unknown as Record<string, unknown>
 
     const withExtraKey = structuredClone(validClone)
     withExtraKey.injected = true
@@ -156,7 +158,9 @@ describe('Shared JSON Schema validation (customer_snapshot.schema.json)', () => 
       ).length,
     ).toBeGreaterThan(0)
 
-    const withFloatPence = structuredClone(validClone)
+    const withFloatPence = structuredClone(validClone) as {
+      accounts: { current: { balance_pence: number } }
+    }
     withFloatPence.accounts.current.balance_pence = 4250.75
     expect(
       validateAgainstSchema(
@@ -166,8 +170,10 @@ describe('Shared JSON Schema validation (customer_snapshot.schema.json)', () => 
       ).length,
     ).toBeGreaterThan(0)
 
-    const withAngleBracket = structuredClone(validClone)
-    withAngleBracket.transactions[0].vendor = '<script>alert(1)</script>'
+    const withAngleBracket = structuredClone(validClone) as {
+      transactions: Array<{ vendor: string }>
+    }
+    withAngleBracket.transactions[0]!.vendor = '<script>alert(1)</script>'
     expect(
       validateAgainstSchema(
         withAngleBracket,
@@ -203,9 +209,10 @@ describe.each(fixtures)('Domain invariants for fixture: %s', (_persona, f: Fixtu
 
     const anomalies = f.transactions.filter((t) => t.is_anomaly)
     expect(anomalies).toHaveLength(1)
-    expect(anomalies[0].month_offset).toBe(0)
-    expect(anomalies[0].is_subscription).toBe(true)
-    expect(anomalies[0].amount_pence).toBeGreaterThan(0)
+    const anomaly = anomalies[0]!
+    expect(anomaly.month_offset).toBe(0)
+    expect(anomaly.is_subscription).toBe(true)
+    expect(anomaly.amount_pence).toBeGreaterThan(0)
   })
 
   it('populates all three calendar month offsets (0, 1, 2) with non-zero spend', () => {

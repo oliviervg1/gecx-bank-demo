@@ -1,42 +1,43 @@
-// Browser ↔ proxy WebSocket protocol.
-// Mirrors cloudbank/proxy/src/proxy/protocol.py message-for-message.
+// Browser-to-proxy WebSocket wire protocol.
+// Validated against cloudbank/shared/ws_protocol.schema.json in both Vitest and Pytest.
 
-import type { CustomerSnapshot } from '../data/fixture'
+import type { SpendCategory } from '../data/fixture'
 import type { SpendingPeriod } from '../util/demoClock'
 
 export type PersonaId = 'chloe' | 'david' | 'tom' | 'sarah'
+export type TimeOfDay = 'morning' | 'afternoon' | 'evening'
 
-export interface SeedVariables {
-  persona_id: PersonaId
-  first_name: string
-  demo_date: string
-  time_of_day: 'morning' | 'afternoon' | 'evening'
-  customer_snapshot: CustomerSnapshot
-}
+export type UiPageId = 'home' | 'spending' | 'savings' | 'mortgage' | 'profile'
+export type UiSpendingViewId = 'overview' | 'category' | 'vendor' | 'trend' | 'subscriptions'
+export type UiMortgageSubviewId = 'overview' | 'overpay' | 'rates'
 
 export interface UiViewStatePayload {
   seq: number
-  page: 'home' | 'spending' | 'savings' | 'mortgage' | 'profile'
-  view?: 'overview' | 'category' | 'vendor' | 'trend' | 'subscriptions'
+  page: UiPageId
+  view?: UiSpendingViewId
   period?: SpendingPeriod
-  category?: string
+  category?: SpendCategory | string
   vendor?: string
   highlight_vendor?: string
   anomaly_status?: 'confirmed' | 'unrecognised'
   extra_monthly_pence?: number
   custom_target_pence?: number
-  subview?: 'overview' | 'overpay' | 'rates'
+  subview?: UiMortgageSubviewId
   monthly_overpayment_pence?: number
   lump_sum_overpayment_pence?: number
 }
 
+export interface ClientStartMsg {
+  type: 'start'
+  persona: PersonaId
+  timeOfDay?: TimeOfDay
+  demoDate?: string
+  sessionId?: string | null
+  lastUiSeq?: number | null
+}
+
 export type ClientMsg =
-  | {
-      type: 'start'
-      persona: PersonaId
-      variables: SeedVariables
-      sessionId?: string | null
-    }
+  | ClientStartMsg
   | { type: 'audio'; data: string }
   | { type: 'text'; text: string }
   | { type: 'stop' }
@@ -126,26 +127,169 @@ export type ServerMsg =
   | ServerEndMsg
   | ServerErrorMsg
 
-const SERVER_TYPES = new Set([
-  'ready',
-  'transcript',
-  'text',
-  'audio',
-  'ui_state',
-  'turn_diagnostics',
-  'search_suggestions',
-  'turn_complete',
-  'go_away',
-  'session_expired',
-  'interrupt',
-  'end',
-  'error',
+const VALID_UI_PAGES = new Set<UiPageId>(['home', 'spending', 'savings', 'mortgage', 'profile'])
+const VALID_UI_VIEWS = new Set<UiSpendingViewId>([
+  'overview',
+  'category',
+  'vendor',
+  'trend',
+  'subscriptions',
 ])
-
-const VALID_UI_PAGES = new Set(['home', 'spending', 'savings', 'mortgage', 'profile'])
+const VALID_UI_PERIODS = new Set<SpendingPeriod>(['this_month', 'last_month', 'two_months_ago'])
+const VALID_UI_CATEGORIES = new Set<string>([
+  'groceries',
+  'coffee_shops',
+  'eating_out',
+  'subscriptions',
+  'transport',
+  'shopping',
+  'bills',
+  'entertainment',
+])
+const VALID_UI_SUBVIEWS = new Set<UiMortgageSubviewId>(['overview', 'overpay', 'rates'])
+const ALLOWED_UI_STATE_KEYS = new Set<string>([
+  'seq',
+  'page',
+  'view',
+  'period',
+  'category',
+  'vendor',
+  'highlight_vendor',
+  'anomaly_status',
+  'extra_monthly_pence',
+  'custom_target_pence',
+  'subview',
+  'monthly_overpayment_pence',
+  'lump_sum_overpayment_pence',
+])
+// Matches forbidden angle brackets and ASCII control characters per ws_protocol.schema.json.
+// eslint-disable-next-line no-control-regex
+const FORBIDDEN_VENDOR_CHAR_RE = /[<>\u0000-\u001f\u007f]/
 
 function isPlainObject(val: unknown): val is Record<string, unknown> {
   return typeof val === 'object' && val !== null && !Array.isArray(val)
+}
+
+function isValidUiPage(val: unknown): val is UiPageId {
+  return typeof val === 'string' && VALID_UI_PAGES.has(val as UiPageId)
+}
+
+function isValidUiView(val: unknown): val is UiSpendingViewId {
+  return typeof val === 'string' && VALID_UI_VIEWS.has(val as UiSpendingViewId)
+}
+
+function isValidUiPeriod(val: unknown): val is SpendingPeriod {
+  return typeof val === 'string' && VALID_UI_PERIODS.has(val as SpendingPeriod)
+}
+
+function isValidUiSubview(val: unknown): val is UiMortgageSubviewId {
+  return typeof val === 'string' && VALID_UI_SUBVIEWS.has(val as UiMortgageSubviewId)
+}
+
+function parseBoundedPence(val: unknown, field: string): number {
+  if (typeof val !== 'number' || !Number.isFinite(val)) {
+    throw new Error(`ui_state frame: invalid ${field}`)
+  }
+  const truncated = Math.trunc(val)
+  if (truncated < 0 || truncated > 1_000_000_000) {
+    throw new Error(`ui_state frame: out-of-range ${field}`)
+  }
+  return truncated
+}
+
+function parseSafeVendorString(val: unknown, field: string): string {
+  if (
+    typeof val !== 'string' ||
+    val.length < 1 ||
+    val.length > 120 ||
+    FORBIDDEN_VENDOR_CHAR_RE.test(val)
+  ) {
+    throw new Error(`ui_state frame: invalid ${field}`)
+  }
+  return val
+}
+
+export function parseUiViewStatePayload(raw: unknown): UiViewStatePayload {
+  if (!isPlainObject(raw)) {
+    throw new Error('ui_state frame: invalid state')
+  }
+  for (const key of Object.keys(raw)) {
+    if (!ALLOWED_UI_STATE_KEYS.has(key)) {
+      throw new Error(`ui_state frame: unexpected property ${key}`)
+    }
+  }
+  if (!isValidUiPage(raw.page)) {
+    throw new Error('ui_state frame: invalid state')
+  }
+  if (typeof raw.seq !== 'number' || !Number.isFinite(raw.seq)) {
+    throw new Error('ui_state frame: invalid state')
+  }
+  const seq = Math.trunc(raw.seq)
+  if (seq < 1 || seq > 1_000_000) {
+    throw new Error('ui_state frame: invalid seq')
+  }
+
+  const out: UiViewStatePayload = {
+    seq,
+    page: raw.page,
+  }
+
+  if (raw.view !== undefined) {
+    if (!isValidUiView(raw.view)) {
+      throw new Error('ui_state frame: invalid view')
+    }
+    out.view = raw.view
+  }
+  if (raw.period !== undefined) {
+    if (!isValidUiPeriod(raw.period)) {
+      throw new Error('ui_state frame: invalid period')
+    }
+    out.period = raw.period
+  }
+  if (raw.category !== undefined) {
+    if (typeof raw.category !== 'string' || !VALID_UI_CATEGORIES.has(raw.category)) {
+      throw new Error('ui_state frame: invalid category')
+    }
+    out.category = raw.category
+  }
+  if (raw.vendor !== undefined) {
+    out.vendor = parseSafeVendorString(raw.vendor, 'vendor')
+  }
+  if (raw.highlight_vendor !== undefined) {
+    out.highlight_vendor = parseSafeVendorString(raw.highlight_vendor, 'highlight_vendor')
+  }
+  if (raw.anomaly_status !== undefined) {
+    if (raw.anomaly_status !== 'confirmed' && raw.anomaly_status !== 'unrecognised') {
+      throw new Error('ui_state frame: invalid anomaly_status')
+    }
+    out.anomaly_status = raw.anomaly_status
+  }
+  if (raw.extra_monthly_pence !== undefined) {
+    out.extra_monthly_pence = parseBoundedPence(raw.extra_monthly_pence, 'extra_monthly_pence')
+  }
+  if (raw.custom_target_pence !== undefined) {
+    out.custom_target_pence = parseBoundedPence(raw.custom_target_pence, 'custom_target_pence')
+  }
+  if (raw.subview !== undefined) {
+    if (!isValidUiSubview(raw.subview)) {
+      throw new Error('ui_state frame: invalid subview')
+    }
+    out.subview = raw.subview
+  }
+  if (raw.monthly_overpayment_pence !== undefined) {
+    out.monthly_overpayment_pence = parseBoundedPence(
+      raw.monthly_overpayment_pence,
+      'monthly_overpayment_pence',
+    )
+  }
+  if (raw.lump_sum_overpayment_pence !== undefined) {
+    out.lump_sum_overpayment_pence = parseBoundedPence(
+      raw.lump_sum_overpayment_pence,
+      'lump_sum_overpayment_pence',
+    )
+  }
+
+  return out
 }
 
 export function parseServerMsg(raw: string): ServerMsg {
@@ -153,22 +297,21 @@ export function parseServerMsg(raw: string): ServerMsg {
   if (!isPlainObject(parsed) || typeof parsed.type !== 'string') {
     throw new Error('unknown server message: missing type')
   }
-  if (!SERVER_TYPES.has(parsed.type)) {
-    throw new Error(`unknown server message: ${parsed.type}`)
-  }
 
   switch (parsed.type) {
-    case 'ready':
-      if (typeof parsed.sessionId !== 'string' || !parsed.sessionId) {
+    case 'ready': {
+      if (typeof parsed.sessionId !== 'string' || parsed.sessionId.length === 0) {
         throw new Error('ready frame: missing sessionId')
       }
-      break
-    case 'audio':
-      if (typeof parsed.data !== 'string' || !parsed.data) {
+      return { type: 'ready', sessionId: parsed.sessionId }
+    }
+    case 'audio': {
+      if (typeof parsed.data !== 'string' || parsed.data.length === 0) {
         throw new Error('audio frame: missing data')
       }
-      break
-    case 'transcript':
+      return { type: 'audio', data: parsed.data }
+    }
+    case 'transcript': {
       if (typeof parsed.text !== 'string') {
         throw new Error('transcript frame: missing text')
       }
@@ -177,7 +320,8 @@ export function parseServerMsg(raw: string): ServerMsg {
         text: parsed.text,
         isFinal: Boolean(parsed.isFinal),
       }
-    case 'text':
+    }
+    case 'text': {
       if (typeof parsed.text !== 'string') {
         throw new Error('text frame: missing text')
       }
@@ -186,32 +330,36 @@ export function parseServerMsg(raw: string): ServerMsg {
         text: parsed.text,
         partial: Boolean(parsed.partial),
       }
+    }
     case 'ui_state': {
-      if (
-        !isPlainObject(parsed.state) ||
-        typeof parsed.state.page !== 'string' ||
-        !VALID_UI_PAGES.has(parsed.state.page) ||
-        typeof parsed.state.seq !== 'number' ||
-        !Number.isFinite(parsed.state.seq)
-      ) {
-        throw new Error('ui_state frame: invalid state')
+      const state = parseUiViewStatePayload(parsed.state)
+      let tier: 1 | 2 | 3 = 1
+      if (parsed.tier !== undefined) {
+        if (parsed.tier !== 1 && parsed.tier !== 2 && parsed.tier !== 3) {
+          throw new Error('ui_state frame: invalid tier')
+        }
+        tier = parsed.tier
       }
-      const tier: 1 | 2 | 3 = parsed.tier === 2 || parsed.tier === 3 ? parsed.tier : 1
       return {
         type: 'ui_state',
-        state: parsed.state as unknown as UiViewStatePayload,
+        state,
         tier,
       }
     }
-    case 'turn_diagnostics':
-      return {
+    case 'turn_diagnostics': {
+      const agentTransfers = Array.isArray(parsed.agentTransfers)
+        ? parsed.agentTransfers.filter(isPlainObject)
+        : []
+      const out: ServerTurnDiagnosticsMsg = {
         type: 'turn_diagnostics',
-        turnIndex: typeof parsed.turnIndex === 'number' ? parsed.turnIndex : undefined,
-        agentTransfers: Array.isArray(parsed.agentTransfers)
-          ? (parsed.agentTransfers as Array<Record<string, unknown>>)
-          : [],
+        agentTransfers,
       }
-    case 'search_suggestions':
+      if (typeof parsed.turnIndex === 'number' && Number.isInteger(parsed.turnIndex)) {
+        out.turnIndex = parsed.turnIndex
+      }
+      return out
+    }
+    case 'search_suggestions': {
       return {
         type: 'search_suggestions',
         htmls: Array.isArray(parsed.htmls)
@@ -224,33 +372,64 @@ export function parseServerMsg(raw: string): ServerMsg {
           ? parsed.citations.filter(isPlainObject)
           : [],
       }
-    case 'go_away':
-      if (typeof parsed.sessionId !== 'string' || !parsed.sessionId) {
+    }
+    case 'turn_complete': {
+      const out: ServerTurnCompleteMsg = { type: 'turn_complete' }
+      if (typeof parsed.turnIndex === 'number' && Number.isInteger(parsed.turnIndex)) {
+        out.turnIndex = parsed.turnIndex
+      }
+      return out
+    }
+    case 'go_away': {
+      if (typeof parsed.sessionId !== 'string' || parsed.sessionId.length === 0) {
         throw new Error('go_away frame: missing sessionId')
       }
-      break
-    case 'session_expired':
+      return { type: 'go_away', sessionId: parsed.sessionId }
+    }
+    case 'session_expired': {
       if (typeof parsed.message !== 'string') {
         throw new Error('session_expired frame: missing message')
       }
-      break
-    case 'error':
+      return { type: 'session_expired', message: parsed.message }
+    }
+    case 'interrupt':
+      return { type: 'interrupt' }
+    case 'end':
+      return { type: 'end' }
+    case 'error': {
       if (typeof parsed.message !== 'string') {
         throw new Error('error frame: missing message')
       }
-      break
+      const out: ServerErrorMsg = { type: 'error', message: parsed.message }
+      if (typeof parsed.field === 'string') {
+        out.field = parsed.field
+      }
+      return out
+    }
+    default:
+      throw new Error(`unknown server message: ${parsed.type}`)
   }
-
-  return parsed as unknown as ServerMsg
 }
 
 export function serializeClientMsg(msg: ClientMsg): string {
-  if (msg.type === 'start' && (msg.sessionId === undefined || msg.sessionId === null)) {
-    return JSON.stringify({
+  if (msg.type === 'start') {
+    const startPayload: Record<string, unknown> = {
       type: 'start',
       persona: msg.persona,
-      variables: msg.variables,
-    })
+    }
+    if (msg.timeOfDay !== undefined) {
+      startPayload.timeOfDay = msg.timeOfDay
+    }
+    if (msg.demoDate !== undefined) {
+      startPayload.demoDate = msg.demoDate
+    }
+    if (typeof msg.sessionId === 'string' && msg.sessionId.length > 0) {
+      startPayload.sessionId = msg.sessionId
+    }
+    if (typeof msg.lastUiSeq === 'number' && Number.isFinite(msg.lastUiSeq) && msg.lastUiSeq >= 0) {
+      startPayload.lastUiSeq = Math.trunc(msg.lastUiSeq)
+    }
+    return JSON.stringify(startPayload)
   }
   return JSON.stringify(msg)
 }

@@ -1,4 +1,5 @@
-import { CHUNK_SAMPLES_100MS, TARGET_SAMPLE_RATE } from './resampler'
+import pcmCaptureWorkletUrl from './pcmCaptureWorklet?worker&url'
+import { CHUNK_SAMPLES_100MS, TARGET_SAMPLE_RATE } from './pcmResampler'
 
 export const INPUT_SAMPLE_RATE = TARGET_SAMPLE_RATE
 export const OUTPUT_SAMPLE_RATE = 24000
@@ -10,22 +11,38 @@ export function float32ToPcm16Base64(samples: Float32Array): string {
   const buf = new ArrayBuffer(samples.length * 2)
   const view = new DataView(buf)
   for (let i = 0; i < samples.length; i++) {
-    const s = Math.max(-1, Math.min(1, samples[i]))
+    const raw = samples[i] ?? 0
+    const s = Math.max(-1, Math.min(1, raw))
     view.setInt16(i * 2, s < 0 ? Math.trunc(s * 32768) : Math.trunc(s * 32767), true)
   }
   const bytes = new Uint8Array(buf)
   let bin = ''
-  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i])
+  for (let i = 0; i < bytes.length; i++) {
+    bin += String.fromCharCode(bytes[i] ?? 0)
+  }
   return btoa(bin)
 }
 
 export function base64Pcm16ToFloat32(b64: string): Float32Array {
-  const bin = atob(b64)
-  const buf = new ArrayBuffer(bin.length)
+  if (!b64) return new Float32Array(0)
+  let bin: string
+  try {
+    bin = atob(b64)
+  } catch {
+    return new Float32Array(0)
+  }
+  // Guard against empty or odd-byte PCM16 payloads so DataView never throws RangeError.
+  const evenByteLen = bin.length - (bin.length % 2)
+  if (evenByteLen <= 0) {
+    return new Float32Array(0)
+  }
+  const buf = new ArrayBuffer(evenByteLen)
   const bytes = new Uint8Array(buf)
-  for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i)
+  for (let i = 0; i < evenByteLen; i++) {
+    bytes[i] = bin.charCodeAt(i)
+  }
   const view = new DataView(buf)
-  const samples = new Float32Array(bin.length / 2)
+  const samples = new Float32Array(evenByteLen / 2)
   for (let i = 0; i < samples.length; i++) {
     const v = view.getInt16(i * 2, true)
     samples[i] = v < 0 ? v / 32768 : v / 32767
@@ -42,7 +59,7 @@ export interface TrailingSilenceController {
 }
 
 /**
- * Streams 100 ms silence frames after PTT release so CES's server-side VAD closes
+ * Streams 100 ms silence frames after PTT release so server-side VAD closes
  * the turn promptly, stopping immediately upon server reaction or at 2,500 ms.
  */
 export function createTrailingSilenceController(
@@ -99,13 +116,23 @@ export interface AudioCapture {
   notifyServerReaction(): void
 }
 
+function resolveAudioContextCtor(): typeof AudioContext | null {
+  if (typeof AudioContext === 'function') return AudioContext
+  const webkit = (globalThis as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext
+  return typeof webkit === 'function' ? webkit : null
+}
+
 export async function createAudioCapture(
   onFrame: AudioFrameHandler,
-  opts: { startMuted?: boolean } = {},
+  opts: { startMuted?: boolean; signal?: AbortSignal } = {},
 ): Promise<AudioCapture> {
+  if (opts.signal?.aborted) {
+    throw new DOMException('Audio capture aborted before start', 'AbortError')
+  }
+
   // Open microphone and AudioContext at native hardware sampleRate (e.g. 44.1 / 48 kHz)
-  // so Firefox never throws a cross-rate MediaStreamSource mismatch; /audio-worklet.js
-  // resamples to 16 kHz in 1,600-sample (100 ms) chunks.
+  // so Firefox never throws a cross-rate MediaStreamSource mismatch; the bundled
+  // pcm-capture worklet resamples to 16 kHz in 1,600-sample (100 ms) chunks.
   const stream = await navigator.mediaDevices.getUserMedia({
     audio: {
       channelCount: 1,
@@ -114,12 +141,26 @@ export async function createAudioCapture(
     },
   })
 
+  if (opts.signal?.aborted) {
+    stream.getTracks().forEach((t) => t.stop())
+    throw new DOMException('Audio capture aborted during getUserMedia', 'AbortError')
+  }
+
+  const Ctx = resolveAudioContextCtor()
+  if (!Ctx) {
+    stream.getTracks().forEach((t) => t.stop())
+    throw new Error('Web Audio API is unavailable in this browser.')
+  }
+
   let ctx: AudioContext | null = null
   let source: MediaStreamAudioSourceNode
   let node: AudioWorkletNode
   try {
-    ctx = new AudioContext()
-    await ctx.audioWorklet.addModule('/audio-worklet.js')
+    ctx = new Ctx()
+    await ctx.audioWorklet.addModule(pcmCaptureWorkletUrl)
+    if (opts.signal?.aborted) {
+      throw new DOMException('Audio capture aborted during worklet load', 'AbortError')
+    }
     source = ctx.createMediaStreamSource(stream)
     node = new AudioWorkletNode(ctx, 'pcm-capture')
     source.connect(node)
@@ -243,22 +284,28 @@ export interface AudioPlayer {
   enqueue(base64: string): void
   flush(): void
   close(): void
-  isPlaying(): boolean
 }
 
 export interface AudioPlayerOptions {
   onIdle?: () => void
+  onError?: (err: Error) => void
 }
 
 const DRAIN_DEBOUNCE_MS = 120
 
 export function createAudioPlayer(opts: AudioPlayerOptions = {}): AudioPlayer {
-  const { onIdle } = opts
-  const ctx = new AudioContext({ sampleRate: OUTPUT_SAMPLE_RATE })
+  const { onIdle, onError } = opts
+  const Ctx = resolveAudioContextCtor()
+  if (!Ctx) {
+    throw new Error('Web Audio API is unavailable in this browser.')
+  }
+  // Open at native hardware sampleRate so OS audio drivers never reject 24000 Hz;
+  // AudioBufferSourceNode natively resamples 24000 Hz AudioBuffers to ctx.sampleRate.
+  const ctx = new Ctx()
   let cursor = ctx.currentTime
+  let expectedDrainWallMs = Date.now()
   const sources: AudioBufferSourceNode[] = []
   let closed = false
-  let playing = false
   let drainTimer: ReturnType<typeof setTimeout> | null = null
 
   function clearDrainTimer() {
@@ -268,42 +315,63 @@ export function createAudioPlayer(opts: AudioPlayerOptions = {}): AudioPlayer {
     }
   }
 
-  function scheduleDrainCheck() {
+  function scheduleDrainCheck(msHint?: number) {
     clearDrainTimer()
-    const msUntilDrained = Math.max(0, (cursor - ctx.currentTime) * 1000) + DRAIN_DEBOUNCE_MS
+    const audioRemainingMs = Math.max(0, (cursor - ctx.currentTime) * 1000)
+    const waitMs = (msHint !== undefined ? Math.max(0, msHint) : audioRemainingMs) + DRAIN_DEBOUNCE_MS
     drainTimer = setTimeout(() => {
       drainTimer = null
-      if (!closed && cursor - ctx.currentTime <= 0) {
-        playing = false
+      if (closed) return
+      // Guard against suspended contexts where ctx.currentTime stays frozen at 0:
+      // once either the audio clock or wall-clock playback duration has elapsed, release idle.
+      const contextStalled = ctx.state !== 'running' && Date.now() >= expectedDrainWallMs
+      if (cursor - ctx.currentTime <= 0.005 || contextStalled) {
+        cursor = ctx.currentTime
         onIdle?.()
+      } else {
+        scheduleDrainCheck()
       }
-    }, msUntilDrained)
+    }, waitMs)
   }
 
   return {
     enqueue(base64: string) {
       if (closed) return
-      if (ctx.state === 'suspended') void ctx.resume()
-      const samples = base64Pcm16ToFloat32(base64)
-      const buf = ctx.createBuffer(1, samples.length, OUTPUT_SAMPLE_RATE)
-      buf.copyToChannel(samples as Float32Array<ArrayBuffer>, 0)
-      const src = ctx.createBufferSource()
-      src.buffer = buf
-      src.connect(ctx.destination)
-      const startAt = Math.max(ctx.currentTime, cursor)
-      src.start(startAt)
-      cursor = startAt + buf.duration
-      playing = true
-      sources.push(src)
-      src.onended = () => {
-        const i = sources.indexOf(src)
-        if (i >= 0) sources.splice(i, 1)
+      if (ctx.state === 'suspended') {
+        void ctx.resume().catch(() => {
+          // Autoplay restriction: scheduleDrainCheck wall-clock guard prevents stall.
+        })
       }
-      scheduleDrainCheck()
+      const samples = base64Pcm16ToFloat32(base64)
+      if (samples.length === 0) {
+        scheduleDrainCheck(0)
+        return
+      }
+      try {
+        const buf = ctx.createBuffer(1, samples.length, OUTPUT_SAMPLE_RATE)
+        buf.copyToChannel(samples as Float32Array<ArrayBuffer>, 0)
+        const src = ctx.createBufferSource()
+        src.buffer = buf
+        src.connect(ctx.destination)
+        const startAt = Math.max(ctx.currentTime, cursor)
+        src.start(startAt)
+        cursor = startAt + buf.duration
+        const wallDurationMs = Math.max(0, (cursor - ctx.currentTime) * 1000)
+        expectedDrainWallMs = Date.now() + wallDurationMs
+        sources.push(src)
+        src.onended = () => {
+          const i = sources.indexOf(src)
+          if (i >= 0) sources.splice(i, 1)
+        }
+        scheduleDrainCheck(wallDurationMs)
+      } catch (err) {
+        const error = err instanceof Error ? err : new Error(String(err))
+        onError?.(error)
+        scheduleDrainCheck(0)
+      }
     },
     flush() {
       clearDrainTimer()
-      playing = false
       for (const s of sources.splice(0)) {
         try {
           s.stop()
@@ -312,6 +380,7 @@ export function createAudioPlayer(opts: AudioPlayerOptions = {}): AudioPlayer {
         }
       }
       cursor = ctx.currentTime
+      expectedDrainWallMs = Date.now()
     },
     close() {
       if (closed) return
@@ -319,9 +388,6 @@ export function createAudioPlayer(opts: AudioPlayerOptions = {}): AudioPlayer {
       clearDrainTimer()
       this.flush()
       void ctx.close()
-    },
-    isPlaying() {
-      return playing
     },
   }
 }

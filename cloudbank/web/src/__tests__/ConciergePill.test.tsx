@@ -45,41 +45,59 @@ describe('ConciergePill', () => {
     })
   })
 
-  it('shows "Talk to concierge" in always-on mode and calls startMic on click', () => {
+  it('shows "Talk to concierge" in continuous mode and calls startMic on click', () => {
     const v = makeAgent({ pushToTalk: false })
     render(withAgent(v))
     expect(screen.getByText('Talk to concierge')).toBeInTheDocument()
-    fireEvent.click(screen.getByRole('button'))
+    const pill = screen.getByRole('button')
+    expect(pill).toHaveAttribute('aria-pressed', 'false')
+    fireEvent.click(pill)
     expect(v.startMic).toHaveBeenCalled()
   })
 
-  it('shows "Session paused — hold to talk" on idle expiry (phase="paused") and holds cleanly', () => {
+  it('shows "Session paused · Hold to talk" on idle expiry (phase="paused") and holds cleanly', () => {
     const v = makeAgent({ pushToTalk: true, phase: 'paused', connState: 'idle' })
     render(withAgent(v))
-    expect(screen.getByText('Session paused — hold to talk')).toBeInTheDocument()
+    expect(screen.getByText('Session paused · Hold to talk')).toBeInTheDocument()
     const pill = screen.getByRole('button')
     fireEvent.pointerDown(pill, { pointerId: 1 })
     expect(v.beginTalking).toHaveBeenCalledTimes(1)
   })
 
-  it('shows "Hold to talk" when ready in push-to-talk mode and "Release to send" when capturing', () => {
-    const { rerender } = render(withAgent(makeAgent({ pushToTalk: true, phase: 'ready' })))
-    expect(screen.getByText('Hold to talk')).toBeInTheDocument()
+  it('supports accessible Click / Enter toggle-to-talk with aria-pressed in push-to-talk mode without nested aria-live', () => {
+    const vReady = makeAgent({ pushToTalk: true, phase: 'ready' })
+    const { rerender } = render(withAgent(vReady))
+    const pill = screen.getByRole('button', { name: 'Hold to talk' })
+    expect(pill).toHaveAttribute('aria-pressed', 'false')
+    expect(pill.querySelector('[aria-live]')).toBeNull()
 
-    rerender(
-      withAgent(makeAgent({ pushToTalk: true, phase: 'capturing', micState: 'held' })),
-    )
-    expect(screen.getByText('Release to send')).toBeInTheDocument()
+    // Synthetic click (screen reader / Enter / switch control) starts capture.
+    fireEvent.click(pill, { detail: 0 })
+    expect(vReady.beginTalking).toHaveBeenCalledTimes(1)
+
+    const vCapturing = makeAgent({
+      pushToTalk: true,
+      phase: 'capturing',
+      micState: 'held',
+    })
+    rerender(withAgent(vCapturing))
+    const activePill = screen.getByRole('button', { name: 'Release to send' })
+    expect(activePill).toHaveAttribute('aria-pressed', 'true')
+
+    // Second synthetic click ends capture cleanly.
+    fireEvent.click(activePill, { detail: 0 })
+    expect(vCapturing.endTalking).toHaveBeenCalledTimes(1)
   })
 
-  it('allows holding during agentSpeaking for deliberate barge-in while ignoring plain clicks', () => {
+  it('allows holding during agentSpeaking for deliberate barge-in while ignoring pointer clicks', () => {
     const v = makeAgent({ pushToTalk: true, phase: 'agentSpeaking', micState: 'speaking' })
     render(withAgent(v))
     expect(screen.getByText('Speaking')).toBeInTheDocument()
     const pill = screen.getByRole('button')
-    fireEvent.click(pill)
+    fireEvent.click(pill, { detail: 1 })
     expect(v.stopMic).not.toHaveBeenCalled()
-    fireEvent.pointerDown(pill, { pointerId: 1 })
+    expect(v.beginTalking).not.toHaveBeenCalled()
+    fireEvent.pointerDown(pill, { pointerId: 1, button: 0 })
     expect(v.beginTalking).toHaveBeenCalledTimes(1)
   })
 
@@ -91,7 +109,7 @@ describe('ConciergePill', () => {
     expect(v.beginTalking).not.toHaveBeenCalled()
   })
 
-  it('shows "Reconnect" on transport error without arming mic capture on pointerDown, even in push-to-talk mode', () => {
+  it('shows "Reconnect" on transport error without arming mic capture on pointerDown', () => {
     const v = makeAgent({ pushToTalk: true, phase: 'error', connState: 'error', micDenied: false })
     render(withAgent(v))
     const pill = screen.getByRole('button', { name: 'Reconnect' })

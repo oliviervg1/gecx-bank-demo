@@ -30,7 +30,7 @@ export function TabBar() {
             aria-current={active ? 'page' : undefined}
             data-active={active}
             onClick={() => navigateTo(id)}
-            className="flex-1 flex flex-col items-center gap-1 pt-2.5 pb-2.5 relative transition-colors"
+            className="min-h-11 flex-1 flex flex-col items-center justify-center gap-1 pt-2.5 pb-2.5 relative transition-colors"
           >
             {active && (
               <span className="absolute top-0 left-1/2 -translate-x-1/2 w-8 h-[2px] bg-brand-green" />
@@ -38,11 +38,12 @@ export function TabBar() {
             <Icon
               size={19}
               strokeWidth={active ? 2 : 1.75}
+              aria-hidden="true"
               className={active ? 'text-brand-green' : 'text-brand-muted'}
             />
             <span
               className={
-                'text-[11px] leading-none ' +
+                'text-[0.6875rem] leading-none ' +
                 (active ? 'text-brand-green font-semibold' : 'text-brand-muted')
               }
             >

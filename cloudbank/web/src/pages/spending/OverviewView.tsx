@@ -4,7 +4,7 @@ import { SpendingHeader } from './SpendingHeader'
 import { TransactionRow } from './TransactionRow'
 import { useFixture } from '../../data/useFixture'
 import { usePersona } from '../../personas/PersonaProvider'
-import { useSpendingView } from '../../agent/SpendingViewProvider'
+import { useBankingViewState } from '../../agent/BankingViewStateProvider'
 import { formatGBPFromPence } from '../../util/currency'
 import {
   PERIOD_TO_OFFSET,
@@ -20,7 +20,7 @@ function prettyCategory(c: string): string {
 export function OverviewView() {
   const fixture = useFixture()
   const { demoDate } = usePersona()
-  const { period, highlightVendor, anomalyStatus, setView } = useSpendingView()
+  const { period, highlightVendor, anomalyStatus, setView } = useBankingViewState()
 
   const offset = PERIOD_TO_OFFSET[period]
   const monthName = monthNameForOffset(demoDate, offset)
@@ -73,15 +73,15 @@ export function OverviewView() {
 
       {/* Monthly Total Headline */}
       <div className="py-4 border-b border-brand-divider">
-        <div className="text-[11px] uppercase tracking-[0.08em] text-brand-muted font-medium">
+        <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
           {monthName} Total Spend
         </div>
         <div className="flex items-baseline justify-between mt-1">
-          <div className="text-[30px] font-bold tracking-[-0.02em] text-brand-text tabular-nums leading-none">
+          <div className="text-[1.875rem] font-bold tracking-[-0.02em] text-brand-text tabular-nums leading-none">
             {formatGBPFromPence(totalPence)}
           </div>
           {diffPence !== null && prevMonthName && (
-            <div className="text-[13px] text-brand-muted tabular-nums">
+            <div className="text-[0.8125rem] text-brand-muted tabular-nums">
               {diffPence > 0
                 ? `+${formatGBPFromPence(diffPence)} vs ${prevMonthName}`
                 : diffPence < 0
@@ -102,32 +102,44 @@ export function OverviewView() {
               ? 'border-brand-danger/40 bg-[#fdf6f6]'
               : anomalyStatus === 'confirmed'
                 ? 'border-brand-green/30 bg-[#f6faf8]'
-                : 'border-brand-gold/50 bg-[#fcf9f2]')
+                : 'border-brand-gold-text/45 bg-[#fcf9f2]')
           }
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-2.5">
               {anomalyStatus === 'unrecognised' ? (
-                <ShieldAlert size={18} className="text-brand-danger shrink-0 mt-0.5" />
+                <ShieldAlert
+                  size={18}
+                  aria-hidden="true"
+                  className="text-brand-danger shrink-0 mt-0.5"
+                />
               ) : anomalyStatus === 'confirmed' ? (
-                <CheckCircle2 size={18} className="text-brand-green shrink-0 mt-0.5" />
+                <CheckCircle2
+                  size={18}
+                  aria-hidden="true"
+                  className="text-brand-green shrink-0 mt-0.5"
+                />
               ) : (
-                <AlertTriangle size={18} className="text-brand-gold shrink-0 mt-0.5" />
+                <AlertTriangle
+                  size={18}
+                  aria-hidden="true"
+                  className="text-brand-gold-text shrink-0 mt-0.5"
+                />
               )}
               <div>
                 <div className="flex flex-wrap items-center gap-2">
-                  <span className="text-[14px] font-semibold text-brand-text">
+                  <span className="text-[0.875rem] font-semibold text-brand-text">
                     {anomalyTx.vendor} · {formatGBPFromPence(anomalyTx.amount_pence)}
                   </span>
                   <span
                     data-testid="anomaly-status-badge"
                     className={
-                      'text-[11px] font-semibold px-2 py-0.5 rounded-full border ' +
+                      'text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full border ' +
                       (anomalyStatus === 'unrecognised'
                         ? 'border-brand-danger/40 text-brand-danger bg-white'
                         : anomalyStatus === 'confirmed'
                           ? 'border-brand-green/40 text-brand-green bg-white'
-                          : 'border-brand-gold/50 text-brand-gold bg-white')
+                          : 'border-brand-gold-text/50 text-brand-gold-text bg-white')
                     }
                   >
                     {anomalyStatus === 'unrecognised'
@@ -137,7 +149,7 @@ export function OverviewView() {
                         : 'Flagged charge'}
                   </span>
                 </div>
-                <p className="text-[12px] text-brand-muted mt-1 leading-snug">
+                <p className="text-[0.75rem] text-brand-muted mt-1 leading-snug">
                   {anomalyStatus === 'unrecognised'
                     ? 'Marked on screen as not recognised. Check with household members, freeze your card in Profile, or contact Cloudbank support to raise a formal dispute.'
                     : anomalyStatus === 'confirmed'
@@ -159,7 +171,7 @@ export function OverviewView() {
                     highlightVendor: anomalyTx.vendor,
                   })
                 }
-                className="text-[12px] font-semibold text-brand-green shrink-0 hover:underline"
+                className="min-h-8 px-1.5 inline-flex items-center text-[0.75rem] font-semibold text-brand-green shrink-0 hover:underline"
               >
                 Subscriptions
               </button>
@@ -170,7 +182,7 @@ export function OverviewView() {
 
       {/* Category Breakdown */}
       <div className="mt-5">
-        <div className="text-[11px] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
+        <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
           By Category
         </div>
         <div className="divide-y divide-brand-divider border-t border-b border-brand-divider">
@@ -179,14 +191,14 @@ export function OverviewView() {
               key={category}
               type="button"
               onClick={() => setView({ view: 'category', category, period })}
-              className="w-full flex items-center justify-between py-2.5 text-left hover:bg-[#faf9f6] transition-colors"
+              className="min-h-11 w-full flex items-center justify-between py-2.5 text-left hover:bg-[#faf9f6] transition-colors"
             >
-              <span className="text-[14px] font-medium text-brand-text">
+              <span className="text-[0.875rem] font-medium text-brand-text">
                 {prettyCategory(category)}
               </span>
-              <span className="inline-flex items-center gap-1.5 text-[14px] font-semibold text-brand-text tabular-nums">
+              <span className="inline-flex items-center gap-1.5 text-[0.875rem] font-semibold text-brand-text tabular-nums">
                 {formatGBPFromPence(amount_pence)}
-                <ChevronRight size={15} className="text-brand-muted" />
+                <ChevronRight size={15} aria-hidden="true" className="text-brand-muted" />
               </span>
             </button>
           ))}
@@ -195,7 +207,7 @@ export function OverviewView() {
 
       {/* Statement Transactions */}
       <div className="mt-5">
-        <div className="text-[11px] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
+        <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
           {monthName} Transactions ({monthTxns.length})
         </div>
         <div className="divide-y divide-brand-divider border-t border-b border-brand-divider">

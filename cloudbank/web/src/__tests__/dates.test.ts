@@ -1,11 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import {
-  nextMonthlyOccurrence,
-  formatDayOrdinal,
-  formatDayAndMonth,
-  parseLocalDate,
-  ordinalSuffix,
-} from '../util/dates'
+import { formatDayOrdinal, ordinalSuffix } from '../util/dates'
 import {
   defaultDemoDateForNow,
   formatIsoDate,
@@ -17,7 +11,7 @@ import {
   targetYearMonth,
 } from '../util/demoClock'
 
-describe('demoClock — timezone-safe integer-component dates', () => {
+describe('demoClock: timezone-safe integer-component dates', () => {
   it('formats local calendar dates without UTC shift and anchors default day to 24 across all months', () => {
     expect(formatIsoDate(new Date(2026, 1, 24))).toBe('2026-02-24')
     expect(defaultDemoDateForNow(new Date(2026, 1, 28))).toBe('2026-02-24')
@@ -50,16 +44,13 @@ describe('demoClock — timezone-safe integer-component dates', () => {
   })
 })
 
-describe('dates.ts — ordinal and occurrence helpers', () => {
-  it('handles nextMonthlyOccurrence, ordinalSuffix, and parseLocalDate', () => {
-    const d = nextMonthlyOccurrence(1, new Date(2026, 10, 24))
-    expect([d.getFullYear(), d.getMonth(), d.getDate()]).toEqual([2026, 11, 1])
+describe('dates.ts: ordinal helpers', () => {
+  it('formats ordinal day suffixes accurately', () => {
     expect(formatDayOrdinal(1)).toBe('1st')
+    expect(formatDayOrdinal(2)).toBe('2nd')
+    expect(formatDayOrdinal(3)).toBe('3rd')
     expect(formatDayOrdinal(12)).toBe('12th')
     expect(formatDayOrdinal(21)).toBe('21st')
     expect(ordinalSuffix(11)).toBe('th')
-    expect(formatDayAndMonth(new Date(2026, 6, 1))).toBe('1st July')
-    const parsed = parseLocalDate('2026-07-01')
-    expect([parsed.getFullYear(), parsed.getMonth(), parsed.getDate()]).toEqual([2026, 6, 1])
   })
 })
