@@ -504,4 +504,29 @@ describe('Assistant text accumulation (W-2) & sanitizeAgentProse (W-3)', () => {
       'In November you spent £2,018.64, with coffee < £50. Do you recognise Netflix?',
     )
   })
+
+  it('normalises 4+-letter ALL-CAPS TTS lexical-stress words while preserving banking & geographic acronyms', () => {
+    expect(sanitizeAgentProse('HIGHER')).toBe('higher')
+    expect(sanitizeAgentProse('FLAGGED')).toBe('flagged')
+    expect(sanitizeAgentProse('FREEZE')).toBe('freeze')
+    expect(
+      sanitizeAgentProse(
+        '<warm> In November you spent £2,018.64, which is £77.15 HIGHER than October. ' +
+          'One charge was FLAGGED on screen, and you can FREEZE your card inside your FEE-FREE app.',
+      ),
+    ).toBe(
+      'In November you spent £2,018.64, which is £77.15 higher than October. ' +
+        'One charge was flagged on screen, and you can freeze your card inside your fee-free app.',
+    )
+
+    // Sentence-opening stressed words capitalise cleanly rather than leaving a lowercase sentence opener.
+    expect(
+      sanitizeAgentProse("FREEZE your card immediately if needed. NEVER share your PIN."),
+    ).toBe('Freeze your card immediately if needed. Never share your PIN.')
+
+    // Genuine banking, regulatory, payment, and geographic acronyms remain uppercase.
+    const acronyms =
+      'Rates use 4.50% AER, 3.89% APR, SVR, ERC, ISA, GBP in the UK under FCA rules via BACS, CHAPS, and PIN.'
+    expect(sanitizeAgentProse(acronyms)).toBe(acronyms)
+  })
 })

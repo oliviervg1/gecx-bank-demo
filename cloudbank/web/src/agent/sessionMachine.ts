@@ -149,7 +149,11 @@ function appendOrUpdateAssistantText(
   const next = [...turns]
   const last = next[next.length - 1]
   if (last && last.role === 'assistant' && !last.interrupted && last.partial) {
-    if (!last.text || clean.startsWith(last.text)) {
+    if (
+      !last.text ||
+      clean.startsWith(last.text) ||
+      clean.toLowerCase().startsWith(last.text.toLowerCase())
+    ) {
       // Cumulative text growth: replace with extended prefix.
       next[next.length - 1] = { ...last, text: clean, partial }
       return next

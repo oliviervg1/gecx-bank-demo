@@ -185,18 +185,18 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     })
     expect(await screen.findByText(/Spending › Tesco/)).toBeInTheDocument()
 
-    // 3. Sanitized assistant prose + interrupted badge + sandboxed search_suggestions + hidden diagnostics
+    // 3. Sanitized assistant prose + normalized ALL-CAPS stress + no (Interrupted) wart + sandboxed search_suggestions
     await act(async () => {
       ws.deliver({
         type: 'text',
         partial: true,
-        text: '<neutral> Let me check your Netflix plan.',
+        text: '<neutral> Your spend is £77.15 HIGHER than October and Netflix was FLAGGED.',
       })
       ws.deliver({ type: 'interrupt' })
       ws.deliver({
         type: 'text',
         partial: false,
-        text: '<reassuring> To cancel Netflix, open Account settings. [Diagnosis context: internal raw search payload]',
+        text: '<reassuring> To cancel Netflix in the UK, open Account settings or FREEZE your card (4.50% AER, no ERC via BACS or CHAPS). [Diagnosis context: internal raw search payload]',
       })
       ws.deliver({
         type: 'search_suggestions',
@@ -223,8 +223,17 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     const stream = screen.getByTestId('conversation-stream')
     expect(stream).toHaveAttribute('role', 'log')
     expect(stream).toHaveAttribute('aria-live', 'polite')
-    expect(stream.textContent).toContain('To cancel Netflix, open Account settings.')
-    expect(stream.textContent).toContain('(Interrupted)')
+    expect(stream.textContent).toContain(
+      'Your spend is £77.15 higher than October and Netflix was flagged.',
+    )
+    expect(stream.textContent).toContain(
+      'To cancel Netflix in the UK, open Account settings or freeze your card (4.50% AER, no ERC via BACS or CHAPS).',
+    )
+    expect(stream.textContent).not.toContain('HIGHER')
+    expect(stream.textContent).not.toContain('FLAGGED')
+    expect(stream.textContent).not.toContain('FREEZE')
+    expect(stream.textContent).not.toContain('(Interrupted)')
+    expect(screen.queryByTestId('interrupted-badge')).toBeNull()
     expect(stream.textContent).not.toContain('Diagnosis context')
     expect(stream.textContent).not.toContain('<reassuring>')
     expect(stream.textContent).not.toContain('everyday_banking_agent')
