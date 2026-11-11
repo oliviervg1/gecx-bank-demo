@@ -63,7 +63,7 @@ jobs:
           pkg_txt = pathlib.Path("cloudbank/web/package-lock.json").read_text(encoding="utf-8")
           resolved = re.findall(r"\"resolved\"\s*:\s*\"([^\"]+)\"", pkg_txt)
           assert resolved, "package-lock.json: expected non-empty resolved entries"
-          bad_npm = [u for u in resolved if not u.startswith("https://registry.npmjs.org/")]
+          bad_npm = [u for u in resolved if not u.startswith("https://registry.npmjs.org/") or "/-/@" in u]
           assert not bad_npm, f"package-lock.json: disallowed resolved URLs: {bad_npm[:5]}"
           print("OK: all Python and npm lockfile URLs resolve to public PyPI and npmjs registries.")
           '
