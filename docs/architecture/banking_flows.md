@@ -31,7 +31,7 @@ flowchart TD
     Guard -->|"Triggered"| Safe["Immediate Safeguarding Signpost (0808 157 0100 + 116 123)"]:::close
     Guard -->|"Clear"| Root["route_banking_intent(intent, topic_hint)"]:::ctrl
     Root -->|"GREETING / NAVIGATE_HOME / NAVIGATE_PROFILE / CAPABILITIES"| Local["Update ui_view_state(Home | Profile), unclear_count = 0"]:::state
-    Root -->|"EVERYDAY_BANKING / SAVINGS / MORTGAGES"| Stage["Stage target_agent + router_state for silent handoff"]:::route
+    Root -->|"EVERYDAY_BANKING / SAVINGS / MORTGAGES"| Stage["Stage target_agent for silent handoff"]:::route
     Root -->|"UNCLEAR (Strike 1)"| S1["Set unclear_count = 1 and ask clarifying question"]:::state
     Root -->|"UNCLEAR (Strike 2)"| S2["Reset unclear_count = 0, ui_view_state = Home, keep session open"]:::state
     Root -->|"FAREWELL"| End["Set call_complete = true and append Part.from_end_session"]:::close
@@ -41,7 +41,7 @@ flowchart TD
 
 ## 3. Everyday Banking, Per-Vendor Anomaly Check & Allowlisted Subscription Pivot
 
-When a monthly spending overview includes an unconfirmed flagged charge (`is_anomaly: true`), the assistant highlights the transaction row on **Spending** and asks whether the customer recognises it. Recognition status is stored per merchant in `anomaly_by_vendor` so confirming or disputing one merchant never overwrites another. Confirming (`yes`) or asking how to cancel a canonical subscription invokes wrapped Google Search (`search_help`) against an exact registrable-domain allowlist of official vendor help domains, strips phone numbers, email addresses, and URLs, wraps text inside `<untrusted_web_snippet>`, and offers to project redirecting the freed monthly subscription cost into **Savings**. Saying `no` marks that merchant row on screen as `"Marked as not recognised"` without claiming a backend fraud dispute has already completed, and never offers disputed funds as freed savings.
+When a monthly spending overview includes an unconfirmed flagged charge (`is_anomaly: true`), the assistant highlights the transaction row on **Spending** and asks whether the customer recognises it. Recognition status is stored per merchant in `anomaly_by_vendor` and emitted inside `ui_view_state` so confirming or disputing one merchant scopes its badge strictly to that merchant row without affecting any other flagged rows. Confirming (`yes`) or asking how to cancel a canonical subscription invokes wrapped Google Search (`search_help`) against an exact `https://` official vendor help-host allowlist (`cloudbank/shared/official_help_hosts.json`, enforced on outbound UI citation chips in `relay.py` as well), strips phone numbers, email addresses, and URLs, wraps text inside `<untrusted_web_snippet>`, and offers to project redirecting the freed monthly subscription cost into **Savings**. Saying `no` (whether on a standalone `anomaly_followup`, alongside `cancel_subscription` such as *"I don't recognise that, how do I cancel it?"*, or deferred alongside `overview` / `balance`) always marks that merchant `"unrecognised"` in `anomaly_by_vendor` (`"Marked as not recognised"` on screen), surfaces card-freeze guidance on **Profile** without claiming a backend fraud dispute has already completed, and never marks an unrecognised charge `"confirmed"` or offers disputed funds as freed savings.
 
 ```mermaid
 flowchart TD
@@ -105,6 +105,6 @@ flowchart TD
 
 All three guardrails are configured on `app.json` (`guardrails`) with `respondImmediately` short-circuit actions so sensitive turns never reach open-ended generation:
 
-1. `fca_vulnerability_guardrail` (`failOpen: false`): detects bereavement, domestic or financial abuse, severe illness, job loss, or self-harm/distress cues and responds immediately with warm UK safeguarding support, naming Cloudbank Specialist Support (`0808 157 0100`, an Ofcom drama-reserved Freephone range safe for demonstrations) and Samaritans (`116 123`, free 24/7).
+1. `fca_vulnerability_guardrail` (`failOpen: false`): detects self-harm or suicidal thoughts, domestic or financial coercion or abuse, acute bereavement crisis, or inability to afford essentials (food, heating, or housing) and responds immediately with warm UK safeguarding support, naming Cloudbank Specialist Support (`0808 157 0100`, an Ofcom drama-reserved Freephone range safe for demonstrations) and Samaritans (`116 123`, free 24/7).
 2. `prompt_security_guardrail`: blocks prompt injection, system-instruction extraction, and tool or variable override attempts on incoming queries.
 3. `model_safety_guardrail`: enforces platform safety thresholds across hate speech, dangerous content, harassment, and sexually explicit content.

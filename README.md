@@ -54,16 +54,16 @@ gcloud auth application-default login
 2. Start both local processes in separate terminals:
 
 ```bash
-# Terminal 1: localhost BidiRunSession WebSocket proxy (never bind to 0.0.0.0)
-(cd cloudbank/proxy && uv run --locked uvicorn proxy.main:app --reload --host 127.0.0.1 --port 8080 --ws-max-size 1048576)
+# Terminal 1: localhost BidiRunSession WebSocket proxy on 127.0.0.1:8765 (never bind to 0.0.0.0)
+(cd cloudbank/proxy && uv run --locked python -m proxy)
 
 # Terminal 2: Split-Screen Cloudbank app and Cloudbank Concierge workbench
 (cd cloudbank/web && npm run dev)
 ```
 
-> Note: `cloudbank/proxy` also provides a standalone `uv run --locked python -m proxy` entrypoint that binds `127.0.0.1:8765` with `ws_max_size=1048576` enforced (`VITE_PROXY_URL=ws://127.0.0.1:8765/ws/agent`). In Google Cloud Shell or GitHub Codespaces, keep the proxy port private; Vite's dev server on `:5173` proxies `/ws/agent` over loopback automatically.
+> Note: For auto-reload while editing proxy code, run `(cd cloudbank/proxy && uv run --locked uvicorn proxy.main:app --reload --host 127.0.0.1 --port 8765 --ws-max-size 1048576)`. Vite's dev server on `:5173` proxies `/ws/agent` to `ws://127.0.0.1:8765` by default (override Vite's server-side upstream target with `VITE_PROXY_TARGET`). In Google Cloud Shell or GitHub Codespaces, keep **both** port `8765` and port `5173` **Private** (authenticated to your account), because Vite forwards `/ws/agent` to `127.0.0.1:8765` over loopback.
 
-Open `http://localhost:5173/` in Chrome. Use the top bar to switch across the four customer profiles (`Chloe · Homeowner`, `David · Remortgager`, `Tom · First-Time Buyer`, `Sarah · Pre-Retirement`). Hold **Hold to talk** (or hold **Spacebar**), click or press **Enter** on the voice pill to toggle speech capture (`aria-pressed`), or type directly into the **Cloudbank Concierge** panel (`?ptt=0` enables continuous listening mode with a live Mute/Stop control).
+Open `http://localhost:5173/` in Chrome. Use the top bar to switch across the four customer profiles (`Chloe · Homeowner`, `David · Remortgager`, `Tom · First-Time Buyer`, `Sarah · Pre-Retirement`). Hold **Hold to talk** (or hold **Spacebar**, which can be toggled off in the Concierge header), click or press **Enter** on the voice pill to toggle speech capture (`aria-pressed`), or type directly into the **Cloudbank Concierge** panel (`?ptt=0` enables continuous listening mode with a live Mute/Stop control).
 
 ## The 3 Agent Building Blocks
 
@@ -71,7 +71,7 @@ Open `http://localhost:5173/` in Chrome. Use the top bar to switch across the fo
 | :--- | :--- | :--- |
 | Sub-Agents (`instruction.txt`) | `cloudbank/cxas_app/Cloudbank/agents/*/` | Concise persona, safety rules, and slot-extraction guidance; delegates all math, routing, and state to Python. |
 | Python Controllers (`python_code.py`) | `cloudbank/cxas_app/Cloudbank/tools/*/python_function/` | Deterministic integer-pence and basis-point calculators, state owners, `ui_view_state` emitters, and silent route stagers. |
-| Model Callbacks (`python_code.py`) | `cloudbank/cxas_shared/callbacks/` (synced to `agents/*/`) | Fail-closed hooks that hide internal tools, execute validated `Part.from_agent_transfer` handoffs, stream `ui_view_state` JSON parts, strip `[Diagnosis context: ...]` notes, and close sessions cleanly. |
+| Model Callbacks (`python_code.py`) | `cloudbank/cxas_shared/callbacks/` (synced to `agents/*/`) | Fail-closed hooks (`capture_utterance` and `release_line`) that hide internal tools, execute validated `Part.from_agent_transfer` handoffs, stream `ui_view_state` JSON parts, strip `[Diagnosis context: ...]` notes and `<untrusted_web_snippet>` blocks, and close sessions cleanly. |
 
 ## Repository Map
 
@@ -81,11 +81,11 @@ LICENSE                             # Apache License 2.0
 SECURITY.md                         # Localhost ADC, snapshot trust boundary, and disclosure policy
 cloudbank/                          # Cloudbank application workspace
 ├── cxas_app/Cloudbank/             # 4-agent CXAS bundle, guardrails, synced callbacks, and Python tools
-├── cxas_shared/callbacks/          # Canonical before/after model callbacks synced across all 4 agents
+├── cxas_shared/                    # Canonical callbacks (capture_utterance, release_line) and controller_common.py
 ├── evals/                          # Multi-segment NAIVE golden YAML suites and SimulationEvals
 ├── proxy/                          # Hardened localhost FastAPI BidiRunSession WebSocket proxy
 ├── scripts/                        # Apache-2.0 lifecycle (manage_app.py), sync_shared.py, audit, and golden scripts
-├── shared/                         # Server-owned personas/*.json + JSON Schemas + parity_vectors.json
+├── shared/                         # Server-owned personas/*.json, JSON Schemas, parity_vectors, and allowlists
 ├── tests/                          # Offline pytest suite (bundle AST, controllers, callbacks, parity)
 ├── web/                            # React 19 + Tailwind v4 5-tab banking app, Concierge UI, and Playwright E2E
 ├── cxaslint.yaml                   # Zero-warning CXAS structural and evaluation lint configuration
@@ -100,3 +100,7 @@ docs/                               # Architecture guides, per-tool symbol specs
 - Beginners & Stakeholders: [GECX for Beginners](docs/guides/gecx_for_beginners.md) · [Retail Banking Flows](docs/architecture/banking_flows.md)
 - Software Engineers: [Cloudbank Engineering Blueprint](cloudbank/README.md) · [Tool-First Architecture](docs/architecture/tool_first_architecture_guide.md) · [Bidi UI Sync & Session Runtime](docs/architecture/bidi_ui_sync_and_session_runtime.md) · [Python Controller Specs](docs/tools/README.md) · [Developer & CI/CD Guide](docs/guides/developer_workflow_and_cicd_guide.md)
 - QA Testers: [External QA Tester Script](docs/guides/qa_tester_guide.md)
+
+## License
+
+Copyright 2026 Google LLC. Licensed under the [Apache License, Version 2.0](LICENSE).

@@ -38,7 +38,7 @@ e2e: build ## Run Playwright + axe-core WCAG 2.1 AA end-to-end browser tests
 	cd cloudbank/web && npm run test:e2e
 
 define HYGIENE_PY
-import hashlib, json, pathlib, re, subprocess, sys
+import json, pathlib, re, subprocess, sys
 
 cfg = json.loads(pathlib.Path("cloudbank/gecx-config.example.json").read_text(encoding="utf-8"))
 assert cfg.get("gcp_project_id") == "<your-gcp-project-id>", (
@@ -59,26 +59,23 @@ assert resolved, "package-lock.json: expected non-empty resolved entries"
 bad_npm = [u for u in resolved if not u.startswith("https://registry.npmjs.org/") or "/-/@" in u]
 assert not bad_npm, f"package-lock.json: disallowed resolved URLs: {bad_npm[:5]}"
 
-digests = {
-    "e17ff958e1a3487c",
-    "c14d0c33b77c3007",
-    "ff052a720d8ff5fa",
-    "55351e18dee8f73f",
-    "47a6705d7c6017c3",
-    "fabeb8202bf28964",
-    "8a55e63ef0788f76",
-}
 rxs = [
     re.compile(r"@[g]oogle\.com\b", re.I),
     re.compile(r"\b[g]ooglers\.com\b", re.I),
     re.compile(r"\b[c]orp\.google\b", re.I),
+    re.compile(r"\b[a-z0-9.-]+\.[g]oog\b", re.I),
+    re.compile(r"\b[m]tls\.googleapis\.com\b", re.I),
+    re.compile(r"\b(?:autopush|staging|test)-ces\b", re.I),
+    re.compile(r"\b[c]es-console\b", re.I),
     re.compile(r"\b[c]loudshell\.dev\b", re.I),
-    re.compile(r"\b(?:b|cl|yaqs|xid)/[0-9]{5,}\b"),
-    re.compile(r"\b(?:sponge2?|fusion2)/[A-Za-z0-9_-]+\b"),
+    re.compile(r"(?<![A-Za-z0-9_./:-])(?:b|cl|yaqs|xid)/[0-9]{5,}\b"),
+    re.compile(r"(?<![A-Za-z0-9_./:-])go/[a-z][a-z0-9_-]{2,}\b"),
+    re.compile(r"\b(?:sponge2?|fusion2|g3doc)/[A-Za-z0-9_-]+\b", re.I),
+    re.compile(r"\b[C]ustomer Engagement Suite\b", re.I),
+    re.compile(r"\b[C]onversational Agents \(C[E]S\)\b", re.I),
+    re.compile(r"\b[a]ltostrat\b", re.I),
+    re.compile(r"/usr/local/[g]oogle/", re.I),
 ]
-
-def sha16(val: str) -> str:
-    return hashlib.sha256(val.lower().encode("utf-8")).hexdigest()[:16]
 
 hits = []
 for f in subprocess.check_output(["git", "ls-files"], text=True).splitlines():
@@ -88,12 +85,6 @@ for f in subprocess.check_output(["git", "ls-files"], text=True).splitlines():
     for idx, line in enumerate(p.read_text(encoding="utf-8", errors="ignore").splitlines(), 1):
         if any(rx.search(line) for rx in rxs):
             hits.append(f"{f}:{idx}: disallowed internal pattern")
-        for m in re.finditer(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", line):
-            tok = m.group(0)
-            parts = tok.split("-")
-            cands = {tok, *parts, *(f"{parts[i]}-{parts[i+1]}" for i in range(len(parts) - 1))}
-            if any(sha16(c) in digests for c in cands):
-                hits.append(f"{f}:{idx}: disallowed identifier")
 
 if hits:
     print("\n".join(hits), file=sys.stderr)

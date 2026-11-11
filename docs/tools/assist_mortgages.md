@@ -9,7 +9,7 @@
 `assist_mortgages` handles mortgage balance and rate summaries, next payment dates, 10% annual ERC-free overpayment allowances, monthly and lump-sum overpayment amortisation projections, fixed-rate renewal comparisons, and first-time buyer borrowing and deposit readiness for renters (`accounts.mortgage` omitted in the fixture, normalised to `snapshot["mortgage"] = None`).
 
 Core invariants:
-- Exact amortisation, zero-balance & negative-amortisation guards: uses `_simulate_mortgage` (`_half_up(bal * rate_bps, 120_000)` monthly interest, cap `600` months) with a negative-amortisation guard when a scheduled payment does not cover monthly interest, and `_renewal_payment_pence` integer bisection (`0` when `balance_pence <= 0`) for 2-year and 5-year fixed renewal deals.
+- Exact amortisation, zero-balance & negative-amortisation guards: uses `_simulate_mortgage` (`_half_up(bal * rate_bps, 120_000)` monthly interest, cap `600` months, exiting the monthly loop immediately when `interest >= payment`) and `_renewal_payment_pence` integer bisection (`0` when `balance_pence <= 0`) for 2-year and 5-year fixed renewal deals, matching `cloudbank/web/src/util/mortgageMath.ts` (`BigInt` `halfUp`).
 - Year-one ERC allowance accuracy: clamps year-one monthly overpayments by `min(12, projected.months)` and checks strict inequality (`first_year > remaining_allowance`) so exact-boundary overpayments remain ERC-free.
 - Mandatory indicative-illustration note: appends `"These figures are an indicative illustration only and not personalised mortgage advice."` directly inside `agent_action` on every overpayment, renewal-rate, and renter-borrowing response.
 - Renter readiness & `confirm_pivot`: when `mortgage is None`, computes `4.5×` annual income max borrowing (`_half_up(annual_income_pence * 45, 10)`), deposit progress, and sets `pending_savings_pivot = True`. When `pending_savings_pivot` is `True`, a follow-up `confirm_pivot="yes"` (or `switch_intent="SAVINGS"`) pivots to `savings_agent`, `confirm_pivot="no"` clears `pending_savings_pivot = False` cleanly without re-asking, and unmatched turns increment `unclear_count` (clearing `pending_savings_pivot = False` on Strike 2).
@@ -73,12 +73,12 @@ def assist_mortgages(
 
 ### Helper Index ([python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_mortgages/python_function/python_code.py))
 
-- `_half_up` and `_to_pence`: exact integer half-up division and clamped model-float-to-pence conversion.
-- `_simulate_mortgage`, `_renewal_payment_pence`, and `_project_overpayment`: month-by-month amortisation loop, zero-balance-safe integer bisection solver for fixed-rate renewal deals, and ERC-aware overpayment comparator with negative-amortisation protection.
-- `_normalize_snapshot`, `_parse_demo_date`, `_format_gbp`, `_format_bps`, `_format_months_duration`, `_next_payment_label`, `_format_iso_month_year`, and `_emit_ui_view`: snapshot normalisation, `datetime.date` validation and month-length clamping, duration/currency/rate formatters, and monotonic `ui_view_state` writer.
-- `_handle_summary`, `_handle_next_payment`, and `_handle_allowance`: mortgage balance, current deal rate, next Direct Debit date/amount, and remaining 10% annual fee-free allowance.
-- `_format_overpayment_reply`, `_handle_overpayment_projection`, `_handle_rate_options`, and `_handle_renter_guidance`: overpayment projection, 2-year vs 5-year fixed renewal comparison, and first-time buyer readiness.
-- `_handle_switch_intent` and `_handle_unclear`: spoke-local navigation with pending-flag cleanup, guarded cross-spoke pivots, and bounded 2-strike unclear recovery.
+- `_half_up` and `_to_pence`: exact integer half-up division and clamped model-float-to-pence conversion, spliced from `controller_common.py`.
+- `_simulate_mortgage`, `_renewal_payment_pence`, and `_project_overpayment`: month-by-month amortisation loop (with early exit when `interest >= payment`), zero-balance-safe integer bisection solver for fixed-rate renewal deals, and ERC-aware overpayment comparator.
+- `_normalize_snapshot`, `_parse_demo_date`, `_format_gbp`, `_format_bps`, `_format_months_duration()`, `_next_payment_label()`, `_format_iso_month_year()`, and `_emit_ui_view`: snapshot normalisation, `datetime.date` validation and month-length clamping, duration/currency/rate formatters, and monotonic `ui_view_state` writer.
+- `_handle_summary()`, `_handle_next_payment()`, and `_handle_allowance()`: mortgage balance, current deal rate, next Direct Debit date/amount, and remaining 10% annual fee-free allowance.
+- `_format_overpayment_reply()`, `_handle_overpayment_projection()`, `_handle_rate_options()`, and `_handle_renter_guidance`: overpayment projection, 2-year vs 5-year fixed renewal comparison, and first-time buyer readiness.
+- `_handle_switch_intent` and `_handle_unclear()`: spoke-local navigation with pending-flag cleanup, guarded cross-spoke pivots, and bounded 2-strike unclear recovery.
 
 ### Session State Reads & Writes
 
