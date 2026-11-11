@@ -493,7 +493,9 @@ export function MortgagePage() {
                       Projected payoff term
                     </span>
                     <span className="text-[0.875rem] font-medium text-brand-text">
-                      {formatMonthsDuration(overpayResult.projected_months)}
+                      {overpayResult.paid_off
+                        ? formatMonthsDuration(overpayResult.projected_months)
+                        : 'Over 50 years'}
                     </span>
                   </div>
                   <div className="flex items-center justify-between py-2.5">

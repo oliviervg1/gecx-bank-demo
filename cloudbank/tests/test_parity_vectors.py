@@ -189,9 +189,20 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
         assert pmt == ren_edge["expected_payment_pence"], ren_edge["id"]
 
     for row in parity_vectors["mortgage_overpayments"]:
-        p_state = make_seeded_state(row["persona"], struct_fixtures)
-        p_ns = load_controller_namespace("assist_mortgages", p_state)
-        mg = p_ns["_normalize_snapshot"](p_state["customer_snapshot"])["mortgage"]
+        if "synthetic" in row:
+            syn = row["synthetic"]
+            p_ns = mg_ns
+            mg = {
+                "balance_pence": syn["balance_pence"],
+                "interest_rate_bps": syn["interest_rate_bps"],
+                "annual_overpayment_allowance_pence": syn["annual_overpayment_allowance_pence"],
+                "overpaid_this_year_pence": syn["overpaid_this_year_pence"],
+                "next_payment": {"amount_pence": syn["scheduled_payment_pence"]},
+            }
+        else:
+            p_state = make_seeded_state(row["persona"], struct_fixtures)
+            p_ns = load_controller_namespace("assist_mortgages", p_state)
+            mg = p_ns["_normalize_snapshot"](p_state["customer_snapshot"])["mortgage"]
         res = p_ns["_project_overpayment"](
             mg,
             row["monthly_overpayment_pence"],
@@ -199,6 +210,8 @@ def test_mortgage_overpayment_simulation_and_renewal_vectors(
         )
         for key, val in row["expected"].items():
             assert res[key] == val, f"{row['id']}:{key}"
+        assert res["baseline_paid_off"] == row["expected"].get("baseline_paid_off", True)
+        assert res["paid_off"] == row["expected"].get("paid_off", True)
 
     for persona, ren_exp in parity_vectors["mortgage_renewals"].items():
         p_state = make_seeded_state(persona, struct_fixtures)

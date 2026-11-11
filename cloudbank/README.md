@@ -1,6 +1,6 @@
 # Cloudbank Engineering Blueprint
 
-This directory contains the CX Agent Studio (`CXAS`) bundle, offline Python test suite, evaluation suites, Bidi WebSocket proxy, and React Split-Screen web application for **Cloudbank**.
+This directory contains the CX Agent Studio (GECX) (`CXAS`) bundle, canonical shared callbacks, offline Python test suite, evaluation suites, hardened FastAPI `BidiRunSession` WebSocket proxy, and React 19 + Tailwind CSS v4 Split-Screen web application for **Cloudbank**.
 
 ## 1. Hub-and-Spoke Agent Topology
 
@@ -41,7 +41,7 @@ flowchart TD
 | `agents/savings_agent/` | `assist_savings` | `end_session` | Savings pot balance, AER vs gross rate, monthly contribution, compound goal projections (consuming `handoff_context.freed_monthly_pence`). | `everyday_banking_agent`, `mortgage_agent` |
 | `agents/mortgage_agent/` | `assist_mortgages` | `end_session` | Mortgage summary, next payment, 10% ERC-free allowance, overpayment amortisation savings, integer-bisection fixed-rate renewals, renter readiness (`accounts.mortgage` omitted). | `everyday_banking_agent`, `savings_agent` |
 
-See [`docs/tools/README.md`](../docs/tools/README.md) for line-linked specifications of all four Python controllers.
+See [`docs/tools/README.md`](../docs/tools/README.md) for function-symbol specifications of all four Python controllers.
 
 ## 3. Turn Lifecycle & Callback Chain
 
@@ -72,11 +72,11 @@ sequenceDiagram
     end
 ```
 
-| Order | Hook | Callback Path (identical across all 4 agents) | Purpose |
+| Order | Hook | Callback Path (synced from `cxas_shared/callbacks/` across all 4 agents) | Purpose |
 | :--- | :--- | :--- | :--- |
-| **1** | `before_model_callbacks` | `before_model_callbacks/capture_utterance/python_code.py` | Short-circuits after `call_complete == "released"`, hides `end_session` / `transfer_to_agent` / `search_help`, bounds `pass_count ≤ 8`, hides `returned_tool` on post-tool pass, executes silent `Part.from_agent_transfer`, or emits Tier 1 `partial=True` `Part.from_json`. |
-| **2** | `after_model_callbacks[0]` | `after_model_callbacks/agent_transfer/python_code.py` | Defense-in-depth: if `target_agent` remains non-empty after a non-tool response, clears it and emits `Part.from_agent_transfer`. |
-| **3** | `after_model_callbacks[1]` | `after_model_callbacks/release_line/python_code.py` | Strips any leaked `end_session` call or `[Diagnosis context: ...]` note, re-stamps `ui_emitted_seq` on the persisted pass (appending Tier 2 `Part.from_json` when `seq > prev_emitted_seq`), and appends `Part.from_end_session` when `call_complete == "true"`. |
+| **1** | `before_model_callbacks` | `before_model_callbacks/capture_utterance/python_code.py` | Isolates `hide_tool` calls (`end_session`, `transfer_to_agent`, `search_help`), short-circuits after `call_complete == "released"`, bounds `pass_count <= 8`, hides `returned_tool` on post-tool pass, validates `target_agent` against `_ALLOWED_AGENTS` for silent `Part.from_agent_transfer`, emits Tier 1 `partial=True` `Part.from_json`, and fails closed on unexpected errors. |
+| **2** | `after_model_callbacks[0]` | `after_model_callbacks/agent_transfer/python_code.py` | State-only defense-in-depth: if a validated `target_agent` remains non-empty after a non-tool response, clears it and emits `Part.from_agent_transfer` (with zero text regex scanning). |
+| **3** | `after_model_callbacks[1]` | `after_model_callbacks/release_line/python_code.py` | Guards against `llm_response.partial`, strips any leaked `end_session` call or `[Diagnosis context: ...]` note, re-stamps `ui_emitted_seq` on the persisted pass (appending Tier 2 `Part.from_json` when `seq > prev_emitted_seq`), and appends `Part.from_end_session` when `call_complete == "true"`. |
 
 ## 4. Session State Contract (`app.json` `variableDeclarations`)
 
@@ -84,34 +84,39 @@ All `OBJECT` variables declare `{"type": "OBJECT", "required": []}` with no `pro
 
 | Variable | Type | Writer | Reader | Purpose |
 | :--- | :--- | :--- | :--- | :--- |
-| `persona_id` | `STRING` | Browser (`ClientStart`) | Controllers / Evals | Active persona ID (`chloe`, `david`, `tom`, `sarah`). |
-| `first_name` | `STRING` | Browser (`ClientStart`) | `global_instruction.txt`, `route_banking_intent` | Customer first name for natural greeting. |
-| `demo_date` | `STRING` | Browser (`ClientStart`) | `global_instruction.txt`, Controllers | Anchored statement date (`YYYY-MM-DD`, default `2026-11-24`). |
-| `time_of_day` | `STRING` | Browser (`ClientStart`) | `route_banking_intent` | `morning`, `afternoon`, or `evening`. |
-| `customer_snapshot` | `OBJECT` | Browser (`ClientStart`) | Spoke controllers | Verbatim persona fixture in integer `*_pence` and `*_bps`. |
+| `persona_id` | `STRING` | `cloudbank/proxy` (`ClientStart.persona`) | Controllers / Evals | Active persona ID (`chloe`, `david`, `tom`, `sarah`), bound per `sessionId`. |
+| `first_name` | `STRING` | `cloudbank/proxy` (derived from `snapshot.user.first_name`) | `global_instruction.txt`, `route_banking_intent` | Customer first name derived from the server-owned persona snapshot. |
+| `demo_date` | `STRING` | `cloudbank/proxy` (`ClientStart.demoDate`) | `global_instruction.txt`, Controllers | Validated statement anchor date (`YYYY-MM-DD`, default `2026-11-24`). |
+| `time_of_day` | `STRING` | `cloudbank/proxy` (`ClientStart.timeOfDay`) | `route_banking_intent` | `morning`, `afternoon` (default), or `evening`. |
+| `customer_snapshot` | `OBJECT` | `cloudbank/proxy` (`shared/personas/*.json`) | Spoke controllers | Server-loaded persona fixture in integer `*_pence` and `*_bps` (skipped on session resume). |
 | `target_agent` | `STRING` | All 4 controllers | `capture_utterance`, `agent_transfer` | Next agent ID for silent callback transfer (`""` once consumed). |
-| `handoff_context` | `OBJECT` | `assist_everyday_banking` | `assist_savings`, `assist_mortgages` | One-shot `{from_agent, vendor, freed_monthly_pence}` cleared on entry. |
+| `handoff_context` | `OBJECT` | `assist_everyday_banking` | `assist_savings`, `assist_mortgages` | One-shot `{from_agent, vendor, freed_monthly_pence}` preserved across `switch_intent` hops and cleared on local turns. |
 | `ui_view_state` | `OBJECT` | All 4 controllers | `capture_utterance`, `release_line`, `relay.py` | Monotonic `{seq, page, ...}` screen state synchronised to React. |
 | `ui_emitted_seq` | `STRING` | `capture_utterance`, `release_line` | `capture_utterance`, `release_line` | Highest `ui_view_state.seq` emitted on the session (`"0"` initial). |
-| `unclear_count` | `STRING` | All 4 controllers | All 4 controllers | Shared 2-strike counter (`"0"` / `"1"`, resets to `"0"` on Strike 2 without hanging up). |
+| `unclear_count` | `STRING` | All 4 controllers | All 4 controllers | Shared 2-strike counter (`"0"` / `"1"`, resets to `"0"` and clears pending flags on Strike 2 without hanging up). |
 | `router_state` | `OBJECT` | `route_banking_intent` | `route_banking_intent` | `{last_intent, topic_hint}` recorded on hub classification. |
-| `everyday_state` | `OBJECT` | `assist_everyday_banking` | `assist_everyday_banking` | Tracks `pending_anomaly_vendor`, `anomaly_status`, `pending_redirect_offer`, `last_discussed_subscription`. |
+| `everyday_state` | `OBJECT` | `assist_everyday_banking` | `assist_everyday_banking` | Tracks `pending_anomaly_vendor`, `anomaly_by_vendor`, `pending_redirect_offer`, `last_discussed_subscription`. |
 | `savings_state` | `OBJECT` | `assist_savings` | `assist_savings` | Tracks `last_extra_monthly_pence` and `last_custom_target_pence`. |
 | `mortgage_state` | `OBJECT` | `assist_mortgages` | `assist_mortgages` | Tracks `last_subview`, `monthly_overpayment_pence`, `lump_sum_overpayment_pence`, `pending_savings_pivot`. |
 | `pass_turn_id` / `pass_count` | `STRING` | `capture_utterance` | `capture_utterance` | Per-invocation loop guard (`_MAX_PASSES = 8`). |
-| `last_user_utterance` | `STRING` | `capture_utterance` | Diagnostics | Latest cleaned caller utterance (`≤ 500` chars). |
-| `call_complete` | `STRING` | All 4 controllers, callbacks | `capture_utterance`, `release_line` | `""` → `"true"` (farewell staged) → `"released"` (`end_session` emitted). |
+| `last_user_utterance` | `STRING` | `capture_utterance` | Diagnostics | Latest cleaned caller utterance (`<= 500` chars). |
+| `call_complete` | `STRING` | All 4 controllers, callbacks | `capture_utterance`, `release_line` | `""` -> `"true"` (farewell staged) -> `"released"` (`end_session` emitted). |
 | `escalation_reason` | `STRING` | Controllers, callbacks | `capture_utterance`, `release_line` | Reason attached to `Part.from_end_session` (e.g. `CALL_COMPLETED`). |
 
 ## 5. Frozen Cross-Runtime Contracts (`shared/`)
 
 ```mermaid
 flowchart LR
+    Personas["shared/personas/*.json"] --> ProxySeed["proxy/src/proxy/main.py"]
+    Personas --> SyncShared["scripts/sync_shared.py"]
+    Personas --> WebData["web/src/data/fixture.ts"]
     Schema1["shared/customer_snapshot.schema.json"] --> PyTest["tests/test_bundle_integrity.py"]
-    Schema1 --> ProxyVal["proxy/src/proxy/protocol.py"]
+    Schema1 --> ProxySeed
     Schema1 --> WebTest["web/src/__tests__/fixtureConformance.test.ts"]
-    Schema2["shared/ui_view_state.schema.json"] --> PyCtrl["tests/test_controllers.py"]
-    Schema2 --> WebSync["web/src/__tests__/ConciergePanel.test.tsx"]
+    Schema2["shared/ui_view_state.schema.json"] --> ProxyRelay["proxy/src/proxy/relay.py"]
+    Schema2 --> PyCtrl["tests/test_controllers.py"]
+    Schema3["shared/ws_protocol.schema.json"] --> ProxyProto["proxy/tests/test_protocol.py"]
+    Schema3 --> WebProto["web/src/__tests__/protocol.test.ts"]
     Parity["shared/parity_vectors.json"] --> PyParity["tests/test_parity_vectors.py"]
     Parity --> TsParity["web/src/__tests__/parityVectors.test.ts"]
 ```
@@ -120,15 +125,16 @@ flowchart LR
 
 | Layer | Command | What It Verifies |
 | :--- | :--- | :--- |
-| **1. Static Lint & Voice Audit** | `uv run --locked cxas lint` & `audit_agent.py` | Schema/prompt/callback rules (`T012`, `E001`–`E011`), `0` warnings, Composite v2 voice/guardrail readiness. |
-| **2. Offline Python & Proxy Suites** | `uv run --locked pytest -v` (`cloudbank/` & `proxy/`) | Byte-identical callbacks, AST bans on float math, `protobuf.Struct` coercion, controller state matrix, proxy CSWSH/schema/keepalive. |
-| **3. Web Unit, Parity & UI Suite** | `npm test && npm run typecheck && npm run lint && npm run build` | Cross-rate `AudioWorklet` resampling, 11-row `sessionMachine.ts`, exact parity vectors, 5-tab UI sync, executive `ConciergePanel` hygiene. |
-| **4. Platform NAIVE Goldens & Sims** | `python scripts/run_golden_evals.py sync` / `run` | Multi-segment turn ordering (`toolCall → agentResponse → agentTransfer`) and goal-oriented `SimulationEvals` in `evals/`. |
+| **1. Sync, Static Lint & Voice Audit** | `sync_shared.py --check`, `cxas lint`, `audit_agent.py`, `ruff check .`, `pyright` | Shared callback/eval sync, schema/prompt/callback rules (`T012`, `E001`-`E011`), `0` warnings, Ruff & Pyright checks, Composite v2 readiness. |
+| **2. Offline Python & Proxy Suites** | `uv run --locked pytest -v` (`cloudbank/` & `proxy/`) | Byte-identical callbacks, AST helper parity, `protobuf.Struct` coercion, controller state matrix, server-owned personas, `ws_protocol.schema.json`, loopback/host/semaphore guards. |
+| **3. Web Unit, Parity & Build Suite** | `npm test && npm run typecheck && npm run lint && npm run build` | Bundled TypeScript `AudioWorklet` resampling, `sessionMachine.ts` (`ptt` & `continuous`), exact parity vectors, React 19 + Tailwind v4 5-tab UI sync, zero-warning ESLint. |
+| **4. Live Proxy Playwright + axe-core E2E** | `make e2e` (`npm run test:e2e`) | Real Chromium over Vite preview + live FastAPI `proxy.main` + loopback `BidiRunSession` test server: Tier 1 UI sync, `GoAway` resume, viewport `<Toast>`, keyboard/voice floor modes, and `0` WCAG 2.1 AA violations. |
+| **5. Platform NAIVE Goldens & Sims** | `python scripts/run_golden_evals.py sync` / `run` | Multi-segment turn ordering (`toolCall -> agentResponse -> agentTransfer`) and goal-oriented `SimulationEvals` in `evals/`. |
 
 ### DO / DO NOT Cheatsheet
 
 - **DO** store all money in integer `*_pence` and rates in integer `*_bps`, using integer `half_up(n, d)` and integer bisection.
-- **DO** stage agent transfers exclusively via `context.state["target_agent"]` and copy any callback change across all four agents.
-- **DO** deploy via `./push.sh` (`OVERWRITE` import + orphan tool check + `run_golden_evals.py sync`) and read project/location from `gecx-config.json`.
-- **DO NOT** reference `{customer_snapshot}` or `{ui_view_state}` in any prompt, use `{@AGENT: ...}` tokens, or expose `transfer_to_agent` / `end_session` to the model.
+- **DO** stage agent transfers exclusively via `context.state["target_agent"]`, edit shared callbacks in `cxas_shared/callbacks/` (and personas in `shared/personas/*.json`), and run `uv run --locked python scripts/sync_shared.py --write`.
+- **DO** deploy via `./push.sh --yes` (`OVERWRITE` import via `scripts/manage_app.py` + orphan tool check + `run_golden_evals.py sync`) using gitignored `gecx-config.json` (copied from `gecx-config.example.json`) or `CLOUDBANK_*` environment variables.
+- **DO NOT** reference `{customer_snapshot}` or `{ui_view_state}` in any prompt, use `{@AGENT: ...}` tokens, or expose `transfer_to_agent`, `end_session`, or `search_help` to the model.
 - **DO NOT** run `cxas push-eval` (it mis-orders multi-agent transfer steps) or bind `cloudbank/proxy` to `0.0.0.0`.
