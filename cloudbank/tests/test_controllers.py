@@ -507,3 +507,79 @@ def test_everyday_and_mortgage_remaining_branches_and_search_resilience(
     for intent in ("GREETING", "NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES", "FAREWELL"):
         res = r_ns["route_banking_intent"](intent=intent)
         _assert_envelope_and_ui(res, state, ui_view_state_schema)
+
+
+def test_deferred_anomaly_tesco_drilldown_trend_and_return_to_netflix(
+    struct_fixtures: dict[str, dict[str, Any]],
+    ui_view_state_schema: dict[str, Any],
+) -> None:
+    """Verify Chloe can confirm/defer Netflix, inspect Tesco month + 3-month trend, then cancel Netflix."""
+    state = make_seeded_state("chloe", struct_fixtures)
+    e_ns = load_controller_namespace("assist_everyday_banking", state)
+    s_ns = load_controller_namespace("assist_savings", state)
+
+    # 1. Overview flags Netflix £45
+    t1 = e_ns["assist_everyday_banking"](query_type="overview", period="this_month")
+    _assert_envelope_and_ui(t1, state, ui_view_state_schema)
+    assert state["everyday_state"]["pending_anomaly_vendor"] == "Netflix"
+
+    # 2. Chloe confirms/defers Netflix and asks for Tesco's spend this month
+    t2 = e_ns["assist_everyday_banking"](
+        query_type="vendor",
+        vendor_name="Tesco's",
+        period="this_month",
+        anomaly_confirmed="yes",
+    )
+    t2_txt = _assert_envelope_and_ui(t2, state, ui_view_state_schema)
+    assert "come back to Netflix" in t2_txt
+    assert "£80.75 across 3 payments in November" in t2_txt
+    assert "£179.65" not in t2_txt
+    assert state["everyday_state"]["anomaly_status"] == "confirmed"
+    assert state["everyday_state"]["pending_anomaly_vendor"] == ""
+    assert state["everyday_state"]["last_discussed_subscription"] == {
+        "vendor": "Netflix",
+        "monthly_pence": 4500,
+    }
+    assert state["ui_view_state"] == {
+        "seq": 2,
+        "page": "spending",
+        "view": "vendor",
+        "period": "this_month",
+        "vendor": "Tesco",
+    }
+
+    # 3. Chloe asks for 3-month view of Tesco spend
+    t3 = e_ns["assist_everyday_banking"](query_type="trend", vendor_name="Tesco")
+    t3_txt = _assert_envelope_and_ui(t3, state, ui_view_state_schema)
+    assert "£46.40 in September" in t3_txt
+    assert "£52.50 in October" in t3_txt
+    assert "£80.75 in November" in t3_txt
+    assert "£179.65" in t3_txt
+    assert state["ui_view_state"] == {
+        "seq": 3,
+        "page": "spending",
+        "view": "trend",
+        "period": "this_month",
+        "vendor": "Tesco",
+    }
+
+    # 4. Chloe returns to Netflix to cancel it, then pivots to Savings for the £45/mo impact
+    t4 = e_ns["assist_everyday_banking"](query_type="cancel_subscription", vendor_name="Netflix")
+    _assert_envelope_and_ui(t4, state, ui_view_state_schema)
+    assert state["ui_view_state"] == {
+        "seq": 4,
+        "page": "spending",
+        "view": "subscriptions",
+        "period": "this_month",
+        "highlight_vendor": "Netflix",
+    }
+
+    e_ns["assist_everyday_banking"](switch_intent="SAVINGS")
+    assert state["target_agent"] == "savings_agent"
+    assert state["handoff_context"]["freed_monthly_pence"] == 4500
+    state["target_agent"] = ""
+
+    t5 = s_ns["assist_savings"](query_type="projection")
+    t5_txt = _assert_envelope_and_ui(t5, state, ui_view_state_schema)
+    assert "£45 a month from Netflix" in t5_txt
+    assert "shaving 4 months" in t5_txt

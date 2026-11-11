@@ -51,5 +51,9 @@ describe('MonthlyTrendView', () => {
 
     renderWith({ vendor: 'Tesco' })
     expect(screen.getByText(/Spending › Trend › Tesco/)).toBeInTheDocument()
+    expect(screen.getByText('£179.65')).toBeInTheDocument()
+    expect(screen.getByText('£80.75')).toBeInTheDocument()
+    expect(screen.getByText('£52.50')).toBeInTheDocument()
+    expect(screen.getByText('£46.40')).toBeInTheDocument()
   })
 })

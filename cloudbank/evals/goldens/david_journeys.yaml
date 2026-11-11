@@ -150,7 +150,7 @@ conversations:
               period: "this_month"
         agent:
           - "# silent"
-          - "At EE, you spent £45 across 1 payment in November, and £135 in total over the last three months."
+          - "At EE, you spent £45 across 1 payment in November."
 
       - user: "Thank you, goodbye."
         tool_calls:
