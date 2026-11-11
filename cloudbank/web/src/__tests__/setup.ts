@@ -1,15 +1,10 @@
 import '@testing-library/jest-dom/vitest'
 import { afterEach } from 'vitest'
 import { cleanup } from '@testing-library/react'
-import { MotionGlobalConfig } from 'framer-motion'
 
 afterEach(() => {
   cleanup()
 })
-
-// Skip WAAPI animations in unit tests so happy-dom v21's Animation.cancel()
-// does not emit unhandled AbortError promise rejections on rapid test teardowns.
-MotionGlobalConfig.skipAnimations = true
 
 // happy-dom does not ship a WebSocket implementation. The AgentProvider opens
 // a WS in its mount effect, so tests that render it would otherwise crash with
@@ -34,8 +29,8 @@ class WebSocketStub {
 }
 ;(globalThis as unknown as { WebSocket: typeof WebSocketStub }).WebSocket = WebSocketStub
 
-// happy-dom also does not ship the Web Audio API. AgentProvider constructs
-// an AudioPlayer on mount, so rendering it under test requires a stub.
+// happy-dom also does not ship the Web Audio API. AudioPlayer constructs an
+// AudioContext on first user gesture or playback, so tests require a stub.
 class AudioContextStub {
   currentTime = 0
   state: 'running' | 'suspended' | 'closed' = 'running'
@@ -53,7 +48,12 @@ class AudioContextStub {
       stop(): void {},
     }
   }
-  resume(): Promise<void> { return Promise.resolve() }
-  close(): Promise<void> { this.state = 'closed'; return Promise.resolve() }
+  resume(): Promise<void> {
+    return Promise.resolve()
+  }
+  close(): Promise<void> {
+    this.state = 'closed'
+    return Promise.resolve()
+  }
 }
 ;(globalThis as unknown as { AudioContext: typeof AudioContextStub }).AudioContext = AudioContextStub

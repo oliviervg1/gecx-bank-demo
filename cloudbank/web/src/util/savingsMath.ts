@@ -29,11 +29,12 @@ export interface SavingsComparisonResult {
 
 /**
  * Exact integer half-up division for non-negative integers n >= 0 and d > 0.
+ * Uses BigInt so schema-maximum compounding trajectories never overflow Number.MAX_SAFE_INTEGER.
  */
 export function halfUp(n: number, d: number): number {
-  const num = n * 2 + d
-  const den = 2 * d
-  return (num - (num % den)) / den
+  return Number(
+    (BigInt(Math.trunc(n)) * 2n + BigInt(Math.trunc(d))) / (2n * BigInt(Math.trunc(d))),
+  )
 }
 
 export function projectSavingsGoal(

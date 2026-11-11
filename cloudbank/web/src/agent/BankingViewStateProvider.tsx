@@ -1,13 +1,15 @@
 import {
   createContext,
+  startTransition,
+  use,
   useCallback,
-  useContext,
   useMemo,
   useReducer,
   type ReactNode,
 } from 'react'
-import type { UiViewStatePayload } from './protocol'
+import type { UiViewStatePayload, WireAnomalyStatus } from './protocol'
 import type { SpendingPeriod } from '../util/demoClock'
+import { formatCategoryLabel, vendorsEqual } from '../util/spendingViews'
 import { usePageOptional, ALL_PAGES, type PageId } from '../pages/PageProvider'
 
 export type SpendingView =
@@ -27,6 +29,7 @@ export interface SpendingViewState {
   vendor?: string
   highlightVendor?: string
   anomalyStatus?: AnomalyStatus
+  anomalyByVendor?: Record<string, WireAnomalyStatus>
 }
 
 interface BankingViewReducerState {
@@ -36,6 +39,7 @@ interface BankingViewReducerState {
   vendor: string | undefined
   highlightVendor: string
   anomalyStatus: AnomalyStatus
+  anomalyByVendor: Record<string, WireAnomalyStatus>
   direction: 'forward' | 'back'
   extraMonthlyPence: number
   customTargetPence: number
@@ -52,6 +56,7 @@ const INITIAL_BANKING_VIEW_STATE: BankingViewReducerState = {
   vendor: undefined,
   highlightVendor: '',
   anomalyStatus: '',
+  anomalyByVendor: {},
   direction: 'forward',
   extraMonthlyPence: 0,
   customTargetPence: 0,
@@ -65,7 +70,7 @@ type BankingViewAction =
   | { type: 'SET_VIEW'; next: SpendingViewState }
   | { type: 'SET_PERIOD'; period: SpendingPeriod }
   | { type: 'SET_HIGHLIGHT_VENDOR'; vendor: string }
-  | { type: 'SET_ANOMALY_STATUS'; status: AnomalyStatus }
+  | { type: 'SET_ANOMALY_STATUS'; status: AnomalyStatus; vendor?: string }
   | { type: 'SET_EXTRA_MONTHLY_PENCE'; pence: number }
   | { type: 'SET_CUSTOM_TARGET_PENCE'; pence: number }
   | { type: 'SET_MORTGAGE_SUBVIEW'; subview: MortgageSubview }
@@ -74,10 +79,60 @@ type BankingViewAction =
   | { type: 'APPLY_SERVER_UI_STATE'; payload: UiViewStatePayload }
   | { type: 'RESET_UI_STATE' }
 
-function prettyCategoryLabel(raw: string): string {
-  const spaced = raw.replace(/_/g, ' ')
-  if (!spaced) return 'Category'
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+function upsertVendorAnomalyStatus(
+  current: Record<string, WireAnomalyStatus>,
+  vendor: string,
+  status: AnomalyStatus,
+): Record<string, WireAnomalyStatus> {
+  if (!vendor) return current
+  const next: Record<string, WireAnomalyStatus> = {}
+  for (const [k, v] of Object.entries(current)) {
+    if (!vendorsEqual(k, vendor)) {
+      next[k] = v
+    }
+  }
+  if (status === 'confirmed' || status === 'unrecognised') {
+    next[vendor] = status
+  }
+  return next
+}
+
+function mergeAnomalyByVendorMap(
+  current: Record<string, WireAnomalyStatus>,
+  incoming?: Record<string, WireAnomalyStatus>,
+  highlightVendor?: string,
+  scalarStatus?: AnomalyStatus,
+): Record<string, WireAnomalyStatus> {
+  let next = current
+  if (incoming) {
+    for (const [vendor, status] of Object.entries(incoming)) {
+      next = upsertVendorAnomalyStatus(next, vendor, status)
+    }
+  }
+  if (highlightVendor && (scalarStatus === 'confirmed' || scalarStatus === 'unrecognised')) {
+    next = upsertVendorAnomalyStatus(next, highlightVendor, scalarStatus)
+  }
+  return next
+}
+
+export function resolveAnomalyStatusForVendor(
+  vendor: string,
+  anomalyByVendor: Record<string, WireAnomalyStatus>,
+  highlightVendor: string,
+  fallbackStatus: AnomalyStatus,
+): AnomalyStatus {
+  for (const [k, v] of Object.entries(anomalyByVendor)) {
+    if (vendorsEqual(k, vendor)) {
+      return v
+    }
+  }
+  if (highlightVendor) {
+    return vendorsEqual(highlightVendor, vendor) ? fallbackStatus : ''
+  }
+  if (Object.keys(anomalyByVendor).length === 0) {
+    return fallbackStatus
+  }
+  return ''
 }
 
 export function describeUiNavigation(payload: UiViewStatePayload): string {
@@ -97,7 +152,7 @@ export function describeUiNavigation(payload: UiViewStatePayload): string {
       if (nextView === 'subscriptions') return 'Showing Spending: Subscriptions'
       if (nextView === 'trend') return 'Showing Spending: 3-Month Trend'
       if (nextView === 'category' && payload.category) {
-        return `Showing Spending: ${prettyCategoryLabel(payload.category)}`
+        return `Showing Spending: ${formatCategoryLabel(payload.category) || 'Category'}`
       }
       if (nextView === 'vendor' && payload.vendor) {
         return `Showing Spending: ${payload.vendor}`
@@ -116,6 +171,10 @@ function bankingViewReducer(
       const { next } = action
       const incomingIsOverview = next.view === 'overview'
       const prevWasOverview = state.view === 'overview'
+      const nextHighlight =
+        next.highlightVendor !== undefined ? next.highlightVendor : state.highlightVendor
+      const nextScalar =
+        next.anomalyStatus !== undefined ? next.anomalyStatus : state.anomalyStatus
       return {
         ...state,
         direction: incomingIsOverview && !prevWasOverview ? 'back' : 'forward',
@@ -123,18 +182,30 @@ function bankingViewReducer(
         category: next.category,
         vendor: next.vendor,
         period: next.period !== undefined ? next.period : state.period,
-        highlightVendor:
-          next.highlightVendor !== undefined ? next.highlightVendor : state.highlightVendor,
-        anomalyStatus:
-          next.anomalyStatus !== undefined ? next.anomalyStatus : state.anomalyStatus,
+        highlightVendor: nextHighlight,
+        anomalyStatus: nextScalar,
+        anomalyByVendor: mergeAnomalyByVendorMap(
+          state.anomalyByVendor,
+          next.anomalyByVendor,
+          next.highlightVendor ?? state.highlightVendor,
+          next.anomalyStatus,
+        ),
       }
     }
     case 'SET_PERIOD':
       return { ...state, period: action.period }
     case 'SET_HIGHLIGHT_VENDOR':
       return { ...state, highlightVendor: action.vendor }
-    case 'SET_ANOMALY_STATUS':
-      return { ...state, anomalyStatus: action.status }
+    case 'SET_ANOMALY_STATUS': {
+      const targetVendor = action.vendor ?? state.highlightVendor
+      return {
+        ...state,
+        anomalyStatus: action.status,
+        anomalyByVendor: targetVendor
+          ? upsertVendorAnomalyStatus(state.anomalyByVendor, targetVendor, action.status)
+          : state.anomalyByVendor,
+      }
+    }
     case 'SET_EXTRA_MONTHLY_PENCE':
       return { ...state, extraMonthlyPence: Math.max(0, Math.trunc(action.pence)) }
     case 'SET_CUSTOM_TARGET_PENCE':
@@ -148,15 +219,30 @@ function bankingViewReducer(
     case 'APPLY_SERVER_UI_STATE': {
       const { payload } = action
       const announcement = describeUiNavigation(payload)
+      const mergedAnomalies = mergeAnomalyByVendorMap(
+        state.anomalyByVendor,
+        payload.anomaly_by_vendor,
+        payload.highlight_vendor,
+        payload.anomaly_status,
+      )
       let next: BankingViewReducerState = {
         ...state,
         navigationAnnouncement: announcement,
+        anomalyByVendor: mergedAnomalies,
       }
 
       if (payload.page === 'spending') {
         const nextView: SpendingView = payload.view ?? 'overview'
         const incomingIsOverview = nextView === 'overview'
         const prevWasOverview = state.view === 'overview'
+        const nextHighlight = payload.highlight_vendor ?? ''
+        const resolvedScalar =
+          payload.anomaly_status ??
+          (nextHighlight
+            ? resolveAnomalyStatusForVendor(nextHighlight, mergedAnomalies, '', '')
+            : nextView === 'overview'
+              ? ''
+              : state.anomalyStatus)
         next = {
           ...next,
           direction: incomingIsOverview && !prevWasOverview ? 'back' : 'forward',
@@ -164,12 +250,8 @@ function bankingViewReducer(
           period: payload.period ?? state.period,
           category: payload.category,
           vendor: payload.vendor,
-          highlightVendor: payload.highlight_vendor ?? '',
-          anomalyStatus: payload.anomaly_status
-            ? payload.anomaly_status
-            : nextView === 'overview'
-              ? ''
-              : state.anomalyStatus,
+          highlightVendor: nextHighlight,
+          anomalyStatus: resolvedScalar,
         }
       }
 
@@ -219,6 +301,8 @@ export interface BankingViewStateContextValue {
   vendor?: string
   highlightVendor: string
   anomalyStatus: AnomalyStatus
+  anomalyByVendor: Record<string, WireAnomalyStatus>
+  getVendorAnomalyStatus: (vendor: string) => AnomalyStatus
   direction: 'forward' | 'back'
   extraMonthlyPence: number
   customTargetPence: number
@@ -229,7 +313,7 @@ export interface BankingViewStateContextValue {
   setView: (next: SpendingViewState) => void
   setPeriod: (period: SpendingPeriod) => void
   setHighlightVendor: (vendor: string) => void
-  setAnomalyStatus: (status: AnomalyStatus) => void
+  setAnomalyStatus: (status: AnomalyStatus, vendor?: string) => void
   setExtraMonthlyPence: (pence: number) => void
   setCustomTargetPence: (pence: number) => void
   setMortgageSubview: (subview: MortgageSubview) => void
@@ -258,8 +342,8 @@ export function BankingViewStateProvider({ children }: { children: ReactNode }) 
     dispatch({ type: 'SET_HIGHLIGHT_VENDOR', vendor })
   }, [])
 
-  const setAnomalyStatus = useCallback((status: AnomalyStatus) => {
-    dispatch({ type: 'SET_ANOMALY_STATUS', status })
+  const setAnomalyStatus = useCallback((status: AnomalyStatus, vendor?: string) => {
+    dispatch({ type: 'SET_ANOMALY_STATUS', status, vendor })
   }, [])
 
   const setExtraMonthlyPence = useCallback((pence: number) => {
@@ -282,19 +366,34 @@ export function BankingViewStateProvider({ children }: { children: ReactNode }) 
     dispatch({ type: 'SET_LUMP_SUM_OVERPAYMENT_PENCE', pence })
   }, [])
 
+  const getVendorAnomalyStatus = useCallback(
+    (vendor: string): AnomalyStatus =>
+      resolveAnomalyStatusForVendor(
+        vendor,
+        state.anomalyByVendor,
+        state.highlightVendor,
+        state.anomalyStatus,
+      ),
+    [state.anomalyByVendor, state.highlightVendor, state.anomalyStatus],
+  )
+
   const applyServerUiState = useCallback(
     (payload: UiViewStatePayload) => {
-      if (navigateTo && (ALL_PAGES as readonly string[]).includes(payload.page)) {
-        navigateTo(payload.page as PageId)
-      }
-      dispatch({ type: 'APPLY_SERVER_UI_STATE', payload })
+      startTransition(() => {
+        if (navigateTo && (ALL_PAGES as readonly string[]).includes(payload.page)) {
+          navigateTo(payload.page as PageId)
+        }
+        dispatch({ type: 'APPLY_SERVER_UI_STATE', payload })
+      })
     },
     [navigateTo],
   )
 
   const resetUiState = useCallback(() => {
-    if (navigateTo) navigateTo('home')
-    dispatch({ type: 'RESET_UI_STATE' })
+    startTransition(() => {
+      if (navigateTo) navigateTo('home')
+      dispatch({ type: 'RESET_UI_STATE' })
+    })
   }, [navigateTo])
 
   const value = useMemo<BankingViewStateContextValue>(
@@ -305,6 +404,8 @@ export function BankingViewStateProvider({ children }: { children: ReactNode }) 
       vendor: state.vendor,
       highlightVendor: state.highlightVendor,
       anomalyStatus: state.anomalyStatus,
+      anomalyByVendor: state.anomalyByVendor,
+      getVendorAnomalyStatus,
       direction: state.direction,
       extraMonthlyPence: state.extraMonthlyPence,
       customTargetPence: state.customTargetPence,
@@ -326,6 +427,7 @@ export function BankingViewStateProvider({ children }: { children: ReactNode }) 
     }),
     [
       state,
+      getVendorAnomalyStatus,
       setView,
       setPeriod,
       setHighlightVendor,
@@ -340,15 +442,11 @@ export function BankingViewStateProvider({ children }: { children: ReactNode }) 
     ],
   )
 
-  return (
-    <BankingViewStateContext.Provider value={value}>
-      {children}
-    </BankingViewStateContext.Provider>
-  )
+  return <BankingViewStateContext value={value}>{children}</BankingViewStateContext>
 }
 
 export function useBankingViewState(): BankingViewStateContextValue {
-  const ctx = useContext(BankingViewStateContext)
+  const ctx = use(BankingViewStateContext)
   if (!ctx) {
     throw new Error('useBankingViewState must be used within <BankingViewStateProvider>')
   }

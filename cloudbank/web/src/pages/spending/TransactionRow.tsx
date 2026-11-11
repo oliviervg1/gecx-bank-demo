@@ -6,6 +6,7 @@ import { iconForCategory, type SpendingCategory } from '../../components/iconFor
 import { formatGBPFromPence } from '../../util/currency'
 import { shortMonthForOffset } from '../../util/demoClock'
 import { prefersReducedMotion } from '../../util/motion'
+import { formatCategoryLabel } from '../../util/spendingViews'
 import { usePersona } from '../../personas/PersonaProvider'
 
 function formatSignedAmount(amountPence: number): string {
@@ -57,8 +58,7 @@ export function TransactionRow({
     : 'transition-colors'
 
   const dateLabel = `${day} ${shortMonthForOffset(demoDate, month_offset)}`
-  const rawCategory = category.replace(/_/g, ' ')
-  const categoryLabel = rawCategory.charAt(0).toUpperCase() + rawCategory.slice(1)
+  const categoryLabel = formatCategoryLabel(category)
   const subtitleParts = [categoryLabel, dateLabel]
   if (is_subscription) subtitleParts.push('recurring')
   if (is_anomaly) subtitleParts.push('flagged')

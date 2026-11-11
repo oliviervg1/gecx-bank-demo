@@ -124,7 +124,7 @@ function resolveAudioContextCtor(): typeof AudioContext | null {
 
 export async function createAudioCapture(
   onFrame: AudioFrameHandler,
-  opts: { startMuted?: boolean; signal?: AbortSignal } = {},
+  opts: { startMuted?: boolean; signal?: AbortSignal; onEnded?: () => void } = {},
 ): Promise<AudioCapture> {
   if (opts.signal?.aborted) {
     throw new DOMException('Audio capture aborted before start', 'AbortError')
@@ -193,6 +193,48 @@ export async function createAudioCapture(
   }
   applyTrackEnabled()
 
+  const trackEndCleanups: Array<() => void> = []
+  function stopInternal() {
+    if (stopped) return
+    stopped = true
+    for (const cleanupTrack of trackEndCleanups.splice(0)) {
+      cleanupTrack()
+    }
+    clearPendingFlushSilence()
+    trailingSilence.cancelTrailingSilence()
+    node.disconnect()
+    source.disconnect()
+    stream.getTracks().forEach((t) => t.stop())
+    void audioCtx.close()
+  }
+
+  const handleTrackEnded = () => {
+    if (stopped) return
+    stopInternal()
+    opts.onEnded?.()
+  }
+
+  for (const track of stream.getAudioTracks()) {
+    const trackRecord = track as MediaStreamTrack & {
+      addEventListener?: (type: string, cb: () => void) => void
+      removeEventListener?: (type: string, cb: () => void) => void
+      onended?: (() => void) | null
+    }
+    if (typeof trackRecord.addEventListener === 'function') {
+      trackRecord.addEventListener('ended', handleTrackEnded)
+      trackEndCleanups.push(() => {
+        trackRecord.removeEventListener?.('ended', handleTrackEnded)
+      })
+    } else {
+      trackRecord.onended = handleTrackEnded
+      trackEndCleanups.push(() => {
+        if (trackRecord.onended === handleTrackEnded) {
+          trackRecord.onended = null
+        }
+      })
+    }
+  }
+
   node.port.onmessage = (
     e: MessageEvent<Float32Array | { type: 'flushed'; samples: Float32Array }>,
   ) => {
@@ -217,7 +259,7 @@ export async function createAudioCapture(
       return
     }
     if (muted) {
-      // Under PTT idle, suppress background frames so the 900s proxy idle clock stays accurate.
+      // Under PTT idle, suppress background frames so the proxy idle clock stays accurate.
       return
     }
     if (payload instanceof Float32Array && payload.length > 0) {
@@ -230,14 +272,7 @@ export async function createAudioCapture(
       if (audioCtx.state === 'suspended') await audioCtx.resume()
     },
     stop() {
-      if (stopped) return
-      stopped = true
-      clearPendingFlushSilence()
-      trailingSilence.cancelTrailingSilence()
-      node.disconnect()
-      source.disconnect()
-      stream.getTracks().forEach((t) => t.stop())
-      void audioCtx.close()
+      stopInternal()
     },
     setMuted(next: boolean) {
       if (!next) {
@@ -282,6 +317,7 @@ export async function createAudioCapture(
 
 export interface AudioPlayer {
   enqueue(base64: string): void
+  unlock(): void
   flush(): void
   close(): void
 }
@@ -335,6 +371,14 @@ export function createAudioPlayer(opts: AudioPlayerOptions = {}): AudioPlayer {
   }
 
   return {
+    unlock() {
+      if (closed) return
+      if (ctx.state === 'suspended') {
+        void ctx.resume().catch(() => {
+          // Autoplay restriction: scheduleDrainCheck wall-clock guard prevents stall.
+        })
+      }
+    },
     enqueue(base64: string) {
       if (closed) return
       if (ctx.state === 'suspended') {

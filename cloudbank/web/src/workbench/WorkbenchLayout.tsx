@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Columns2, Landmark, Lock, MessageSquare, Smartphone } from 'lucide-react'
 import { useBankingViewState } from '../agent/BankingViewStateProvider'
 import { useAuthSessionOptional } from '../auth/AuthProvider'
@@ -6,8 +6,8 @@ import { ConciergePill } from '../components/ConciergePill'
 import { HeaderBar } from '../components/HeaderBar'
 import { PhoneFrame } from '../components/PhoneFrame'
 import { TabBar } from '../components/TabBar'
-import { usePage } from '../pages/PageProvider'
-import { parsePersona, PERSONA_OPTIONS } from '../personas/personas'
+import { PAGE_TITLES, usePage } from '../pages/PageProvider'
+import { parsePersona, PERSONA_OPTIONS, type Persona } from '../personas/personas'
 import { usePersona } from '../personas/PersonaProvider'
 import { ConciergePanel } from './ConciergePanel'
 
@@ -29,7 +29,10 @@ function SignedOutScreen({ onSignBackIn }: { onSignBackIn: () => void }) {
         <div className="w-11 h-11 rounded-full bg-[#faf9f6] border border-brand-divider flex items-center justify-center mx-auto mb-3 text-brand-green">
           <Lock size={18} aria-hidden="true" />
         </div>
-        <h1 className="text-[1.25rem] font-bold tracking-[-0.01em] text-brand-text mb-2">
+        <h1
+          tabIndex={-1}
+          className="text-[1.25rem] font-bold tracking-[-0.01em] text-brand-text mb-2"
+        >
           You&apos;ve been signed out
         </h1>
         <p className="text-[0.875rem] text-brand-muted leading-relaxed mb-5">
@@ -59,12 +62,41 @@ export function WorkbenchLayout({ bankingContent }: Props) {
   const signedOut = auth?.signedOut ?? false
 
   const [viewMode, setViewMode] = useState<WorkbenchViewMode>(readInitialViewMode)
-  const [conciergeOpenScope, setConciergeOpenScope] = useState<string | null>(null)
-  const currentScope = `${persona}:${page}`
-  const mobileConciergeOpen = !signedOut && conciergeOpenScope === currentScope
-  const toggleMobileConcierge = () => {
-    setConciergeOpenScope((prev) => (prev === currentScope ? null : currentScope))
-  }
+  // Scope strictly to `persona` (never `${persona}:${page}`) so agent-driven cross-page
+  // ServerUiState updates never yank the mobile chat drawer closed mid-reply.
+  const [conciergeOpenScope, setConciergeOpenScope] = useState<Persona | null>(null)
+  const mobileConciergeOpen = !signedOut && conciergeOpenScope === persona
+
+  const mobileFrameToggleRef = useRef<HTMLButtonElement>(null)
+  const responsiveToggleRef = useRef<HTMLButtonElement>(null)
+
+  const toggleMobileConcierge = useCallback(() => {
+    setConciergeOpenScope((prev) => (prev === persona ? null : persona))
+  }, [persona])
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.title = signedOut ? 'Cloudbank — Signed out' : PAGE_TITLES[page]
+    }
+  }, [signedOut, page])
+
+  useEffect(() => {
+    if (!mobileConciergeOpen) return
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape') return
+      e.preventDefault()
+      setConciergeOpenScope(null)
+      const toggleBtn =
+        viewMode === 'mobile' ? mobileFrameToggleRef.current : responsiveToggleRef.current
+      window.setTimeout(() => {
+        toggleBtn?.focus()
+      }, 0)
+    }
+    window.addEventListener('keydown', handleKeyDown)
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [mobileConciergeOpen, viewMode])
 
   const skipAndAnnouncer = (
     <>
@@ -133,6 +165,7 @@ export function WorkbenchLayout({ bankingContent }: Props) {
               <HeaderBar
                 onToggleConcierge={toggleMobileConcierge}
                 conciergeOpen={mobileConciergeOpen}
+                toggleButtonRef={mobileFrameToggleRef}
               />
             )
           }
@@ -153,7 +186,7 @@ export function WorkbenchLayout({ bankingContent }: Props) {
   }
 
   return (
-    <div className="h-dvh flex flex-col bg-brand-bg text-brand-text overflow-hidden">
+    <div className="min-h-dvh md:h-dvh md:min-h-[36rem] flex flex-col bg-brand-bg text-brand-text md:overflow-hidden">
       {skipAndAnnouncer}
 
       {/* Clean Executive Top Header Bar */}
@@ -233,6 +266,7 @@ export function WorkbenchLayout({ bankingContent }: Props) {
           {!signedOut && (
             <>
               <button
+                ref={responsiveToggleRef}
                 type="button"
                 data-testid="responsive-concierge-toggle"
                 aria-label={mobileConciergeOpen ? 'Show banking view' : 'Show concierge chat'}
@@ -289,7 +323,7 @@ export function WorkbenchLayout({ bankingContent }: Props) {
               'flex-col h-full min-h-0'
             }
           >
-            <ConciergePanel headingLevel="h2" />
+            <ConciergePanel headingLevel={mobileConciergeOpen ? 'h1' : 'h2'} />
           </div>
         </main>
       )}

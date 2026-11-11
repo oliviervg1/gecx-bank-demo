@@ -64,7 +64,7 @@ describe('BankingViewStateProvider & unified ui_view_state sync', () => {
     expect(captured?.direction).toBe('back')
   })
 
-  it('synchronizes page, calculators, anomaly_status, and polite navigation announcements via applyServerUiState', async () => {
+  it('synchronizes page, calculators, per-vendor anomaly_by_vendor, and polite navigation announcements via applyServerUiState', async () => {
     renderWithProvider()
     await act(async () => {
       captured?.applyServerUiState({
@@ -80,11 +80,29 @@ describe('BankingViewStateProvider & unified ui_view_state sync', () => {
     expect(captured?.period).toBe('last_month')
     expect(captured?.highlightVendor).toBe('Netflix')
     expect(captured?.anomalyStatus).toBe('confirmed')
+    expect(captured?.getVendorAnomalyStatus('Netflix')).toBe('confirmed')
+    // M-04: confirming Netflix MUST NOT mark another merchant (e.g., PureGym) as confirmed!
+    expect(captured?.getVendorAnomalyStatus('PureGym')).toBe('')
     expect(captured?.navigationAnnouncement).toBe('Showing Spending: Subscriptions')
 
     await act(async () => {
       captured?.applyServerUiState({
         seq: 2,
+        page: 'spending',
+        view: 'overview',
+        anomaly_by_vendor: {
+          Netflix: 'confirmed',
+          PureGym: 'unrecognised',
+        },
+      })
+    })
+    expect(captured?.getVendorAnomalyStatus('netflix')).toBe('confirmed')
+    expect(captured?.getVendorAnomalyStatus('PureGym')).toBe('unrecognised')
+    expect(captured?.getVendorAnomalyStatus('Spotify')).toBe('')
+
+    await act(async () => {
+      captured?.applyServerUiState({
+        seq: 3,
         page: 'savings',
         extra_monthly_pence: 4500,
         custom_target_pence: 1500000,
@@ -101,6 +119,7 @@ describe('BankingViewStateProvider & unified ui_view_state sync', () => {
     expect(capturedPage).toBe('home')
     expect(captured?.extraMonthlyPence).toBe(0)
     expect(captured?.anomalyStatus).toBe('')
+    expect(captured?.anomalyByVendor).toEqual({})
     expect(captured?.navigationAnnouncement).toBe('')
   })
 })

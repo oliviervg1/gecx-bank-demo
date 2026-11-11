@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
+import { createContext, use, useCallback, useMemo, useState, type ReactNode } from 'react'
 import { parsePersona, type Persona } from './personas'
 import {
   DEFAULT_PINNED_DEMO_DATE,
@@ -62,11 +62,11 @@ export function PersonaProvider({
     [persona, setPersona, demoDate, setDemoDate],
   )
 
-  return <PersonaContext.Provider value={value}>{children}</PersonaContext.Provider>
+  return <PersonaContext value={value}>{children}</PersonaContext>
 }
 
 export function usePersona(): PersonaContextValue {
-  const ctx = useContext(PersonaContext)
+  const ctx = use(PersonaContext)
   if (!ctx) throw new Error('usePersona must be used within <PersonaProvider>')
   return ctx
 }

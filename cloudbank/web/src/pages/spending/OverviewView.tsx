@@ -10,17 +10,12 @@ import {
   PERIOD_TO_OFFSET,
   monthNameForOffset,
 } from '../../util/demoClock'
-import { vendorsEqual } from '../../util/spendingViews'
-
-function prettyCategory(c: string): string {
-  const s = c.replace(/_/g, ' ')
-  return s.charAt(0).toUpperCase() + s.slice(1)
-}
+import { formatCategoryLabel, vendorsEqual } from '../../util/spendingViews'
 
 export function OverviewView() {
   const fixture = useFixture()
   const { demoDate } = usePersona()
-  const { period, highlightVendor, anomalyStatus, setView } = useBankingViewState()
+  const { period, highlightVendor, getVendorAnomalyStatus, setView } = useBankingViewState()
 
   const offset = PERIOD_TO_OFFSET[period]
   const monthName = monthNameForOffset(demoDate, offset)
@@ -48,7 +43,14 @@ export function OverviewView() {
         .map(([category, amount_pence]) => ({ category, amount_pence }))
         .sort((a, b) => b.amount_pence - a.amount_pence)
 
-      const anom = offset === 0 ? mTxns.find((t) => t.is_anomaly) ?? null : null
+      const anom =
+        offset === 0
+          ? (mTxns.find(
+              (t) => t.is_anomaly && highlightVendor && vendorsEqual(t.vendor, highlightVendor),
+            ) ??
+              mTxns.find((t) => t.is_anomaly) ??
+              null)
+          : null
       const priorMatch = anom
         ? fixture.transactions.find(
             (t) => t.month_offset === 1 && vendorsEqual(t.vendor, anom.vendor),
@@ -63,9 +65,10 @@ export function OverviewView() {
         anomalyTx: anom,
         priorAnomalyPence: priorMatch?.amount_pence ?? null,
       }
-    }, [fixture.transactions, offset])
+    }, [fixture.transactions, offset, highlightVendor])
 
   const diffPence = prevTotalPence !== null ? totalPence - prevTotalPence : null
+  const bannerAnomalyStatus = anomalyTx ? getVendorAnomalyStatus(anomalyTx.vendor) : ''
 
   return (
     <div className="pb-6">
@@ -92,28 +95,28 @@ export function OverviewView() {
         </div>
       </div>
 
-      {/* Flagged Anomaly Banner (Current Month) */}
+      {/* Flagged Anomaly Banner (Current Month, scoped per vendor) */}
       {anomalyTx && (
         <div
           data-testid="anomaly-banner"
           className={
             'mt-4 p-3.5 rounded-xl border ' +
-            (anomalyStatus === 'unrecognised'
+            (bannerAnomalyStatus === 'unrecognised'
               ? 'border-brand-danger/40 bg-[#fdf6f6]'
-              : anomalyStatus === 'confirmed'
+              : bannerAnomalyStatus === 'confirmed'
                 ? 'border-brand-green/30 bg-[#f6faf8]'
                 : 'border-brand-gold-text/45 bg-[#fcf9f2]')
           }
         >
           <div className="flex items-start justify-between gap-2">
             <div className="flex items-start gap-2.5">
-              {anomalyStatus === 'unrecognised' ? (
+              {bannerAnomalyStatus === 'unrecognised' ? (
                 <ShieldAlert
                   size={18}
                   aria-hidden="true"
                   className="text-brand-danger shrink-0 mt-0.5"
                 />
-              ) : anomalyStatus === 'confirmed' ? (
+              ) : bannerAnomalyStatus === 'confirmed' ? (
                 <CheckCircle2
                   size={18}
                   aria-hidden="true"
@@ -135,24 +138,24 @@ export function OverviewView() {
                     data-testid="anomaly-status-badge"
                     className={
                       'text-[0.6875rem] font-semibold px-2 py-0.5 rounded-full border ' +
-                      (anomalyStatus === 'unrecognised'
+                      (bannerAnomalyStatus === 'unrecognised'
                         ? 'border-brand-danger/40 text-brand-danger bg-white'
-                        : anomalyStatus === 'confirmed'
+                        : bannerAnomalyStatus === 'confirmed'
                           ? 'border-brand-green/40 text-brand-green bg-white'
                           : 'border-brand-gold-text/50 text-brand-gold-text bg-white')
                     }
                   >
-                    {anomalyStatus === 'unrecognised'
+                    {bannerAnomalyStatus === 'unrecognised'
                       ? 'Marked as not recognised'
-                      : anomalyStatus === 'confirmed'
+                      : bannerAnomalyStatus === 'confirmed'
                         ? 'Confirmed'
                         : 'Flagged charge'}
                   </span>
                 </div>
                 <p className="text-[0.75rem] text-brand-muted mt-1 leading-snug">
-                  {anomalyStatus === 'unrecognised'
+                  {bannerAnomalyStatus === 'unrecognised'
                     ? 'Marked on screen as not recognised. Check with household members, freeze your card in Profile, or contact Cloudbank support to raise a formal dispute.'
-                    : anomalyStatus === 'confirmed'
+                    : bannerAnomalyStatus === 'confirmed'
                       ? `Plan charge on ${anomalyTx.day} ${monthName} confirmed.`
                       : `Charged on ${anomalyTx.day} ${monthName}${
                           priorAnomalyPence !== null
@@ -182,57 +185,60 @@ export function OverviewView() {
 
       {/* Category Breakdown */}
       <div className="mt-5">
-        <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
+        <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
           By Category
-        </div>
-        <div className="divide-y divide-brand-divider border-t border-b border-brand-divider">
+        </h2>
+        <ul className="list-none m-0 p-0 divide-y divide-brand-divider border-t border-b border-brand-divider">
           {byCategory.map(({ category, amount_pence }) => (
-            <button
-              key={category}
-              type="button"
-              onClick={() => setView({ view: 'category', category, period })}
-              className="min-h-11 w-full flex items-center justify-between py-2.5 text-left hover:bg-[#faf9f6] transition-colors"
-            >
-              <span className="text-[0.875rem] font-medium text-brand-text">
-                {prettyCategory(category)}
-              </span>
-              <span className="inline-flex items-center gap-1.5 text-[0.875rem] font-semibold text-brand-text tabular-nums">
-                {formatGBPFromPence(amount_pence)}
-                <ChevronRight size={15} aria-hidden="true" className="text-brand-muted" />
-              </span>
-            </button>
+            <li key={category}>
+              <button
+                type="button"
+                onClick={() => setView({ view: 'category', category, period })}
+                className="min-h-11 w-full flex items-center justify-between py-2.5 text-left hover:bg-[#faf9f6] transition-colors"
+              >
+                <span className="text-[0.875rem] font-medium text-brand-text">
+                  {formatCategoryLabel(category)}
+                </span>
+                <span className="inline-flex items-center gap-1.5 text-[0.875rem] font-semibold text-brand-text tabular-nums">
+                  {formatGBPFromPence(amount_pence)}
+                  <ChevronRight size={15} aria-hidden="true" className="text-brand-muted" />
+                </span>
+              </button>
+            </li>
           ))}
-        </div>
+        </ul>
       </div>
 
       {/* Statement Transactions */}
       <div className="mt-5">
-        <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
+        <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-1.5">
           {monthName} Transactions ({monthTxns.length})
-        </div>
-        <div className="divide-y divide-brand-divider border-t border-b border-brand-divider">
+        </h2>
+        <ul className="list-none m-0 p-0 divide-y divide-brand-divider border-t border-b border-brand-divider">
           {monthTxns.map((tx) => {
             const isHighlighted = highlightVendor
               ? vendorsEqual(tx.vendor, highlightVendor)
               : Boolean(tx.is_anomaly)
+            const rowAnomalyStatus = tx.is_anomaly ? getVendorAnomalyStatus(tx.vendor) : ''
             const badge =
-              tx.is_anomaly && anomalyStatus === 'unrecognised'
+              rowAnomalyStatus === 'unrecognised'
                 ? 'Not recognised'
-                : tx.is_anomaly && anomalyStatus === 'confirmed'
+                : rowAnomalyStatus === 'confirmed'
                   ? 'Confirmed'
                   : undefined
             return (
-              <TransactionRow
-                key={tx.id}
-                transaction={tx}
-                highlighted={isHighlighted}
-                autoScroll={false}
-                statusBadge={badge}
-                onClick={() => setView({ view: 'vendor', vendor: tx.vendor, period })}
-              />
+              <li key={tx.id}>
+                <TransactionRow
+                  transaction={tx}
+                  highlighted={isHighlighted}
+                  autoScroll={false}
+                  statusBadge={badge}
+                  onClick={() => setView({ view: 'vendor', vendor: tx.vendor, period })}
+                />
+              </li>
             )
           })}
-        </div>
+        </ul>
       </div>
     </div>
   )

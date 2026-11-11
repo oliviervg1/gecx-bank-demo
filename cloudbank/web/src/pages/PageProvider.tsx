@@ -1,7 +1,8 @@
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -12,6 +13,14 @@ export const ALL_PAGES = ['home', 'spending', 'savings', 'mortgage', 'profile'] 
 export type PageId = (typeof ALL_PAGES)[number]
 
 export type Direction = 'forward' | 'back'
+
+export const PAGE_TITLES: Record<PageId, string> = {
+  home: 'Cloudbank — Home',
+  spending: 'Cloudbank — Spending',
+  savings: 'Cloudbank — Savings',
+  mortgage: 'Cloudbank — Mortgage',
+  profile: 'Cloudbank — Profile',
+}
 
 interface PageContextValue {
   page: PageId
@@ -25,6 +34,12 @@ export function PageProvider({ children }: { children: ReactNode }) {
   const [page, setPage] = useState<PageId>('home')
   const [direction, setDirection] = useState<Direction>('forward')
   const previousIndexRef = useRef<number>(ALL_PAGES.indexOf('home'))
+
+  useEffect(() => {
+    if (typeof document !== 'undefined') {
+      document.title = PAGE_TITLES[page]
+    }
+  }, [page])
 
   const navigateTo = useCallback((id: PageId) => {
     const next = ALL_PAGES.indexOf(id)
@@ -40,15 +55,15 @@ export function PageProvider({ children }: { children: ReactNode }) {
     [page, navigateTo, direction],
   )
 
-  return <PageContext.Provider value={value}>{children}</PageContext.Provider>
+  return <PageContext value={value}>{children}</PageContext>
 }
 
 export function usePage(): PageContextValue {
-  const ctx = useContext(PageContext)
+  const ctx = use(PageContext)
   if (!ctx) throw new Error('usePage must be used within <PageProvider>')
   return ctx
 }
 
 export function usePageOptional(): PageContextValue | null {
-  return useContext(PageContext)
+  return use(PageContext)
 }

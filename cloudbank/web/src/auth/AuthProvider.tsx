@@ -1,7 +1,7 @@
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
   useMemo,
   useState,
   type ReactNode,
@@ -43,9 +43,9 @@ export function AuthSessionProvider({ children }: { children: ReactNode }) {
     [signedOut, signOut, signBackIn],
   )
 
-  return <AuthSessionContext.Provider value={value}>{children}</AuthSessionContext.Provider>
+  return <AuthSessionContext value={value}>{children}</AuthSessionContext>
 }
 
 export function useAuthSessionOptional(): AuthSessionContextValue | null {
-  return useContext(AuthSessionContext)
+  return use(AuthSessionContext)
 }

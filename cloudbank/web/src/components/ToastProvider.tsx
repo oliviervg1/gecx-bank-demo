@@ -1,7 +1,7 @@
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useRef,
@@ -58,7 +58,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   const value = useMemo<ToastContextValue>(() => ({ show, dismiss }), [show, dismiss])
 
   return (
-    <ToastContext.Provider value={value}>
+    <ToastContext value={value}>
       {children}
       <div className="fixed bottom-6 inset-x-0 z-50 pointer-events-none flex justify-center px-4">
         <div
@@ -76,12 +76,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           )}
         </div>
       </div>
-    </ToastContext.Provider>
+    </ToastContext>
   )
 }
 
 export function useToast(): ToastContextValue {
-  const ctx = useContext(ToastContext)
+  const ctx = use(ToastContext)
   if (!ctx) throw new Error('useToast must be used within <ToastProvider>')
   return ctx
 }

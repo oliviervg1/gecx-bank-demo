@@ -1,6 +1,5 @@
 import { describe, it, expect } from 'vitest'
 import { act, render, screen } from '@testing-library/react'
-import { MotionConfig } from 'framer-motion'
 import { SpendingPage } from '../pages/SpendingPage'
 import { PersonaProvider } from '../personas/PersonaProvider'
 import {
@@ -18,14 +17,12 @@ function SetViewProbe() {
 function renderSpending() {
   setView = null
   return render(
-    <MotionConfig reducedMotion="always">
-      <PersonaProvider initialDemoDate="2026-11-24">
-        <BankingViewStateProvider>
-          <SetViewProbe />
-          <SpendingPage />
-        </BankingViewStateProvider>
-      </PersonaProvider>
-    </MotionConfig>,
+    <PersonaProvider initialDemoDate="2026-11-24">
+      <BankingViewStateProvider>
+        <SetViewProbe />
+        <SpendingPage />
+      </BankingViewStateProvider>
+    </PersonaProvider>,
   )
 }
 

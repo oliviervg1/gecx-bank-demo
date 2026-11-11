@@ -53,6 +53,7 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
     ).state
 
     expect(speaking.phase).toBe('agentSpeaking')
+    expect(speaking.turns[0]?.hadAudio).toBe(true)
     const oldPlaybackEpoch = speaking.playbackEpoch
 
     const barged = reduceSessionMachine(speaking, { type: 'PTT_PRESS' })
@@ -78,18 +79,52 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
     expect(residualAudio.effects.some((e) => e.type === 'ENQUEUE_AUDIO')).toBe(false)
   })
 
+  it('P1-9: PTT_RELEASE before MIC_CAPTURE_ACTIVE (e.g. getUserMedia permission prompt blur) returns cleanly to ready without freezing in thinking', () => {
+    const ready = connectedReadyState()
+    const releasedBeforeCapture = step(ready, { type: 'PTT_PRESS' }, { type: 'PTT_RELEASE' })
+    expect(releasedBeforeCapture.state.phase).toBe('ready')
+    expect(releasedBeforeCapture.state.hasCapturedAudioInTurn).toBe(false)
+    expect(releasedBeforeCapture.effects).toContainEqual({ type: 'STOP_MIC_CAPTURE' })
+    expect(
+      releasedBeforeCapture.effects.some((e) => e.type === 'START_THINKING_WATCHDOG'),
+    ).toBe(false)
+    expect(
+      releasedBeforeCapture.effects.some((e) => e.type === 'FLUSH_MIC_AND_SEND_SILENCE'),
+    ).toBe(false)
+
+    // MIC_DEVICE_ENDED (unplugged headset) also returns cleanly to ready.
+    const unplugged = step(
+      ready,
+      { type: 'PTT_PRESS' },
+      { type: 'MIC_CAPTURE_ACTIVE' },
+      { type: 'MIC_DEVICE_ENDED' },
+    )
+    expect(unplugged.state.phase).toBe('ready')
+    expect(unplugged.state.micActive).toBe(false)
+    expect(unplugged.effects).toContainEqual({ type: 'STOP_MIC_CAPTURE' })
+  })
+
   it('PTT_PRESS during thinking grants userHasFloor and bumps playbackEpoch so late audio never mutes speech', () => {
     const ready = connectedReadyState()
-    const thinking = step(ready, { type: 'PTT_PRESS' }, { type: 'PTT_RELEASE' }).state
+    const thinking = step(
+      ready,
+      { type: 'PTT_PRESS' },
+      { type: 'MIC_CAPTURE_ACTIVE' },
+      { type: 'PTT_RELEASE' },
+    ).state
     expect(thinking.phase).toBe('thinking')
 
-    const heldDuringThinking = reduceSessionMachine(thinking, { type: 'PTT_PRESS' })
-    expect(heldDuringThinking.state.phase).toBe('capturing')
-    expect(heldDuringThinking.state.userHasFloor).toBe(true)
-    expect(heldDuringThinking.state.playbackEpoch).toBe(thinking.playbackEpoch + 1)
+    const heldDuringThinking = step(
+      thinking,
+      { type: 'PTT_PRESS' },
+      { type: 'MIC_CAPTURE_ACTIVE' },
+    ).state
+    expect(heldDuringThinking.phase).toBe('capturing')
+    expect(heldDuringThinking.userHasFloor).toBe(true)
+    expect(heldDuringThinking.playbackEpoch).toBe(thinking.playbackEpoch + 1)
 
     // Arriving audio chunk from prior turn is dropped while user holds floor.
-    const lateAudio = reduceSessionMachine(heldDuringThinking.state, {
+    const lateAudio = reduceSessionMachine(heldDuringThinking, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
       msg: { type: 'audio', data: 'AAAA' },
@@ -163,10 +198,15 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
     expect(completedAfter.state.phase).toBe('ready')
   })
 
-  it('Row 3: zero-audio turn_complete and 15,000ms THINKING_WATCHDOG_FIRED both recover thinking -> ready', () => {
+  it('Row 3: zero-audio turn_complete, mid-turn ServerError, and 15,000ms THINKING_WATCHDOG_FIRED recover thinking -> ready', () => {
     expect(THINKING_WATCHDOG_MS).toBe(15_000)
     const ready = connectedReadyState()
-    const released = step(ready, { type: 'PTT_PRESS' }, { type: 'PTT_RELEASE' })
+    const released = step(
+      ready,
+      { type: 'PTT_PRESS' },
+      { type: 'MIC_CAPTURE_ACTIVE' },
+      { type: 'PTT_RELEASE' },
+    )
     expect(released.state.phase).toBe('thinking')
     expect(released.effects).toContainEqual({ type: 'FLUSH_MIC_AND_SEND_SILENCE' })
     expect(released.effects).toContainEqual({
@@ -181,6 +221,15 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
       msg: { type: 'turn_complete' },
     })
     expect(completed.state.phase).toBe('ready')
+
+    const midTurnValidationErr = reduceSessionMachine(released.state, {
+      type: 'SERVER_MESSAGE',
+      epoch: 1,
+      msg: { type: 'error', message: 'text frame too large', field: 'text' },
+    })
+    expect(midTurnValidationErr.state.phase).toBe('ready')
+    expect(midTurnValidationErr.state.sessionId).toBe('sess-1')
+    expect(midTurnValidationErr.effects).toContainEqual({ type: 'CLEAR_THINKING_WATCHDOG' })
 
     const wrongEpoch = reduceSessionMachine(released.state, {
       type: 'THINKING_WATCHDOG_FIRED',
@@ -225,8 +274,8 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
     })
   })
 
-  it('Row 5: WS_CLOSED after end, drainingFarewell, or session_expired is normal and never enters error', () => {
-    const ready = connectedReadyState()
+  it('Row 5: WS_CLOSED after end, drainingFarewell, or session_expired is normal, while transient WS_CLOSED in active phases resumes with backoff', () => {
+    const ready = connectedReadyState('sess-transient')
     const endedImmediate = reduceSessionMachine(ready, {
       type: 'SERVER_MESSAGE',
       epoch: 1,
@@ -246,6 +295,18 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
     expect(paused.phase).toBe('paused')
     const pausedClose = reduceSessionMachine(paused, { type: 'WS_CLOSED', epoch: 1 })
     expect(pausedClose.state.phase).toBe('paused')
+
+    // Transient Wi-Fi / socket drop in ready sets resumeSessionId and schedules reconnect!
+    const droppedReady = reduceSessionMachine(ready, { type: 'WS_CLOSED', epoch: 1 })
+    expect(droppedReady.state.phase).toBe('connecting')
+    expect(droppedReady.state.resumeSessionId).toBe('sess-transient')
+    expect(droppedReady.state.resumeAttempts).toBe(1)
+    expect(droppedReady.effects).toContainEqual({
+      type: 'SCHEDULE_RECONNECT',
+      epoch: 2,
+      attempt: 1,
+      baseDelayMs: 250,
+    })
   })
 
   it('Row 6: go_away reconnects with same sessionId + lastUiSeq and caps WS_CLOSED retries with backoff', () => {
@@ -425,7 +486,7 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
 })
 
 describe('Assistant text accumulation and sanitizeAgentProse hardening', () => {
-  it('supports cumulative prefix snapshots and per-segment chunks, finalizing on turn_complete', () => {
+  it('supports cumulative prefix snapshots, per-segment chunks, and repeated trailing digits (£450 + 0 -> £4500)', () => {
     const ready = connectedReadyState()
     const cum = step(
       ready,
@@ -457,17 +518,35 @@ describe('Assistant text accumulation and sanitizeAgentProse hardening', () => {
           partial: true,
         },
       },
+      {
+        type: 'SERVER_MESSAGE',
+        epoch: 1,
+        msg: {
+          type: 'text',
+          text: 'Sign in to Account settings and select Cancel Membership.',
+          partial: false,
+        },
+      },
       { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'turn_complete', turnIndex: 2 } },
     ).state
     expect(seg.turns).toHaveLength(2)
     expect(seg.turns[1]?.text).toBe(
       'One moment while I check Netflix. Sign in to Account settings and select Cancel Membership.',
     )
+
+    // P1-10: single-digit delta '0' after '£450' MUST NOT be swallowed by endsWith!
+    const numericDelta = step(
+      seg,
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'text', text: 'Target £450', partial: true } },
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'text', text: '0', partial: false } },
+      { type: 'SERVER_MESSAGE', epoch: 1, msg: { type: 'turn_complete', turnIndex: 3 } },
+    ).state
+    expect(numericDelta.turns[2]?.text).toBe('Target £4500')
   })
 
   it('strips Composite v2 inline stage tags and nested [Diagnosis context: ...] while preserving x<y and y>z comparisons', () => {
     const raw =
-      '<neutral> <reassuring> In November you spent £2,018.64, with coffee < £50. ' +
+      '<neutral> <positive> <reassuring> In November you spent £2,018.64, with coffee < £50. ' +
       '<excited> <gentle reassuring tone> If x<y and y>z or a < b and c > d, do you recognise Netflix? </neutral> ' +
       '[Diagnosis context: November [nested [detail]] total £2,018.64; flagged Netflix £45.00.] ' +
       '{@AGENT: savings_agent} <state_update>{"x":1}</state_update>'

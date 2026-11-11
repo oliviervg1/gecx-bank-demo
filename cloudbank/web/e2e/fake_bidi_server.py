@@ -16,7 +16,8 @@
 
 Starts a local WebSocket stand-in for CX Agent Studio (GECX) BidiRunSession on an
 ephemeral loopback port and launches the production FastAPI proxy (`proxy.main:app`)
-via Uvicorn on `127.0.0.1:8765` with zero GCP credentials required.
+via Uvicorn on `127.0.0.1` (`CLOUDBANK_E2E_PROXY_PORT`, default `8765`) with zero
+GCP credentials required.
 """
 
 from __future__ import annotations
@@ -29,24 +30,93 @@ import os
 import signal
 import struct
 import time
+from pathlib import Path
 from typing import Any
 
 import uvicorn
 import websockets
 from websockets.asyncio.server import ServerConnection
 
+_E2E_PROXY_PORT = int(os.environ.get("CLOUDBANK_E2E_PROXY_PORT") or "8765")
+_E2E_WEB_PORT = int(os.environ.get("CLOUDBANK_E2E_WEB_PORT") or "4173")
+
 os.environ.setdefault("CLOUDBANK_GCP_PROJECT_ID", "cloudbank-e2e-test")
 os.environ.setdefault("CLOUDBANK_LOCATION", "eu")
 os.environ.setdefault("CLOUDBANK_APP_ID", "00000000-0000-4000-8000-000000000001")
 os.environ.setdefault(
     "PROXY_ALLOWED_ORIGINS",
-    "http://127.0.0.1:4173,http://localhost:4173,http://127.0.0.1:5173,http://localhost:5173",
+    ",".join(
+        dict.fromkeys(
+            [
+                f"http://127.0.0.1:{_E2E_WEB_PORT}",
+                f"http://localhost:{_E2E_WEB_PORT}",
+                "http://127.0.0.1:4173",
+                "http://localhost:4173",
+                "http://127.0.0.1:5173",
+                "http://localhost:5173",
+            ]
+        )
+    ),
+)
+os.environ.setdefault(
+    "PROXY_ALLOWED_HOSTS",
+    ",".join(
+        dict.fromkeys(
+            [
+                f"127.0.0.1:{_E2E_PROXY_PORT}",
+                f"localhost:{_E2E_PROXY_PORT}",
+                "127.0.0.1:8765",
+                "localhost:8765",
+                "127.0.0.1",
+                "localhost",
+            ]
+        )
+    ),
 )
 os.environ.setdefault("PROXY_WARM_CREDENTIALS", "0")
 os.environ.setdefault("PROXY_MAX_SESSIONS", "16")
 os.environ.setdefault("PROXY_KEEPALIVE_SECONDS", "60")
 
 from proxy import main as proxy_main  # noqa: E402
+
+
+def _format_gbp_exact_2dp(amount_pence: int) -> str:
+    """Format integer pence as £X,XXX.XX matching UI formatGBPFromPence."""
+    pounds, pence = divmod(abs(amount_pence), 100)
+    sign = "-" if amount_pence < 0 else ""
+    return f"{sign}£{pounds:,}.{pence:02d}"
+
+
+def _load_chloe_figures() -> dict[str, Any]:
+    """Derive E2E spoken figures directly from canonical shared/personas/chloe.json."""
+    chloe_path = Path(__file__).resolve().parents[2] / "shared" / "personas" / "chloe.json"
+    snapshot = json.loads(chloe_path.read_text(encoding="utf-8"))
+    current_balance = int(snapshot["accounts"]["current"]["balance_pence"])
+    month_txns = [
+        tx
+        for tx in snapshot["transactions"]
+        if int(tx["month_offset"]) == 0 and int(tx["amount_pence"]) > 0
+    ]
+    subs_txns = [tx for tx in month_txns if tx.get("is_subscription") is True]
+    netflix_tx = next(
+        (tx for tx in subs_txns if str(tx["vendor"]).lower() == "netflix"),
+        {"amount_pence": 4500},
+    )
+    return {
+        "current_balance_str": _format_gbp_exact_2dp(current_balance),
+        "nov_total_str": _format_gbp_exact_2dp(
+            sum(int(tx["amount_pence"]) for tx in month_txns)
+        ),
+        "nov_txn_count": len(month_txns),
+        "subs_total_str": _format_gbp_exact_2dp(
+            sum(int(tx["amount_pence"]) for tx in subs_txns)
+        ),
+        "subs_count": len(subs_txns),
+        "netflix_str": _format_gbp_exact_2dp(int(netflix_tx["amount_pence"])),
+    }
+
+
+_CHLOE_FIGURES = _load_chloe_figures()
 
 
 def _build_24khz_tone_b64(duration_ms: int = 80) -> str:
@@ -153,6 +223,7 @@ class FakeBidiUpstream:
         self, conn: ServerConnection, session_id: str
     ) -> None:
         turn_idx = self._next_turn(session_id)
+        bal = _CHLOE_FIGURES["current_balance_str"]
         await conn.send(
             json.dumps(
                 {
@@ -180,7 +251,7 @@ class FakeBidiUpstream:
                     "sessionOutput": {
                         "turnIndex": turn_idx,
                         "turnCompleted": True,
-                        "text": "<warm> Your current account balance is £4,250.75.",
+                        "text": f"<warm> <positive> Your current account balance is {bal}.",
                     }
                 }
             )
@@ -280,6 +351,9 @@ class FakeBidiUpstream:
 
         if "subscription" in lower or "netflix" in lower:
             seq = self._next_seq(session_id)
+            subs_count = _CHLOE_FIGURES["subs_count"]
+            subs_total = _CHLOE_FIGURES["subs_total_str"]
+            netflix_amt = _CHLOE_FIGURES["netflix_str"]
             ui_payload = {
                 "seq": seq,
                 "page": "spending",
@@ -306,9 +380,10 @@ class FakeBidiUpstream:
                             "turnIndex": turn_idx,
                             "turnCompleted": True,
                             "text": (
-                                "<warm> You have 4 recurring charges this month totalling £152.98, "
-                                "including Netflix at £17.99. To cancel Netflix, open Account "
-                                "settings on help.netflix.com and select Cancel Membership."
+                                f"<warm> <positive> You have {subs_count} recurring charges this "
+                                f"month totalling {subs_total}, including Netflix at {netflix_amt}. "
+                                "To cancel Netflix, open Account settings on help.netflix.com and "
+                                "select Cancel Membership."
                             ),
                             "googleSearchSuggestions": {
                                 "htmls": [
@@ -359,6 +434,8 @@ class FakeBidiUpstream:
             return False
 
         seq = self._next_seq(session_id)
+        nov_tot = _CHLOE_FIGURES["nov_total_str"]
+        nov_cnt = _CHLOE_FIGURES["nov_txn_count"]
         await conn.send(
             json.dumps(
                 {
@@ -382,7 +459,7 @@ class FakeBidiUpstream:
                     "sessionOutput": {
                         "turnIndex": turn_idx,
                         "turnCompleted": True,
-                        "text": "Your November spending totals £696.45 across 9 transactions.",
+                        "text": f"Your November spending totals {nov_tot} across {nov_cnt} transactions.",
                     }
                 }
             )
@@ -417,7 +494,7 @@ async def _serve() -> None:
         config = uvicorn.Config(
             proxy_main.app,
             host="127.0.0.1",
-            port=8765,
+            port=_E2E_PROXY_PORT,
             ws_max_size=1_048_576,
             log_level="warning",
         )

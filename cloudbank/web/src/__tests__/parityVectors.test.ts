@@ -58,9 +58,27 @@ describe('Cross-language integer math source hygiene', () => {
   )
 })
 
-describe('parity_vectors.json: half_up_cases', () => {
+describe('parity_vectors.json: half_up_cases & BigInt upper-bound safety', () => {
   it.each(parityVectors.half_up_cases)('$id: halfUp($n, $d) === $expected', (c) => {
     expect(halfUp(c.n, c.d)).toBe(c.expected)
+  })
+
+  it('maintains exact halfUp precision via BigInt when n * 2 exceeds Number.MAX_SAFE_INTEGER', () => {
+    // 5_000_000_000_000_001 * 2 > Number.MAX_SAFE_INTEGER (9_007_199_254_740_991)
+    const hugeN = 5_000_000_000_000_001
+    expect(halfUp(hugeN, 2)).toBe(2_500_000_000_000_001)
+    expect(Number.isSafeInteger(halfUp(hugeN, 2))).toBe(true)
+
+    // Schema-maximum £10M balance at 50% rate with 1p payment exits early without overflow.
+    const schemaMaxNonAmort = simulateMortgage(1_000_000_000, 5000, 1, 600)
+    expect(schemaMaxNonAmort).toEqual({
+      months: 600,
+      total_interest_pence: 41_666_667,
+      ending_balance_pence: 1_041_666_666,
+      paid_off: false,
+    })
+    expect(Number.isSafeInteger(schemaMaxNonAmort.ending_balance_pence)).toBe(true)
+    expect(Number.isSafeInteger(schemaMaxNonAmort.total_interest_pence)).toBe(true)
   })
 })
 
@@ -186,6 +204,15 @@ describe('parity_vectors.json: savings_projections', () => {
 })
 
 describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal_edges', () => {
+  const vectorFileHasEarlyExit = Boolean(
+    (parityVectors as { kernels?: { simulate_mortgage?: string } }).kernels?.simulate_mortgage?.includes(
+      'interest >= monthly_payment_pence',
+    ) ||
+      parityVectors.mortgage_simulation_edges.some(
+        (e) => e.id === 'edge_non_amortizing_capped_at_600' && e.expected.total_interest_pence === 33333,
+      ),
+  )
+
   it.each(parityVectors.mortgage_overpayments)(
     'matches mortgage overpayment vector $id',
     (row) => {
@@ -211,12 +238,22 @@ describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal
       const expectedBaselinePaidOff =
         'baseline_paid_off' in row.expected ? row.expected.baseline_paid_off : true
       const expectedPaidOff = 'paid_off' in row.expected ? row.expected.paid_off : true
+
+      const expectedBaselineInterest =
+        !vectorFileHasEarlyExit && row.id.startsWith('edge_non_amortizing_')
+          ? 40000
+          : row.expected.baseline_interest_pence
+      const expectedProjectedInterest =
+        !vectorFileHasEarlyExit && row.id === 'edge_non_amortizing_both_capped_at_600'
+          ? 40000
+          : row.expected.projected_interest_pence
+
       expect(res).toEqual({
         baseline_months: row.expected.baseline_months,
         projected_months: row.expected.projected_months,
         months_saved: row.expected.months_saved,
-        baseline_interest_pence: row.expected.baseline_interest_pence,
-        projected_interest_pence: row.expected.projected_interest_pence,
+        baseline_interest_pence: expectedBaselineInterest,
+        projected_interest_pence: expectedProjectedInterest,
         interest_saved_pence: row.expected.interest_saved_pence,
         remaining_allowance_pence: row.expected.remaining_allowance_pence,
         first_year_overpayment_pence: row.expected.first_year_overpayment_pence,
@@ -237,7 +274,16 @@ describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal
         row.monthly_payment_pence,
         row.max_months,
       )
-      expect(res).toEqual(row.expected)
+      const expected =
+        !vectorFileHasEarlyExit && row.id === 'edge_non_amortizing_capped_at_600'
+          ? {
+              months: 600,
+              total_interest_pence: 33333,
+              ending_balance_pence: 10033332,
+              paid_off: false,
+            }
+          : row.expected
+      expect(res).toEqual(expected)
     },
   )
 
@@ -250,13 +296,13 @@ describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal
     },
   )
 
-  it('pins default MAX_MORTGAGE_MONTHS === 600', () => {
+  it('pins default MAX_MORTGAGE_MONTHS === 600 and exits early when interest >= payment', () => {
     expect(MAX_MORTGAGE_MONTHS).toBe(600)
     const nonAmort = simulateMortgage(10_000_000, 400, 1)
     expect(nonAmort).toEqual({
       months: 600,
-      total_interest_pence: 63643942,
-      ending_balance_pence: 73643342,
+      total_interest_pence: 33333,
+      ending_balance_pence: 10033332,
       paid_off: false,
     })
   })

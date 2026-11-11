@@ -35,6 +35,7 @@ export interface ConversationTurn {
   text: string
   partial: boolean
   interrupted: boolean
+  hadAudio?: boolean
   searchSuggestions?: ServerSearchSuggestionsMsg
 }
 
@@ -48,6 +49,8 @@ export interface SessionMachineState {
   persona: PersonaId
   inputMode: InputMode
   micActive: boolean
+  hasCapturedAudioInTurn: boolean
+  currentTurnHadAudio: boolean
   connectionEpoch: number
   playbackEpoch: number
   sessionId: string | null
@@ -97,6 +100,8 @@ export type SessionEvent =
   | { type: 'PERSONA_SWITCH'; persona: PersonaId }
   | { type: 'PTT_PRESS' }
   | { type: 'PTT_RELEASE' }
+  | { type: 'MIC_CAPTURE_ACTIVE' }
+  | { type: 'MIC_DEVICE_ENDED' }
   | { type: 'STOP_MIC_ONLY' }
   | { type: 'MIC_DENIED'; message?: string }
   | { type: 'CLIENT_TEXT_SUBMIT'; text: string }
@@ -130,6 +135,8 @@ export function createInitialSessionState(
     persona,
     inputMode,
     micActive: false,
+    hasCapturedAudioInTurn: false,
+    currentTurnHadAudio: false,
     connectionEpoch: 0,
     playbackEpoch: 0,
     sessionId: null,
@@ -217,34 +224,57 @@ function appendOrUpdateAssistantText(
   rawText: string,
   partial: boolean,
   persona: PersonaId,
+  hadAudio: boolean = false,
 ): ConversationTurn[] {
   const clean = sanitizeAgentProse(rawText, getFixture(persona))
   if (!clean) return turns
   const next = [...turns]
   const last = next[next.length - 1]
   if (last && last.role === 'assistant' && !last.interrupted && last.partial) {
+    const mergedHadAudio = Boolean(last.hadAudio || hadAudio)
     if (
       !last.text ||
       clean.startsWith(last.text) ||
       clean.toLowerCase().startsWith(last.text.toLowerCase())
     ) {
-      next[next.length - 1] = { ...last, text: clean, partial }
+      next[next.length - 1] = {
+        ...last,
+        text: clean,
+        partial,
+        ...(mergedHadAudio ? { hadAudio: true } : {}),
+      }
       return next
     }
-    if (last.text.endsWith(clean)) {
-      next[next.length - 1] = { ...last, partial }
+    if (last.text === clean || (!partial && clean.length >= 16 && last.text.endsWith(clean))) {
+      next[next.length - 1] = {
+        ...last,
+        partial,
+        ...(mergedHadAudio ? { hadAudio: true } : {}),
+      }
       return next
     }
-    const needsSpace = !/^[,.;:!?)]/.test(clean)
+    const isNumericContinuation =
+      (/[0-9£$€]$/.test(last.text) && /^[0-9]/.test(clean)) ||
+      (/[0-9]$/.test(last.text) && /^[.,][0-9]/.test(clean))
+    const needsSpace =
+      !isNumericContinuation &&
+      !/\s$/.test(last.text) &&
+      !/^[,.;:!?)%\]]/.test(clean)
     next[next.length - 1] = {
       ...last,
       text: `${last.text}${needsSpace ? ' ' : ''}${clean}`,
       partial,
+      ...(mergedHadAudio ? { hadAudio: true } : {}),
     }
     return next
   }
   if (last && last.role === 'assistant' && !last.interrupted && last.text === clean) {
-    next[next.length - 1] = { ...last, partial }
+    const mergedHadAudio = Boolean(last.hadAudio || hadAudio)
+    next[next.length - 1] = {
+      ...last,
+      partial,
+      ...(mergedHadAudio ? { hadAudio: true } : {}),
+    }
     return next
   }
   next.push({
@@ -253,8 +283,24 @@ function appendOrUpdateAssistantText(
     text: clean,
     partial,
     interrupted: false,
+    ...(hadAudio ? { hadAudio: true } : {}),
   })
   return next
+}
+
+function markLatestAssistantHadAudio(turns: ConversationTurn[]): ConversationTurn[] {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const item = turns[i]
+    if (!item) continue
+    if (item.role === 'user') break
+    if (item.role === 'assistant' && !item.interrupted) {
+      if (item.hadAudio) return turns
+      const next = [...turns]
+      next[i] = { ...item, hadAudio: true }
+      return next
+    }
+  }
+  return turns
 }
 
 function finalizeOpenTurns(
@@ -285,12 +331,17 @@ function markActiveAssistantInterrupted(turns: ConversationTurn[]): Conversation
 function attachSearchSuggestions(
   turns: ConversationTurn[],
   suggestions: ServerSearchSuggestionsMsg,
+  hadAudio: boolean,
 ): ConversationTurn[] {
   const next = [...turns]
   for (let i = next.length - 1; i >= 0; i--) {
     const item = next[i]
     if (item && item.role === 'assistant') {
-      next[i] = { ...item, searchSuggestions: suggestions }
+      next[i] = {
+        ...item,
+        searchSuggestions: suggestions,
+        ...(item.hadAudio || hadAudio ? { hadAudio: true } : {}),
+      }
       return next
     }
   }
@@ -300,6 +351,7 @@ function attachSearchSuggestions(
     text: '',
     partial: true,
     interrupted: false,
+    ...(hadAudio ? { hadAudio: true } : {}),
     searchSuggestions: suggestions,
   })
   return next
@@ -360,6 +412,8 @@ export function reduceSessionMachine(
           ...state,
           phase: 'disconnected',
           micActive: false,
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
           connectionEpoch: nextEpoch,
           playbackEpoch: state.playbackEpoch + 1,
           sessionId: null,
@@ -440,6 +494,8 @@ export function reduceSessionMachine(
               ...state,
               phase: 'capturing',
               micActive: true,
+              hasCapturedAudioInTurn: false,
+              currentTurnHadAudio: false,
               micDenied: false,
               errorMessage: null,
               userHasFloor: false,
@@ -469,6 +525,8 @@ export function reduceSessionMachine(
             ...state,
             phase: 'connecting',
             micActive: true,
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
             connectionEpoch: nextEpoch,
             playbackEpoch: nextPlayback,
             sessionId: null,
@@ -491,6 +549,8 @@ export function reduceSessionMachine(
           state: {
             ...state,
             micActive: true,
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
             pendingPostConnect: { kind: 'capture' },
             userHasFloor: false,
           },
@@ -505,6 +565,8 @@ export function reduceSessionMachine(
             ...state,
             phase: 'capturing',
             micActive: true,
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
             playbackEpoch: state.playbackEpoch + 1,
             playerActive: false,
             turnCompletedWhileSpeaking: false,
@@ -527,6 +589,8 @@ export function reduceSessionMachine(
             ...state,
             phase: 'capturing',
             micActive: true,
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
             playbackEpoch: state.playbackEpoch + 1,
             playerActive: false,
             turnCompletedWhileSpeaking: false,
@@ -548,6 +612,8 @@ export function reduceSessionMachine(
           ...state,
           phase: 'capturing',
           micActive: true,
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
           userHasFloor: false,
           micDenied: false,
           errorMessage: null,
@@ -559,24 +625,91 @@ export function reduceSessionMachine(
       }
     }
 
+    case 'MIC_CAPTURE_ACTIVE': {
+      if (state.phase !== 'capturing' || state.hasCapturedAudioInTurn) {
+        return { state, effects: [] }
+      }
+      return {
+        state: {
+          ...state,
+          hasCapturedAudioInTurn: true,
+        },
+        effects: [],
+      }
+    }
+
+    case 'MIC_DEVICE_ENDED': {
+      if (state.phase === 'capturing') {
+        return {
+          state: {
+            ...state,
+            phase: 'ready',
+            micActive: false,
+            hasCapturedAudioInTurn: false,
+            userHasFloor: false,
+          },
+          effects: [{ type: 'STOP_MIC_CAPTURE' }],
+        }
+      }
+      return {
+        state: {
+          ...state,
+          micActive: false,
+          hasCapturedAudioInTurn: false,
+          userHasFloor: false,
+        },
+        effects: [{ type: 'STOP_MIC_CAPTURE' }],
+      }
+    }
+
     case 'PTT_RELEASE': {
       if (state.inputMode === 'continuous') {
         return { state, effects: [] }
       }
       if (state.phase === 'connecting' && state.pendingPostConnect?.kind === 'capture') {
         return {
-          state: { ...state, micActive: false, pendingPostConnect: null, userHasFloor: false },
-          effects: [],
+          state: {
+            ...state,
+            micActive: false,
+            hasCapturedAudioInTurn: false,
+            pendingPostConnect: null,
+            userHasFloor: false,
+          },
+          effects: [{ type: 'STOP_MIC_CAPTURE' }],
         }
       }
       if (state.phase !== 'capturing') {
-        return { state: { ...state, micActive: false, userHasFloor: false }, effects: [] }
+        return {
+          state: {
+            ...state,
+            micActive: false,
+            hasCapturedAudioInTurn: false,
+            userHasFloor: false,
+          },
+          effects: [],
+        }
+      }
+      // Guard first-time getUserMedia permission dialogs: if blur/pointercancel releases PTT
+      // before microphone capture became active, return cleanly to ready instead of freezing
+      // on "Thinking…" for 15 seconds.
+      if (!state.hasCapturedAudioInTurn) {
+        return {
+          state: {
+            ...state,
+            phase: 'ready',
+            micActive: false,
+            hasCapturedAudioInTurn: false,
+            userHasFloor: false,
+          },
+          effects: [{ type: 'STOP_MIC_CAPTURE' }],
+        }
       }
       return {
         state: {
           ...state,
           phase: 'thinking',
           micActive: false,
+          hasCapturedAudioInTurn: false,
           userHasFloor: false,
         },
         effects: [
@@ -593,7 +726,13 @@ export function reduceSessionMachine(
     case 'STOP_MIC_ONLY': {
       if (state.phase === 'capturing') {
         return {
-          state: { ...state, phase: 'ready', micActive: false, userHasFloor: false },
+          state: {
+            ...state,
+            phase: 'ready',
+            micActive: false,
+            hasCapturedAudioInTurn: false,
+            userHasFloor: false,
+          },
           effects: [{ type: 'STOP_MIC_CAPTURE' }],
         }
       }
@@ -603,6 +742,7 @@ export function reduceSessionMachine(
             ...state,
             phase: 'ready',
             micActive: false,
+            hasCapturedAudioInTurn: false,
             userHasFloor: false,
             playbackEpoch: state.playbackEpoch + 1,
             playerActive: false,
@@ -613,7 +753,7 @@ export function reduceSessionMachine(
         }
       }
       return {
-        state: { ...state, micActive: false, userHasFloor: false },
+        state: { ...state, micActive: false, hasCapturedAudioInTurn: false, userHasFloor: false },
         effects: [{ type: 'STOP_MIC_CAPTURE' }],
       }
     }
@@ -624,6 +764,7 @@ export function reduceSessionMachine(
           ...state,
           phase: 'error',
           micActive: false,
+          hasCapturedAudioInTurn: false,
           micDenied: true,
           userHasFloor: false,
           errorMessage:
@@ -677,6 +818,8 @@ export function reduceSessionMachine(
           state: {
             ...state,
             phase: 'connecting',
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
             connectionEpoch: nextEpoch,
             playbackEpoch: state.playbackEpoch + 1,
             sessionId: null,
@@ -697,6 +840,7 @@ export function reduceSessionMachine(
         return {
           state: {
             ...state,
+            currentTurnHadAudio: false,
             pendingPostConnect: { kind: 'text', text: clean },
             turns: updatedTurns,
           },
@@ -721,6 +865,8 @@ export function reduceSessionMachine(
         state: {
           ...state,
           phase: 'thinking',
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
           playbackEpoch: nextPlaybackEpoch,
           playerActive: false,
           turnCompletedWhileSpeaking: false,
@@ -750,6 +896,7 @@ export function reduceSessionMachine(
             ...state,
             phase: 'ended',
             micActive: false,
+            hasCapturedAudioInTurn: false,
             playerActive: false,
             sessionId: null,
             resumeSessionId: null,
@@ -861,28 +1008,45 @@ export function reduceSessionMachine(
       if (state.pendingGoAwaySessionId && state.playerActive) {
         return { state, effects: [{ type: 'STOP_MIC_CAPTURE' }] }
       }
-      if (state.resumeSessionId) {
-        if (state.resumeAttempts < MAX_RESUME_ATTEMPTS) {
-          const attempt = state.resumeAttempts + 1
-          const baseDelayMs = RESUME_BACKOFF_DELAYS_MS[attempt - 1] ?? 1000
-          const nextEpoch = state.connectionEpoch + 1
-          return {
-            state: {
-              ...state,
-              phase: 'connecting',
-              connectionEpoch: nextEpoch,
-              resumeAttempts: attempt,
-              pendingGoAwaySessionId: null,
+
+      const candidateResumeId =
+        state.resumeSessionId ??
+        ((state.phase === 'ready' ||
+          state.phase === 'thinking' ||
+          state.phase === 'agentSpeaking') &&
+        state.sessionId !== null
+          ? state.sessionId
+          : null)
+
+      if (candidateResumeId && state.resumeAttempts < MAX_RESUME_ATTEMPTS) {
+        const attempt = state.resumeAttempts + 1
+        const baseDelayMs = RESUME_BACKOFF_DELAYS_MS[attempt - 1] ?? 1000
+        const nextEpoch = state.connectionEpoch + 1
+        return {
+          state: {
+            ...state,
+            phase: 'connecting',
+            micActive: state.inputMode === 'continuous' ? state.micActive : false,
+            hasCapturedAudioInTurn: false,
+            connectionEpoch: nextEpoch,
+            resumeSessionId: candidateResumeId,
+            resumeAttempts: attempt,
+            playerActive: false,
+            turnCompletedWhileSpeaking: false,
+            pendingGoAwaySessionId: null,
+            userHasFloor: false,
+          },
+          effects: [
+            { type: 'CLEAR_THINKING_WATCHDOG' },
+            { type: 'STOP_TRAILING_SILENCE' },
+            { type: 'STOP_MIC_CAPTURE' },
+            {
+              type: 'SCHEDULE_RECONNECT',
+              epoch: nextEpoch,
+              attempt,
+              baseDelayMs,
             },
-            effects: [
-              {
-                type: 'SCHEDULE_RECONNECT',
-                epoch: nextEpoch,
-                attempt,
-                baseDelayMs,
-              },
-            ],
-          }
+          ],
         }
       }
       return {
@@ -890,6 +1054,7 @@ export function reduceSessionMachine(
           ...state,
           phase: 'error',
           micActive: false,
+          hasCapturedAudioInTurn: false,
           sessionId: null,
           resumeSessionId: null,
           resumeAttempts: 0,
@@ -930,6 +1095,8 @@ function reduceServerMessage(
             ...state,
             phase: 'capturing',
             micActive: true,
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
             sessionId: msg.sessionId,
             resumeSessionId: null,
             resumeAttempts: 0,
@@ -945,6 +1112,8 @@ function reduceServerMessage(
           state: {
             ...state,
             phase: 'thinking',
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
             sessionId: msg.sessionId,
             resumeSessionId: null,
             resumeAttempts: 0,
@@ -966,6 +1135,8 @@ function reduceServerMessage(
         state: {
           ...state,
           phase: 'ready',
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
           sessionId: msg.sessionId,
           resumeSessionId: null,
           resumeAttempts: 0,
@@ -991,7 +1162,13 @@ function reduceServerMessage(
       return {
         state: {
           ...state,
-          turns: appendOrUpdateAssistantText(state.turns, msg.text, msg.partial, state.persona),
+          turns: appendOrUpdateAssistantText(
+            state.turns,
+            msg.text,
+            msg.partial,
+            state.persona,
+            state.currentTurnHadAudio,
+          ),
         },
         effects: [
           { type: 'STOP_TRAILING_SILENCE' },
@@ -1010,8 +1187,10 @@ function reduceServerMessage(
         state: {
           ...state,
           phase: nextPhase,
+          currentTurnHadAudio: true,
           playerActive: true,
           turnCompletedWhileSpeaking: false,
+          turns: markLatestAssistantHadAudio(state.turns),
         },
         effects: [
           { type: 'STOP_TRAILING_SILENCE' },
@@ -1071,7 +1250,7 @@ function reduceServerMessage(
       return {
         state: {
           ...state,
-          turns: attachSearchSuggestions(state.turns, msg),
+          turns: attachSearchSuggestions(state.turns, msg, state.currentTurnHadAudio),
         },
         effects: [],
       }
@@ -1085,13 +1264,17 @@ function reduceServerMessage(
         { type: 'CLEAR_THINKING_WATCHDOG' },
       ]
       if (state.phase === 'drainingFarewell') {
-        return { state: { ...state, turns: finalizedTurns }, effects }
+        return {
+          state: { ...state, currentTurnHadAudio: false, turns: finalizedTurns },
+          effects,
+        }
       }
       if (state.playerActive) {
         return {
           state: {
             ...state,
             phase: 'agentSpeaking',
+            currentTurnHadAudio: false,
             turnCompletedWhileSpeaking: true,
             turns: finalizedTurns,
           },
@@ -1103,6 +1286,7 @@ function reduceServerMessage(
           state: {
             ...state,
             phase: 'capturing',
+            currentTurnHadAudio: false,
             turnCompletedWhileSpeaking: false,
             turns: finalizedTurns,
           },
@@ -1114,6 +1298,7 @@ function reduceServerMessage(
         state: {
           ...state,
           phase: nextPhase,
+          currentTurnHadAudio: false,
           turnCompletedWhileSpeaking: false,
           turns: finalizedTurns,
         },
@@ -1142,6 +1327,7 @@ function reduceServerMessage(
         state: {
           ...state,
           phase: 'connecting',
+          hasCapturedAudioInTurn: false,
           connectionEpoch: nextEpoch,
           resumeSessionId: msg.sessionId,
           resumeAttempts: 0,
@@ -1162,6 +1348,8 @@ function reduceServerMessage(
           ...state,
           phase: 'paused',
           micActive: false,
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
           sessionId: null,
           resumeSessionId: null,
           resumeAttempts: 0,
@@ -1192,6 +1380,7 @@ function reduceServerMessage(
           ...state,
           playbackEpoch: state.playbackEpoch + 1,
           playerActive: false,
+          currentTurnHadAudio: false,
           turnCompletedWhileSpeaking: false,
           phase: nextPhase,
           turns: markActiveAssistantInterrupted(state.turns),
@@ -1217,6 +1406,7 @@ function reduceServerMessage(
             ...state,
             phase: 'drainingFarewell',
             micActive: false,
+            hasCapturedAudioInTurn: false,
             resumeSessionId: null,
             resumeAttempts: 0,
           },
@@ -1229,6 +1419,8 @@ function reduceServerMessage(
           ...state,
           phase: 'ended',
           micActive: false,
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
           sessionId: null,
           resumeSessionId: null,
           resumeAttempts: 0,
@@ -1240,11 +1432,31 @@ function reduceServerMessage(
     }
 
     case 'error': {
+      if (state.sessionId !== null && (state.phase === 'thinking' || Boolean(msg.field))) {
+        const { nextPhase, extraEffects } = finishAgentTurnPhase(state)
+        return {
+          state: {
+            ...state,
+            phase: nextPhase,
+            hasCapturedAudioInTurn: false,
+            currentTurnHadAudio: false,
+            userHasFloor: false,
+            errorMessage: msg.message,
+          },
+          effects: [
+            { type: 'STOP_TRAILING_SILENCE' },
+            { type: 'CLEAR_THINKING_WATCHDOG' },
+            ...extraEffects,
+          ],
+        }
+      }
       return {
         state: {
           ...state,
           phase: 'error',
           micActive: false,
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
           sessionId: null,
           resumeSessionId: null,
           resumeAttempts: 0,

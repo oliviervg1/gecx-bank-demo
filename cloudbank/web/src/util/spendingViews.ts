@@ -18,6 +18,12 @@ export interface MonthBucket {
 
 const UNICODE_ALNUM_OR_SPACE_RE = /[\p{L}\p{N} ]/u
 
+export function formatCategoryLabel(category: string): string {
+  const spaced = category.replace(/_/g, ' ')
+  if (spaced.length === 0) return spaced
+  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
+}
+
 export function normalizeVendorForms(name: string): { raw: string; stem: string } {
   const lowered = name.trim().toLowerCase()
   const rawClean = Array.from(lowered)

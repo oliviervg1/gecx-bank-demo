@@ -4,7 +4,8 @@
 //
 // Every way a hold or latched toggle can end without a matching release event is
 // guarded: secondary mouse buttons ignored, pointer leaving the element, tab losing
-// focus, window being hidden, unmount mid-hold, and a 30-second safety watchdog.
+// focus, window being hidden, unmount mid-hold, a 30-second hold watchdog, and a
+// 60-second latched toggle-to-talk safety timer.
 
 import {
   useCallback,
@@ -14,8 +15,9 @@ import {
   type PointerEvent as ReactPointerEvent,
 } from 'react'
 
-// A hold or toggle longer than this is force-released so a mic never stays open indefinitely.
+// A continuous hold longer than 30s or latched toggle longer than 60s is force-released.
 export const MAX_HOLD_MS = 30_000
+export const MAX_LATCH_MS = 60_000
 export const TAP_LATCH_THRESHOLD_MS = 220
 
 const INTERACTIVE_SELECTOR =
@@ -38,6 +40,7 @@ interface Options {
   allowClickToggle?: boolean
   isCapturing?: boolean
   canClickStart?: boolean
+  enableSpacebar?: boolean
 }
 
 export interface HoldHandlers {
@@ -88,10 +91,12 @@ export function useHoldToTalk({
   allowClickToggle = false,
   isCapturing = false,
   canClickStart = true,
+  enableSpacebar = true,
 }: Options): HoldHandlers {
   const holdingRef = useRef(false)
   const watchdogRef = useRef<number | null>(null)
   const tapReleaseTimerRef = useRef<number | null>(null)
+  const suppressClickTimerRef = useRef<number | null>(null)
   const pointerDownAtRef = useRef<number | null>(null)
   const closingToggleOnPointerRef = useRef(false)
   const suppressNextClickRef = useRef(false)
@@ -100,14 +105,6 @@ export function useHoldToTalk({
   const onBeginRef = useRef(onBegin)
   const onEndRef = useRef(onEnd)
   const isCapturingRef = useRef(isCapturing)
-  useEffect(() => {
-    onBeginRef.current = onBegin
-    onEndRef.current = onEnd
-    isCapturingRef.current = isCapturing
-    if (!isCapturing && pointerDownAtRef.current === null && tapReleaseTimerRef.current === null) {
-      holdingRef.current = false
-    }
-  }, [onBegin, onEnd, isCapturing])
 
   const clearWatchdog = useCallback(() => {
     if (watchdogRef.current !== null) {
@@ -123,16 +120,48 @@ export function useHoldToTalk({
     }
   }, [])
 
-  const armWatchdog = useCallback(() => {
-    clearWatchdog()
-    watchdogRef.current = window.setTimeout(() => {
-      watchdogRef.current = null
-      if (holdingRef.current || isCapturingRef.current) {
-        holdingRef.current = false
-        onEndRef.current()
-      }
-    }, MAX_HOLD_MS)
-  }, [clearWatchdog])
+  const clearSuppressClick = useCallback(() => {
+    suppressNextClickRef.current = false
+    if (suppressClickTimerRef.current !== null) {
+      clearTimeout(suppressClickTimerRef.current)
+      suppressClickTimerRef.current = null
+    }
+  }, [])
+
+  const markSuppressNextClick = useCallback(() => {
+    clearSuppressClick()
+    suppressNextClickRef.current = true
+    suppressClickTimerRef.current = window.setTimeout(() => {
+      suppressClickTimerRef.current = null
+      suppressNextClickRef.current = false
+    }, 0)
+  }, [clearSuppressClick])
+
+  const armWatchdog = useCallback(
+    (timeoutMs: number = MAX_HOLD_MS) => {
+      clearWatchdog()
+      watchdogRef.current = window.setTimeout(() => {
+        watchdogRef.current = null
+        if (holdingRef.current || isCapturingRef.current) {
+          holdingRef.current = false
+          onEndRef.current()
+        }
+      }, timeoutMs)
+    },
+    [clearWatchdog],
+  )
+
+  useEffect(() => {
+    onBeginRef.current = onBegin
+    onEndRef.current = onEnd
+    isCapturingRef.current = isCapturing
+    if (!isCapturing && pointerDownAtRef.current === null && tapReleaseTimerRef.current === null) {
+      holdingRef.current = false
+      clearWatchdog()
+    } else if (isCapturing && enabled && watchdogRef.current === null) {
+      armWatchdog(MAX_LATCH_MS)
+    }
+  }, [onBegin, onEnd, isCapturing, enabled, clearWatchdog, armWatchdog])
 
   const release = useCallback(() => {
     clearTapReleaseTimer()
@@ -144,13 +173,16 @@ export function useHoldToTalk({
     onEndRef.current()
   }, [clearTapReleaseTimer, clearWatchdog])
 
-  const press = useCallback(() => {
-    clearTapReleaseTimer()
-    if (holdingRef.current) return
-    holdingRef.current = true
-    armWatchdog()
-    void onBeginRef.current()
-  }, [armWatchdog, clearTapReleaseTimer])
+  const press = useCallback(
+    (watchdogMs: number = MAX_HOLD_MS) => {
+      clearTapReleaseTimer()
+      if (holdingRef.current) return
+      holdingRef.current = true
+      armWatchdog(watchdogMs)
+      void onBeginRef.current()
+    },
+    [armWatchdog, clearTapReleaseTimer],
+  )
 
   useEffect(() => {
     if (!enabled) return
@@ -168,17 +200,21 @@ export function useHoldToTalk({
         pointerFocusedRef.current = null
         return
       }
+      if (!enableSpacebar) return
       if (e.code !== 'Space' && e.key !== ' ') return
-      if (e.repeat) return
+      if (e.repeat || e.isComposing || e.shiftKey || e.ctrlKey || e.altKey || e.metaKey) return
       if (shouldIgnoreSpacebarTarget(e.target, pointerFocusedRef.current)) return
       e.preventDefault()
-      press()
+      press(MAX_HOLD_MS)
     }
     const onKeyUp = (e: KeyboardEvent) => {
+      if (!enableSpacebar) return
       if (e.code !== 'Space' && e.key !== ' ') return
+      if (e.isComposing) return
       if (!holdingRef.current && shouldIgnoreSpacebarTarget(e.target, pointerFocusedRef.current)) {
         return
       }
+      if (!holdingRef.current) return
       e.preventDefault()
       release()
     }
@@ -202,14 +238,15 @@ export function useHoldToTalk({
       document.removeEventListener('visibilitychange', onVisibility)
       release()
     }
-  }, [enabled, press, release])
+  }, [enabled, enableSpacebar, press, release])
 
   useEffect(
     () => () => {
       clearTapReleaseTimer()
+      clearSuppressClick()
       clearWatchdog()
     },
-    [clearTapReleaseTimer, clearWatchdog],
+    [clearTapReleaseTimer, clearSuppressClick, clearWatchdog],
   )
 
   const handlers: HoldHandlers = {
@@ -232,7 +269,7 @@ export function useHoldToTalk({
 
       closingToggleOnPointerRef.current = false
       pointerDownAtRef.current = Date.now()
-      press()
+      press(MAX_HOLD_MS)
     },
     onPointerUp: (e) => {
       if (!enabled) return
@@ -257,14 +294,14 @@ export function useHoldToTalk({
 
       if (closingToggleOnPointerRef.current) {
         closingToggleOnPointerRef.current = false
-        suppressNextClickRef.current = true
+        markSuppressNextClick()
         release()
         return
       }
 
       const heldMs = Date.now() - downAt
       if (heldMs >= TAP_LATCH_THRESHOLD_MS) {
-        suppressNextClickRef.current = true
+        markSuppressNextClick()
         release()
         return
       }
@@ -293,15 +330,15 @@ export function useHoldToTalk({
     handlers.onClick = (e) => {
       if (!enabled) return
       if (suppressNextClickRef.current) {
-        suppressNextClickRef.current = false
+        clearSuppressClick()
         return
       }
       // If a quick pointer tap just completed on the pill, cancel the fallback release so
-      // capture stays latched open until the user clicks/presses Enter again.
+      // capture stays latched open (with 60s safety cap) until the user clicks/presses Enter again.
       if (tapReleaseTimerRef.current !== null) {
         clearTapReleaseTimer()
         holdingRef.current = true
-        armWatchdog()
+        armWatchdog(MAX_LATCH_MS)
         return
       }
       // Synthetic click from keyboard Enter, screen reader, switch control, or voice control.
@@ -314,7 +351,7 @@ export function useHoldToTalk({
       if (!canClickStart && e.detail > 0) {
         return
       }
-      press()
+      press(MAX_LATCH_MS)
     }
   }
 

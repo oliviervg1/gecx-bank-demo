@@ -1,150 +1,50 @@
 import { describe, it, expect } from 'vitest'
+import Ajv from 'ajv'
+import Ajv2020 from 'ajv/dist/2020'
+import uiViewStateSchema from '../../../shared/ui_view_state.schema.json'
 import wsProtocolSchema from '../../../shared/ws_protocol.schema.json'
 import {
+  MAX_AUDIO_B64_LEN,
+  MAX_CLIENT_TEXT_CHARS,
   parseServerMsg,
+  parseUiViewStatePayload,
   serializeClientMsg,
   type ClientMsg,
   type ServerMsg,
 } from '../agent/protocol'
 import { buildClientStart } from '../agent/sessionVariables'
 
-type JsonSchemaNode = Record<string, unknown>
+function createProtocolValidators() {
+  const schemaDialect = String((wsProtocolSchema as { $schema?: string }).$schema ?? '')
+  const ajv = schemaDialect.includes('2020-12')
+    ? new Ajv2020({ allErrors: true, strict: false })
+    : new Ajv({ allErrors: true, strict: false })
 
-function validateDraft7(
-  value: unknown,
-  node: JsonSchemaNode,
-  root: JsonSchemaNode,
-  path: string = '$',
-): string[] {
-  if (typeof node.$ref === 'string') {
-    const segs = node.$ref.replace(/^#\//, '').split('/')
-    let target: unknown = root
-    for (const s of segs) {
-      target = (target as Record<string, unknown>)?.[s]
-    }
-    if (!target || typeof target !== 'object') {
-      return [`${path}: unresolved $ref ${node.$ref}`]
-    }
-    return validateDraft7(value, target as JsonSchemaNode, root, path)
+  ajv.addSchema(uiViewStateSchema)
+  ajv.addSchema(wsProtocolSchema)
+
+  const wsId =
+    (wsProtocolSchema as { $id?: string }).$id ??
+    'https://cloudbank.example.com/schemas/ws_protocol.schema.json'
+
+  const validateRoot = ajv.getSchema(wsId)
+  const validateClient =
+    ajv.getSchema(`${wsId}#/definitions/ClientMsg`) ??
+    ajv.getSchema(`${wsId}#/$defs/ClientMsg`)
+  const validateServer =
+    ajv.getSchema(`${wsId}#/definitions/ServerMsg`) ??
+    ajv.getSchema(`${wsId}#/$defs/ServerMsg`)
+
+  if (!validateRoot || !validateClient || !validateServer) {
+    throw new Error('Failed to compile ws_protocol.schema.json validators with Ajv')
   }
 
-  if (Array.isArray(node.oneOf)) {
-    const matches = (node.oneOf as JsonSchemaNode[]).filter(
-      (sub) => validateDraft7(value, sub, root, path).length === 0,
-    )
-    return matches.length === 1
-      ? []
-      : [`${path}: expected exactly 1 oneOf match, got ${matches.length}`]
-  }
-
-  if (Array.isArray(node.anyOf)) {
-    const ok = (node.anyOf as JsonSchemaNode[]).some(
-      (sub) => validateDraft7(value, sub, root, path).length === 0,
-    )
-    return ok ? [] : [`${path}: matched zero anyOf branches`]
-  }
-
-  if ('const' in node && value !== node.const) {
-    return [`${path}: expected const ${String(node.const)}, got ${String(value)}`]
-  }
-
-  const rawType = node.type
-  if (Array.isArray(rawType)) {
-    if (value === null && rawType.includes('null')) {
-      return []
-    }
-    const nonNullTypes = rawType.filter((t): t is string => t !== 'null')
-    if (nonNullTypes.length === 1) {
-      return validateDraft7(value, { ...node, type: nonNullTypes[0] }, root, path)
-    }
-  }
-
-  const errors: string[] = []
-  if (rawType === 'object') {
-    if (typeof value !== 'object' || value === null || Array.isArray(value)) {
-      return [`${path}: expected object`]
-    }
-    const obj = value as Record<string, unknown>
-    const required = (node.required as string[] | undefined) ?? []
-    for (const req of required) {
-      if (!(req in obj) || obj[req] === undefined) {
-        errors.push(`${path}: missing required '${req}'`)
-      }
-    }
-    const props = (node.properties as Record<string, JsonSchemaNode> | undefined) ?? {}
-    if (node.additionalProperties === false) {
-      for (const k of Object.keys(obj)) {
-        if (!(k in props)) {
-          errors.push(`${path}: unexpected property '${k}'`)
-        }
-      }
-    }
-    for (const [k, sub] of Object.entries(props)) {
-      if (k in obj && obj[k] !== undefined) {
-        errors.push(...validateDraft7(obj[k], sub, root, `${path}.${k}`))
-      }
-    }
-    return errors
-  }
-
-  if (rawType === 'array') {
-    if (!Array.isArray(value)) return [`${path}: expected array`]
-    const itemNode = node.items as JsonSchemaNode | undefined
-    if (itemNode) {
-      value.forEach((item, idx) => {
-        errors.push(...validateDraft7(item, itemNode, root, `${path}[${idx}]`))
-      })
-    }
-    return errors
-  }
-
-  if (rawType === 'integer') {
-    if (typeof value !== 'number' || !Number.isInteger(value)) {
-      return [`${path}: expected integer`]
-    }
-    if (typeof node.minimum === 'number' && value < node.minimum) {
-      errors.push(`${path}: ${value} < ${node.minimum}`)
-    }
-    if (typeof node.maximum === 'number' && value > node.maximum) {
-      errors.push(`${path}: ${value} > ${node.maximum}`)
-    }
-    return errors
-  }
-
-  if (rawType === 'boolean') {
-    return typeof value === 'boolean' ? [] : [`${path}: expected boolean`]
-  }
-
-  if (rawType === 'string') {
-    if (typeof value !== 'string') return [`${path}: expected string`]
-    if (typeof node.minLength === 'number' && value.length < node.minLength) {
-      errors.push(`${path}: shorter than ${node.minLength}`)
-    }
-    if (typeof node.maxLength === 'number' && value.length > node.maxLength) {
-      errors.push(`${path}: longer than ${node.maxLength}`)
-    }
-    if (Array.isArray(node.enum) && !node.enum.includes(value)) {
-      errors.push(`${path}: '${value}' not in enum`)
-    }
-    if (typeof node.pattern === 'string' && !new RegExp(node.pattern, 'u').test(value)) {
-      errors.push(`${path}: fails pattern ${node.pattern}`)
-    }
-    const notNode = node.not as JsonSchemaNode | undefined
-    if (notNode && typeof notNode.pattern === 'string') {
-      if (new RegExp(notNode.pattern, 'u').test(value)) {
-        errors.push(`${path}: matched forbidden pattern`)
-      }
-    }
-  }
-
-  return errors
+  return { ajv, validateRoot, validateClient, validateServer }
 }
 
-const rootSchema = wsProtocolSchema as unknown as JsonSchemaNode
-const clientMsgDef = (wsProtocolSchema.definitions as Record<string, JsonSchemaNode>).ClientMsg!
-const serverMsgDef = (wsProtocolSchema.definitions as Record<string, JsonSchemaNode>).ServerMsg!
+const { ajv, validateRoot, validateClient, validateServer } = createProtocolValidators()
 
-describe('protocol.ts: validated against shared/ws_protocol.schema.json', () => {
+describe('protocol.ts: validated with Ajv against shared/ws_protocol.schema.json', () => {
   it('serializes all ClientMsg variants in strict conformance with ws_protocol.schema.json', () => {
     const clientSamples: ClientMsg[] = [
       buildClientStart('chloe', { demoDate: '2026-11-24', timeOfDay: 'morning' }),
@@ -161,8 +61,8 @@ describe('protocol.ts: validated against shared/ws_protocol.schema.json', () => 
 
     for (const sample of clientSamples) {
       const wireObj: unknown = JSON.parse(serializeClientMsg(sample))
-      expect(validateDraft7(wireObj, clientMsgDef, rootSchema)).toEqual([])
-      expect(validateDraft7(wireObj, rootSchema, rootSchema)).toEqual([])
+      expect(validateClient(wireObj), ajv.errorsText(validateClient.errors)).toBe(true)
+      expect(validateRoot(wireObj), ajv.errorsText(validateRoot.errors)).toBe(true)
     }
   })
 
@@ -204,10 +104,63 @@ describe('protocol.ts: validated against shared/ws_protocol.schema.json', () => 
     ]
 
     for (const rawObj of serverPayloads) {
-      expect(validateDraft7(rawObj, serverMsgDef, rootSchema)).toEqual([])
+      expect(validateServer(rawObj), ajv.errorsText(validateServer.errors)).toBe(true)
       const parsed: ServerMsg = parseServerMsg(JSON.stringify(rawObj))
-      expect(validateDraft7(parsed, serverMsgDef, rootSchema)).toEqual([])
+      expect(validateServer(parsed), ajv.errorsText(validateServer.errors)).toBe(true)
     }
+  })
+
+  it('parses per-vendor anomaly_by_vendor maps and enforces MAX_AUDIO_B64_LEN = 87,384 & MAX_CLIENT_TEXT_CHARS = 8,192', () => {
+    expect(MAX_AUDIO_B64_LEN).toBe(87_384)
+    expect(MAX_CLIENT_TEXT_CHARS).toBe(8_192)
+
+    const parsed = parseUiViewStatePayload({
+      seq: 3,
+      page: 'spending',
+      view: 'overview',
+      highlight_vendor: 'Netflix',
+      anomaly_by_vendor: {
+        Netflix: 'unrecognised',
+        PureGym: 'confirmed',
+      },
+    })
+    expect(parsed.anomaly_by_vendor).toEqual({
+      Netflix: 'unrecognised',
+      PureGym: 'confirmed',
+    })
+
+    if ('anomaly_by_vendor' in (uiViewStateSchema as { properties?: Record<string, unknown> }).properties!) {
+      const uiFrame = { type: 'ui_state', tier: 1, state: parsed }
+      expect(validateServer(uiFrame), ajv.errorsText(validateServer.errors)).toBe(true)
+    }
+
+    expect(() =>
+      parseUiViewStatePayload({
+        seq: 4,
+        page: 'spending',
+        anomaly_by_vendor: { '<script>': 'confirmed' },
+      }),
+    ).toThrow(/anomaly_by_vendor/)
+
+    expect(() =>
+      parseUiViewStatePayload({
+        seq: 4,
+        page: 'spending',
+        anomaly_by_vendor: { Netflix: 'bogus' },
+      }),
+    ).toThrow(/anomaly_by_vendor/)
+
+    expect(() => serializeClientMsg({ type: 'audio', data: '' })).toThrow(/audio frame/)
+    expect(() =>
+      serializeClientMsg({ type: 'audio', data: 'A'.repeat(MAX_AUDIO_B64_LEN + 1) }),
+    ).toThrow(/87384/)
+    expect(
+      JSON.parse(serializeClientMsg({ type: 'audio', data: 'A'.repeat(MAX_AUDIO_B64_LEN) })).type,
+    ).toBe('audio')
+
+    expect(() =>
+      serializeClientMsg({ type: 'text', text: 'x'.repeat(MAX_CLIENT_TEXT_CHARS + 1) }),
+    ).toThrow(/8192/)
   })
 
   it('rejects removed client_function, malformed frames, and hostile ui_state properties', () => {
@@ -217,7 +170,9 @@ describe('protocol.ts: validated against shared/ws_protocol.schema.json', () => 
     expect(() => parseServerMsg(JSON.stringify({ type: 'ready' }))).toThrow(/ready frame/)
     expect(() => parseServerMsg(JSON.stringify({ type: 'audio' }))).toThrow(/audio frame/)
     expect(() =>
-      parseServerMsg(JSON.stringify({ type: 'ui_state', tier: 1, state: { seq: 1, page: 'bogus' } })),
+      parseServerMsg(
+        JSON.stringify({ type: 'ui_state', tier: 1, state: { seq: 1, page: 'bogus' } }),
+      ),
     ).toThrow(/ui_state frame/)
     expect(() =>
       parseServerMsg(

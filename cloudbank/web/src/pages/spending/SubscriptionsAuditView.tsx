@@ -73,7 +73,7 @@ function SubscriptionRow({
 export function SubscriptionsAuditView() {
   const fixture = useFixture()
   const { demoDate } = usePersona()
-  const { period, highlightVendor, anomalyStatus } = useBankingViewState()
+  const { period, highlightVendor, getVendorAnomalyStatus } = useBankingViewState()
   const transactions = fixture?.transactions ?? EMPTY
 
   const { items: subs, total_pence, monthName } = useMemo(
@@ -86,9 +86,9 @@ export function SubscriptionsAuditView() {
       <SpendingHeader breadcrumb="Subscriptions" />
 
       <div className="py-4 border-b border-brand-divider">
-        <div className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium">
+        <h2 className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium">
           {monthName} Recurring Subscriptions & Bills
-        </div>
+        </h2>
         <div className="text-[1.75rem] font-bold text-brand-text mt-1 leading-none tabular-nums">
           {formatGBPFromPence(total_pence)}
         </div>
@@ -97,28 +97,30 @@ export function SubscriptionsAuditView() {
         </div>
       </div>
 
-      <div className="mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider">
+      <ul className="list-none m-0 p-0 mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider">
         {subs.map((t) => {
           const isHighlighted = highlightVendor
             ? vendorsEqual(t.vendor, highlightVendor)
             : Boolean(t.is_anomaly)
+          const rowAnomalyStatus = t.is_anomaly ? getVendorAnomalyStatus(t.vendor) : ''
           const statusLabel =
-            t.is_anomaly && anomalyStatus === 'confirmed'
+            rowAnomalyStatus === 'confirmed'
               ? 'Confirmed'
-              : t.is_anomaly && anomalyStatus === 'unrecognised'
+              : rowAnomalyStatus === 'unrecognised'
                 ? 'Marked as not recognised'
                 : undefined
           return (
-            <SubscriptionRow
-              key={t.id}
-              transaction={t}
-              highlighted={isHighlighted}
-              demoDate={demoDate}
-              statusLabel={statusLabel}
-            />
+            <li key={t.id}>
+              <SubscriptionRow
+                transaction={t}
+                highlighted={isHighlighted}
+                demoDate={demoDate}
+                statusLabel={statusLabel}
+              />
+            </li>
           )
         })}
-      </div>
+      </ul>
     </div>
   )
 }
