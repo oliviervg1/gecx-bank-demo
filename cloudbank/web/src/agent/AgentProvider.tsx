@@ -22,6 +22,8 @@ import {
   type AudioPlayer,
 } from './audio'
 import {
+  WS_CONNECT_TIMEOUT_MS,
+  computeReconnectDelayMs,
   createInitialSessionState,
   reduceSessionMachine,
   type ConversationTurn,
@@ -31,10 +33,9 @@ import {
   type SessionPhase,
 } from './sessionMachine'
 import { usePersona } from '../personas/PersonaProvider'
-import { getFixture } from '../data/fixture'
-import { buildSessionVariables } from './sessionVariables'
+import { buildClientStart } from './sessionVariables'
 import { readPushToTalkFromLocation } from './pushToTalk'
-import { useSpendingView } from './SpendingViewProvider'
+import { useBankingViewState } from './BankingViewStateProvider'
 
 export type ConnState = 'idle' | 'connecting' | 'ready' | 'error'
 export type MicState = 'idle' | 'listening' | 'held' | 'speaking' | 'muted'
@@ -59,7 +60,7 @@ export interface AgentContextValue {
   stopMic: () => void
   submitText: (text: string) => void
   reconnect: () => void
-  disconnect: () => void
+  disconnect: (opts?: { clearTurns?: boolean }) => void
 }
 
 export const AgentContext = createContext<AgentContextValue | null>(null)
@@ -68,7 +69,7 @@ const PROXY_URL =
   (import.meta as ImportMeta & { env: Record<string, string> }).env.VITE_PROXY_URL ||
   (typeof window !== 'undefined'
     ? `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/ws/agent`
-    : 'ws://localhost:8080/ws/agent')
+    : 'ws://127.0.0.1:8765/ws/agent')
 
 interface RuntimeCallbacks {
   applyServerUiState: (payload: UiViewStatePayload) => void
@@ -94,20 +95,32 @@ function createSessionRuntime(
   initialDemoDate: string,
   initialCallbacks: RuntimeCallbacks,
 ): SessionRuntime {
-  let state: SessionMachineState = createInitialSessionState(initialPersona)
+  const pushToTalk = readPushToTalkFromLocation()
+  let state: SessionMachineState = createInitialSessionState(
+    initialPersona,
+    pushToTalk ? 'ptt' : 'continuous',
+  )
   let demoDate = initialDemoDate
   let callbacks = initialCallbacks
-  const pushToTalk = readPushToTalkFromLocation()
   const listeners = new Set<() => void>()
 
   let ws: WebSocket | null = null
+  let connectTimeoutTimer: number | null = null
+  let reconnectTimer: number | null = null
   let capture: AudioCapture | null = null
   let captureInitPromise: Promise<AudioCapture | null> | null = null
+  let captureAbortController: AbortController | null = null
+  let captureEpoch = 0
   let pendingCaptureStart: Promise<void> = Promise.resolve()
   let player: AudioPlayer | null = null
   let watchdogTimer: number | null = null
   let unmountTimer: number | null = null
   let isMounted = false
+
+  // FIFO event queue eliminates re-entrant dispatch interleaving when synchronous
+  // socket/audio effects emit follow-up events inside runEffect.
+  const eventQueue: SessionEvent[] = []
+  let isDispatching = false
 
   function notify() {
     for (const listener of listeners) {
@@ -122,6 +135,31 @@ function createSessionRuntime(
     }
   }
 
+  function clearConnectTimeout() {
+    if (connectTimeoutTimer !== null) {
+      clearTimeout(connectTimeoutTimer)
+      connectTimeoutTimer = null
+    }
+  }
+
+  function clearReconnectTimer() {
+    if (reconnectTimer !== null) {
+      clearTimeout(reconnectTimer)
+      reconnectTimer = null
+    }
+  }
+
+  function abortAndStopCapture() {
+    captureEpoch += 1
+    if (captureAbortController) {
+      captureAbortController.abort()
+      captureAbortController = null
+    }
+    capture?.stop()
+    capture = null
+    captureInitPromise = null
+  }
+
   function ensurePlayer(): AudioPlayer | null {
     if (player) return player
     if (typeof AudioContext === 'undefined') return null
@@ -130,31 +168,47 @@ function createSessionRuntime(
         onIdle: () => {
           dispatch({ type: 'PLAYER_DRAINED', playbackEpoch: state.playbackEpoch })
         },
+        onError: (err) => {
+          console.warn('[Cloudbank Concierge] Audio playback error:', err.message)
+        },
       })
-    } catch {
+    } catch (err) {
+      const detail = err instanceof Error ? err.message : String(err)
+      console.warn('[Cloudbank Concierge] Unable to initialize Web Audio playback:', detail)
       player = null
     }
     return player
   }
 
   async function ensureCaptureAndStart(): Promise<void> {
+    const requestedEpoch = captureEpoch
     try {
       if (!capture) {
         if (!captureInitPromise) {
+          const abortCtrl = new AbortController()
+          captureAbortController = abortCtrl
           captureInitPromise = createAudioCapture(
             (b64) => {
               if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(serializeClientMsg({ type: 'audio', data: b64 }))
               }
             },
-            { startMuted: pushToTalk },
+            { startMuted: pushToTalk, signal: abortCtrl.signal },
           )
             .then((created) => {
+              if (requestedEpoch !== captureEpoch || abortCtrl.signal.aborted) {
+                created.stop()
+                return null
+              }
               capture = created
               captureInitPromise = null
+              captureAbortController = null
               return created
             })
             .catch((err) => {
+              if (captureAbortController === abortCtrl) {
+                captureAbortController = null
+              }
               captureInitPromise = null
               throw err
             })
@@ -163,17 +217,25 @@ function createSessionRuntime(
         if (!created) return
       }
       const activeCapture = capture
-      if (!activeCapture) return
-      // Guard against stop having fired while awaiting getUserMedia.
+      if (!activeCapture || requestedEpoch !== captureEpoch) {
+        activeCapture?.stop()
+        return
+      }
       if (state.phase !== 'capturing') {
         activeCapture.setMuted(true)
         return
       }
       await activeCapture.start()
+      if (requestedEpoch !== captureEpoch) {
+        activeCapture.stop()
+        return
+      }
       if (state.phase === 'capturing') {
         activeCapture.setMuted(false)
       }
     } catch (err) {
+      if (requestedEpoch !== captureEpoch) return
+      if (err instanceof Error && err.name === 'AbortError') return
       const detail = err instanceof Error ? `${err.name} ${err.message}` : ''
       const isNonPermissionError =
         Boolean(detail) && !/denied|permission|notallowed|security/i.test(detail)
@@ -187,6 +249,7 @@ function createSessionRuntime(
   }
 
   function closeActiveSocket() {
+    clearConnectTimeout()
     if (!ws) return
     const active = ws
     ws = null
@@ -212,6 +275,7 @@ function createSessionRuntime(
         const epoch = effect.epoch
         const targetPersona = effect.persona
         const resumeId = effect.sessionId
+        const lastUiSeq = effect.lastUiSeq
         let lastErrorReason: string | undefined
 
         let socket: WebSocket
@@ -227,18 +291,35 @@ function createSessionRuntime(
         }
         ws = socket
 
+        connectTimeoutTimer = window.setTimeout(() => {
+          connectTimeoutTimer = null
+          if (ws === socket && epoch === state.connectionEpoch && state.phase === 'connecting') {
+            ws = null
+            socket.onopen = null
+            socket.onmessage = null
+            socket.onerror = null
+            socket.onclose = null
+            try {
+              socket.close()
+            } catch {
+              // Ignore close errors on stalled socket.
+            }
+            dispatch({
+              type: 'WS_CLOSED',
+              epoch,
+              reason: 'Connection timed out while connecting to the localhost proxy.',
+            })
+          }
+        }, WS_CONNECT_TIMEOUT_MS)
+
         socket.onopen = () => {
           if (epoch !== state.connectionEpoch) return
-          const fixture = getFixture(targetPersona)
-          const variables = buildSessionVariables(targetPersona, fixture, { demoDate })
-          socket.send(
-            serializeClientMsg({
-              type: 'start',
-              persona: targetPersona,
-              variables,
-              sessionId: resumeId,
-            }),
-          )
+          const startMsg = buildClientStart(targetPersona, {
+            demoDate,
+            sessionId: resumeId,
+            lastUiSeq,
+          })
+          socket.send(serializeClientMsg(startMsg))
         }
 
         socket.onmessage = (ev: MessageEvent) => {
@@ -249,14 +330,18 @@ function createSessionRuntime(
           } catch {
             return
           }
+          if (msg.type === 'ready') {
+            clearConnectTimeout()
+          }
           dispatch({ type: 'SERVER_MESSAGE', epoch, msg })
         }
 
         socket.onerror = () => {
-          lastErrorReason = 'Connection error. Check that the localhost proxy is running on port 8080.'
+          lastErrorReason = 'Connection error. Check that the localhost proxy is running.'
         }
 
         socket.onclose = () => {
+          clearConnectTimeout()
           if (ws === socket) {
             ws = null
           }
@@ -270,8 +355,31 @@ function createSessionRuntime(
         break
       }
 
+      case 'SCHEDULE_RECONNECT': {
+        clearReconnectTimer()
+        const ep = effect.epoch
+        const delayMs = computeReconnectDelayMs(effect.attempt)
+        reconnectTimer = window.setTimeout(() => {
+          reconnectTimer = null
+          dispatch({ type: 'RECONNECT_TIMER_FIRED', epoch: ep })
+        }, delayMs)
+        break
+      }
+
+      case 'CLEAR_RECONNECT_TIMER': {
+        clearReconnectTimer()
+        break
+      }
+
       case 'START_MIC_CAPTURE': {
         pendingCaptureStart = ensureCaptureAndStart()
+        break
+      }
+
+      case 'UNMUTE_MIC': {
+        if (state.phase === 'capturing') {
+          capture?.setMuted(false)
+        }
         break
       }
 
@@ -288,9 +396,7 @@ function createSessionRuntime(
       }
 
       case 'STOP_MIC_CAPTURE': {
-        capture?.stop()
-        capture = null
-        captureInitPromise = null
+        abortAndStopCapture()
         break
       }
 
@@ -302,7 +408,6 @@ function createSessionRuntime(
         if (p) {
           p.enqueue(effect.data)
         } else {
-          // Headless/test environment without Web Audio API: drain on next microtask.
           const ep = effect.playbackEpoch
           queueMicrotask(() => {
             dispatch({ type: 'PLAYER_DRAINED', playbackEpoch: ep })
@@ -354,35 +459,36 @@ function createSessionRuntime(
   }
 
   function dispatch(event: SessionEvent) {
-    const prev = state
-    const result = reduceSessionMachine(prev, event)
-    state = result.state
-    // Lift forced playback mute once agent finishes speaking in always-on (?ptt=0) mode.
-    if (
-      !pushToTalk &&
-      prev.phase === 'agentSpeaking' &&
-      state.phase === 'ready' &&
-      capture !== null
-    ) {
-      capture.setMuted(false)
-    }
-    if (state.errorMessage && state.errorMessage !== prev.errorMessage) {
-      console.warn('[Cloudbank Concierge]', state.errorMessage)
-    }
-    if (state !== prev) {
-      notify()
-    }
-    for (const eff of result.effects) {
-      runEffect(eff)
+    eventQueue.push(event)
+    if (isDispatching) return
+    isDispatching = true
+    try {
+      while (eventQueue.length > 0) {
+        const nextEvent = eventQueue.shift()
+        if (!nextEvent) continue
+        const prev = state
+        const result = reduceSessionMachine(prev, nextEvent)
+        state = result.state
+        if (state.errorMessage && state.errorMessage !== prev.errorMessage) {
+          console.warn('[Cloudbank Concierge]', state.errorMessage)
+        }
+        if (state !== prev) {
+          notify()
+        }
+        for (const eff of result.effects) {
+          runEffect(eff)
+        }
+      }
+    } finally {
+      isDispatching = false
     }
   }
 
   function destroy() {
+    clearReconnectTimer()
     clearWatchdog()
     closeActiveSocket()
-    capture?.stop()
-    capture = null
-    captureInitPromise = null
+    abortAndStopCapture()
     player?.close()
     player = null
   }
@@ -408,7 +514,7 @@ function createSessionRuntime(
       return () => {
         isMounted = false
         // Defer full teardown by one macrotask so React StrictMode's immediate
-        // remount reuses the single in-flight WebSocket (Row 8).
+        // remount reuses the single in-flight WebSocket.
         unmountTimer = window.setTimeout(() => {
           unmountTimer = null
           if (!isMounted) {
@@ -464,8 +570,9 @@ function deriveMicState(state: SessionMachineState, pushToTalk: boolean): MicSta
 
 function latestTurnText(turns: ConversationTurn[], role: 'user' | 'assistant'): string | null {
   for (let i = turns.length - 1; i >= 0; i--) {
-    if (turns[i].role === role && turns[i].text) {
-      return turns[i].text
+    const turn = turns[i]
+    if (turn && turn.role === role && turn.text) {
+      return turn.text
     }
   }
   return null
@@ -473,7 +580,7 @@ function latestTurnText(turns: ConversationTurn[], role: 'user' | 'assistant'): 
 
 export function AgentProvider({ children }: { children: ReactNode }) {
   const { persona, demoDate } = usePersona()
-  const { applyServerUiState, resetUiState } = useSpendingView()
+  const { applyServerUiState, resetUiState } = useBankingViewState()
 
   const [runtime] = useState<SessionRuntime>(() =>
     createSessionRuntime(persona, demoDate, { applyServerUiState, resetUiState }),
@@ -522,9 +629,12 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     runtime.dispatch({ type: 'CONNECT_REQUESTED' })
   }, [runtime])
 
-  const disconnect = useCallback(() => {
-    runtime.dispatch({ type: 'DISCONNECT_REQUESTED' })
-  }, [runtime])
+  const disconnect = useCallback(
+    (opts?: { clearTurns?: boolean }) => {
+      runtime.dispatch({ type: 'DISCONNECT_REQUESTED', clearTurns: opts?.clearTurns })
+    },
+    [runtime],
+  )
 
   const value = useMemo<AgentContextValue>(() => {
     const connState = deriveConnState(machineState)

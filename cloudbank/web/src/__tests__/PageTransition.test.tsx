@@ -1,9 +1,10 @@
+import type { ReactNode } from 'react'
 import { describe, it, expect } from 'vitest'
 import { render, screen } from '@testing-library/react'
 import { MotionConfig } from 'framer-motion'
 import { PageTransition } from '../components/PageTransition'
 
-function withReducedMotion(ui: React.ReactNode) {
+function withReducedMotion(ui: ReactNode) {
   return <MotionConfig reducedMotion="always">{ui}</MotionConfig>
 }
 

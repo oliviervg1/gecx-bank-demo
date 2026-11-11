@@ -1,8 +1,12 @@
 import logging
-from typing import Literal
+from datetime import date
+from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
+_PLATFORM_CURRENT_DATE_KEY = "current_date"
+_DEFAULT_DEMO_DATE = "2026-11-24"
+_DEFAULT_DEMO_YMD = (2026, 11, 24)
 _DOMAIN_TARGETS = {
     "EVERYDAY_BANKING": ("everyday_banking_agent", "everyday banking and spending"),
     "SAVINGS": ("savings_agent", "savings pots and goal projections"),
@@ -43,7 +47,10 @@ def route_banking_intent(
         routing context.
     """
     try:
-        return _dispatch_route(intent.strip(), topic_hint.strip())
+        # Delegate normalised slot values to the top-level routing dispatcher.
+        clean_intent = (intent or "").strip()
+        clean_hint = (topic_hint or "").strip()[:160]
+        return _dispatch_route(clean_intent, clean_hint)
     except Exception:
         logger.exception("route_banking_intent failed")
         return {
@@ -69,19 +76,48 @@ def _handle_local_intent(intent: str) -> dict:
         _emit_ui_view({"page": "home"})
         return {"agent_action": _build_greeting()}
     if intent == "NAVIGATE_HOME":
+        context.state["router_state"] = {}
         _emit_ui_view({"page": "home"})
         return {
-            "agent_action": "I have opened your Home summary. Would you like to look into your spending, your savings pot, or your mortgage?"
+            "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
         }
     if intent == "NAVIGATE_PROFILE":
+        context.state["router_state"] = {}
         _emit_ui_view({"page": "profile"})
         return {
-            "agent_action": "I have opened your Profile page, where you can review your personal details and card controls. What else can I help you with?"
+            "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
         }
     return {"agent_action": _capabilities_message()}
 
 
-def _emit_ui_view(payload: dict) -> None:
+def _parse_demo_date() -> tuple[int, int, int]:
+    """Parse and validate YYYY-MM-DD as a real calendar date in 2000..2100."""
+    raw = (
+        str(context.state.get("demo_date") or "").strip()
+        or str(context.state.get(_PLATFORM_CURRENT_DATE_KEY) or "").strip()
+        or _DEFAULT_DEMO_DATE
+    )
+    parts = raw.split("-")
+    if (
+        len(parts) == 3
+        and len(parts[0]) == 4
+        and len(parts[1]) == 2
+        and len(parts[2]) == 2
+        and all(p.isdigit() for p in parts)
+    ):
+        year = int(parts[0])
+        month = int(parts[1])
+        day = int(parts[2])
+        if 2000 <= year <= 2100:
+            try:
+                date(year, month, day)
+                return year, month, day
+            except ValueError:
+                pass
+    return _DEFAULT_DEMO_YMD
+
+
+def _emit_ui_view(payload: dict[str, Any]) -> None:
     """Increment ui_view_state.seq monotonically and store payload."""
     current = dict(context.state.get("ui_view_state") or {})
     next_seq = int(current.get("seq") or 0) + 1
@@ -102,8 +138,8 @@ def _stage_domain_route(intent: str, hint: str) -> dict:
 
 def _build_greeting() -> str:
     """Compose a time-aware British English greeting."""
-    first_name = (context.state.get("first_name") or "").strip()
-    tod = (context.state.get("time_of_day") or "").strip().lower()
+    first_name = str(context.state.get("first_name") or "").strip()
+    tod = str(context.state.get("time_of_day") or "").strip().lower()
     salutation_map = {
         "morning": "Good morning",
         "afternoon": "Good afternoon",
@@ -120,11 +156,9 @@ def _build_greeting() -> str:
 def _capabilities_message() -> str:
     """Return the shared three-product capabilities summary."""
     return (
-        "I can help across three areas: everyday banking for your current account balance, "
-        "monthly spending breakdowns, merchant history, and recurring subscriptions; "
-        "savings for your pot balance, AER interest rate, and goal projections; "
-        "and mortgages for your next payment, fee-free overpayment allowance, overpayment "
-        "savings, and fixed-rate renewal options. Which of those would you like to explore?"
+        "I can help with everyday banking and spending, your savings pot and goal "
+        "projections, or your mortgage payments, overpayments, and fixed-rate renewal "
+        "options. Which area would you like to explore?"
     )
 
 
@@ -137,24 +171,24 @@ def _handle_unclear() -> dict:
             "agent_action": "Sorry, I did not quite catch that. Would you like help with everyday banking, savings, or mortgages?"
         }
     context.state["unclear_count"] = "0"
+    context.state["router_state"] = {}
     _emit_ui_view({"page": "home"})
     return {
-        "agent_action": "I have brought up your Home overview on screen. "
-        + _capabilities_message()
+        "agent_action": (
+            "I have opened your Home summary on screen. " + _capabilities_message()
+        )
     }
 
 
 def _handle_farewell() -> dict:
     """Latch session completion and return a warm closing line."""
-    first_name = (context.state.get("first_name") or "").strip()
+    first_name = str(context.state.get("first_name") or "").strip()
     context.state["unclear_count"] = "0"
     context.state["router_state"] = {}
+    context.state["handoff_context"] = {}
     context.state["escalation_reason"] = "CALL_COMPLETED"
     context.state["call_complete"] = "true"
-    if first_name:
-        return {
-            "agent_action": f"You are very welcome, {first_name}. Have a lovely rest of your day, and goodbye."
-        }
+    suffix = f", {first_name}" if first_name else ""
     return {
-        "agent_action": "You are very welcome. Have a lovely rest of your day, and goodbye."
+        "agent_action": f"You are very welcome{suffix}. Have a great rest of your day, and goodbye."
     }

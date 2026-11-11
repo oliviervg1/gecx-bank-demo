@@ -1,9 +1,18 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
-import { AlertCircle, ExternalLink, MicOff, PauseCircle, RefreshCw, Send, Sparkles } from 'lucide-react'
+import {
+  AlertCircle,
+  ExternalLink,
+  MicOff,
+  PauseCircle,
+  RefreshCw,
+  Send,
+  Sparkles,
+} from 'lucide-react'
 import { useAgent } from '../agent/AgentProvider'
 import type { CustomerSnapshot } from '../data/fixture'
 import { useFixture } from '../data/useFixture'
 import type { ServerSearchSuggestionsMsg } from '../agent/protocol'
+import { prefersReducedMotion } from '../util/motion'
 
 export function buildStarterPrompts(fixture: CustomerSnapshot): string[] {
   const { mortgage, savings } = fixture.accounts
@@ -65,7 +74,7 @@ function isSafeHttpUrl(raw: unknown): raw is string {
 function buildSandboxedSuggestionDoc(htmlSnippet: string): string {
   return [
     '<!doctype html>',
-    '<html lang="en"><head><meta charset="utf-8">',
+    '<html lang="en-GB"><head><meta charset="utf-8">',
     '<base target="_blank">',
     '<style>html,body{margin:0;padding:4px 6px;font-family:system-ui,-apple-system,sans-serif;font-size:12px;background:#ffffff;color:#141413;overflow:hidden;}</style>',
     '</head><body>',
@@ -94,7 +103,13 @@ export function selectTopCitations(
   turnText: string,
 ): Array<{ href: string; label: string }> {
   const turnWords = new Set(turnText.toLowerCase().match(/[a-z0-9]{3,}/g) ?? [])
-  const candidates: Array<{ href: string; label: string; domain: string; rank: number; idx: number }> = []
+  const candidates: Array<{
+    href: string
+    label: string
+    domain: string
+    rank: number
+    idx: number
+  }> = []
 
   citations.forEach((cit, idx) => {
     const rawHref = cit.uri ?? cit.url
@@ -164,10 +179,10 @@ function SearchSuggestionsBlock({
               href={`https://www.google.com/search?q=${encodeURIComponent(query)}`}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-divider bg-[#faf9f6] text-[12px] font-medium text-brand-text hover:border-brand-green transition-colors"
+              className="min-h-8 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-border-strong bg-[#faf9f6] text-[0.75rem] font-medium text-brand-text hover:border-brand-green transition-colors"
             >
               <span>{query}</span>
-              <ExternalLink size={11} className="text-brand-muted" />
+              <ExternalLink size={11} aria-hidden="true" className="text-brand-muted" />
             </a>
           ))}
 
@@ -177,10 +192,10 @@ function SearchSuggestionsBlock({
               href={cit.href}
               target="_blank"
               rel="noopener noreferrer"
-              className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-divider bg-white text-[12px] font-medium text-brand-green hover:underline"
+              className="min-h-8 inline-flex items-center gap-1 px-2.5 py-1 rounded-full border border-brand-border-strong bg-white text-[0.75rem] font-medium text-brand-green hover:underline"
             >
-              <span className="truncate max-w-[220px]">{cit.label}</span>
-              <ExternalLink size={11} />
+              <span className="truncate max-w-[13.75rem]">{cit.label}</span>
+              <ExternalLink size={11} aria-hidden="true" />
             </a>
           ))}
         </div>
@@ -189,7 +204,11 @@ function SearchSuggestionsBlock({
   )
 }
 
-export function ConciergePanel() {
+interface ConciergePanelProps {
+  headingLevel?: 'h1' | 'h2'
+}
+
+export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}) {
   const agent = useAgent()
   const fixture = useFixture()
   const [draftText, setDraftText] = useState('')
@@ -205,6 +224,20 @@ export function ConciergePanel() {
     agent.latestUiState?.page,
   )
   const isMicBlockedOnly = agent.micDenied && agent.connState !== 'error'
+  const isStreaming =
+    agent.phase === 'thinking' || agent.turns.some((turn) => turn.partial)
+
+  // Announce strictly finalized assistant turns once so partial streaming tokens
+  // never spam assistive technology users.
+  const finalizedAssistantAnnouncement = useMemo(() => {
+    for (let i = agent.turns.length - 1; i >= 0; i--) {
+      const turn = agent.turns[i]
+      if (turn && turn.role === 'assistant' && !turn.partial && !turn.interrupted && turn.text) {
+        return `Cloudbank Concierge: ${turn.text}`
+      }
+    }
+    return ''
+  }, [agent.turns])
 
   useEffect(() => {
     const el = streamRef.current
@@ -221,7 +254,11 @@ export function ConciergePanel() {
         endSentinelRef.current &&
         typeof endSentinelRef.current.scrollIntoView === 'function'
       ) {
-        endSentinelRef.current.scrollIntoView({ block: 'end' })
+        const reduced = prefersReducedMotion()
+        endSentinelRef.current.scrollIntoView({
+          block: 'end',
+          behavior: reduced ? 'auto' : 'auto',
+        })
       }
     }
   }, [agent.turns, agent.phase])
@@ -241,24 +278,37 @@ export function ConciergePanel() {
     setDraftText('')
   }
 
+  const PanelHeadingTag = headingLevel
+  const WelcomeHeadingTag = headingLevel === 'h1' ? 'h2' : 'h3'
+
   return (
     <section
       aria-label="Cloudbank Concierge"
       className="flex flex-col h-full bg-white border border-brand-divider rounded-xl overflow-hidden"
     >
+      <div
+        data-testid="concierge-turn-announcer"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {finalizedAssistantAnnouncement}
+      </div>
+
       {/* Clean Executive Header */}
       <div className="px-5 py-3.5 border-b border-brand-divider flex items-center justify-between gap-3 shrink-0">
         <div className="flex items-center gap-2">
-          <Sparkles size={16} aria-hidden="true" className="text-brand-gold" />
-          <h2 className="text-[16px] font-bold tracking-[-0.01em] text-brand-text leading-none">
+          <Sparkles size={16} aria-hidden="true" className="text-brand-gold-text" />
+          <PanelHeadingTag className="text-[1rem] font-bold tracking-[-0.01em] text-brand-text leading-none">
             Cloudbank Concierge
-          </h2>
+          </PanelHeadingTag>
         </div>
 
         {specialistLabel && (
           <span
             data-testid="active-specialist-pill"
-            className="px-2.5 py-1 rounded-full border border-brand-divider bg-[#faf9f6] text-[12px] font-semibold text-brand-green"
+            className="px-2.5 py-1 rounded-full border border-brand-divider bg-[#faf9f6] text-[0.75rem] font-semibold text-brand-green"
           >
             {specialistLabel}
           </span>
@@ -270,7 +320,9 @@ export function ConciergePanel() {
         ref={streamRef}
         onScroll={handleStreamScroll}
         role="log"
-        aria-live="polite"
+        aria-label="Conversation transcript"
+        aria-live="off"
+        aria-busy={isStreaming}
         data-testid="conversation-stream"
         className="flex-1 min-h-0 overflow-y-auto px-5 py-5 space-y-4"
       >
@@ -280,11 +332,11 @@ export function ConciergePanel() {
               data-testid="concierge-mic-blocked-state"
               className="h-full flex flex-col justify-center items-start max-w-lg py-6"
             >
-              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-muted mb-2">
-                <MicOff size={15} className="text-brand-gold" />
+              <div className="inline-flex items-center gap-1.5 text-[0.75rem] font-semibold text-brand-muted mb-2">
+                <MicOff size={15} aria-hidden="true" className="text-brand-gold-text" />
                 <span>Microphone access is off</span>
               </div>
-              <p className="text-[15px] text-brand-text leading-relaxed">
+              <p className="text-[0.9375rem] text-brand-text leading-relaxed">
                 Allow microphone access in your browser to speak, or choose a question or type below to continue.
               </p>
 
@@ -294,7 +346,7 @@ export function ConciergePanel() {
                     key={prompt}
                     type="button"
                     onClick={() => agent.submitText(prompt)}
-                    className="w-full text-left px-3.5 py-2.5 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13.5px] text-brand-text hover:bg-white hover:border-brand-green transition-colors"
+                    className="min-h-10 w-full text-left px-3.5 py-2.5 rounded-xl border border-brand-border-strong bg-[#faf9f6] text-[0.84375rem] text-brand-text hover:bg-white hover:border-brand-green transition-colors"
                   >
                     {prompt}
                   </button>
@@ -306,19 +358,19 @@ export function ConciergePanel() {
               data-testid="concierge-unavailable-state"
               className="h-full flex flex-col justify-center items-start max-w-md py-6"
             >
-              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-muted mb-2">
-                <AlertCircle size={15} className="text-brand-gold" />
+              <div className="inline-flex items-center gap-1.5 text-[0.75rem] font-semibold text-brand-muted mb-2">
+                <AlertCircle size={15} aria-hidden="true" className="text-brand-gold-text" />
                 <span>Concierge connection unavailable</span>
               </div>
-              <p className="text-[15px] text-brand-text leading-relaxed">
+              <p className="text-[0.9375rem] text-brand-text leading-relaxed">
                 We couldn&apos;t reach the concierge. Select Reconnect to try again.
               </p>
               <button
                 type="button"
                 onClick={agent.reconnect}
-                className="mt-4 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-brand-divider bg-[#faf9f6] text-[13px] font-semibold text-brand-green hover:border-brand-green transition-colors"
+                className="mt-4 min-h-9 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-brand-border-strong bg-[#faf9f6] text-[0.8125rem] font-semibold text-brand-green hover:border-brand-green transition-colors"
               >
-                <RefreshCw size={14} />
+                <RefreshCw size={14} aria-hidden="true" />
                 <span>Reconnect</span>
               </button>
             </div>
@@ -327,21 +379,35 @@ export function ConciergePanel() {
               data-testid="concierge-paused-state"
               className="h-full flex flex-col justify-center items-start max-w-md py-6"
             >
-              <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-brand-gold mb-2">
-                <PauseCircle size={15} />
+              <div className="inline-flex items-center gap-1.5 text-[0.75rem] font-semibold text-brand-gold-text mb-2">
+                <PauseCircle size={15} aria-hidden="true" />
                 <span>Session paused</span>
               </div>
-              <p className="text-[15px] text-brand-text leading-relaxed">
-                Your concierge session paused after a quiet period. Hold the voice button above or ask a question below to continue.
+              <p className="text-[0.9375rem] text-brand-text leading-relaxed">
+                {agent.pushToTalk
+                  ? 'Your concierge session paused after a quiet period. Hold or select the voice button above, or ask a question below to continue.'
+                  : 'Your concierge session paused after a quiet period. Select the voice button above or ask a question below to continue.'}
               </p>
             </div>
           ) : (
             <div className="h-full flex flex-col justify-center items-start max-w-lg py-6">
-              <h3 className="text-[22px] font-bold tracking-[-0.02em] text-brand-text leading-tight">
+              <WelcomeHeadingTag className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text leading-tight">
                 How can I help today, {firstName}?
-              </h3>
-              <p className="text-[14px] text-brand-muted leading-relaxed mt-1.5">
-                Press and hold <strong className="font-semibold text-brand-text">Hold to talk</strong>, or hold the Spacebar, to speak. You can also choose a question below.
+              </WelcomeHeadingTag>
+              <p className="text-[0.875rem] text-brand-muted leading-relaxed mt-1.5">
+                {agent.pushToTalk ? (
+                  <>
+                    Hold or select{' '}
+                    <strong className="font-semibold text-brand-text">Hold to talk</strong>, or
+                    hold the Spacebar, to speak. You can also choose a question below.
+                  </>
+                ) : (
+                  <>
+                    Select{' '}
+                    <strong className="font-semibold text-brand-text">Talk to concierge</strong>{' '}
+                    above to start hands-free listening, or choose a question below.
+                  </>
+                )}
               </p>
 
               <div className="mt-5 w-full space-y-2">
@@ -350,7 +416,7 @@ export function ConciergePanel() {
                     key={prompt}
                     type="button"
                     onClick={() => agent.submitText(prompt)}
-                    className="w-full text-left px-3.5 py-2.5 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13.5px] text-brand-text hover:bg-white hover:border-brand-green transition-colors"
+                    className="min-h-10 w-full text-left px-3.5 py-2.5 rounded-xl border border-brand-border-strong bg-[#faf9f6] text-[0.84375rem] text-brand-text hover:bg-white hover:border-brand-green transition-colors"
                   >
                     {prompt}
                   </button>
@@ -368,7 +434,7 @@ export function ConciergePanel() {
                   'flex flex-col ' + (turn.role === 'user' ? 'items-end' : 'items-start')
                 }
               >
-                <div className="flex items-center gap-2 mb-1 text-[12px] text-brand-muted">
+                <div className="flex items-center gap-2 mb-1 text-[0.75rem] text-brand-muted">
                   <span className="font-medium">
                     {turn.role === 'user' ? 'You' : 'Cloudbank Concierge'}
                   </span>
@@ -377,7 +443,7 @@ export function ConciergePanel() {
                 {turn.text && (
                   <div
                     className={
-                      'max-w-[88%] px-4 py-3 rounded-xl text-[14.5px] leading-relaxed ' +
+                      'max-w-[88%] px-4 py-3 rounded-xl text-[0.90625rem] leading-relaxed ' +
                       (turn.role === 'user'
                         ? 'bg-brand-green text-white'
                         : 'bg-[#faf9f6] border border-brand-divider text-brand-text')
@@ -401,9 +467,13 @@ export function ConciergePanel() {
             {agent.phase === 'thinking' && (
               <div
                 data-testid="concierge-thinking-indicator"
-                className="flex items-center gap-2 text-[13px] text-brand-muted"
+                className="flex items-center gap-2 text-[0.8125rem] text-brand-muted"
               >
-                <Sparkles size={14} aria-hidden="true" className="text-brand-gold animate-pulse" />
+                <Sparkles
+                  size={14}
+                  aria-hidden="true"
+                  className="text-brand-gold-text animate-pulse motion-reduce:animate-none"
+                />
                 <span>Thinking…</span>
               </div>
             )}
@@ -411,24 +481,24 @@ export function ConciergePanel() {
             {isMicBlockedOnly ? (
               <div
                 data-testid="concierge-mic-blocked-banner"
-                className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13px] text-brand-text flex items-center gap-2.5"
+                className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[0.8125rem] text-brand-text flex items-center gap-2.5"
               >
-                <MicOff size={15} className="text-brand-gold shrink-0" />
+                <MicOff size={15} aria-hidden="true" className="text-brand-gold-text shrink-0" />
                 <span>
-                  Microphone access is off — allow microphone access in your browser to speak, or type your question below.
+                  Microphone access is off. Allow microphone access in your browser to speak, or type your question below.
                 </span>
               </div>
             ) : (
               agent.phase === 'error' && (
                 <div
                   data-testid="concierge-error-banner"
-                  className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[13px] text-brand-text flex items-center justify-between gap-3"
+                  className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[0.8125rem] text-brand-text flex items-center justify-between gap-3"
                 >
                   <span>We couldn&apos;t reach the concierge. Select Reconnect to continue.</span>
                   <button
                     type="button"
                     onClick={agent.reconnect}
-                    className="font-semibold text-brand-green hover:underline shrink-0"
+                    className="min-h-8 px-2 font-semibold text-brand-green hover:underline shrink-0"
                   >
                     Reconnect
                   </button>
@@ -452,15 +522,15 @@ export function ConciergePanel() {
           value={draftText}
           onChange={(e) => setDraftText(e.target.value)}
           placeholder="Ask your Cloudbank concierge…"
-          className="flex-1 px-3.5 py-2 rounded-lg border border-brand-divider bg-[#faf9f6] text-[13.5px] text-brand-text placeholder:text-brand-muted focus:outline-none focus:bg-white focus:border-brand-green"
+          className="min-h-10 flex-1 px-3.5 py-2 rounded-lg border border-brand-border-strong bg-[#faf9f6] text-[0.84375rem] text-brand-text placeholder:text-brand-muted focus:bg-white focus:border-brand-green"
         />
         <button
           type="submit"
           aria-label="Send message"
           disabled={!draftText.trim()}
-          className="px-3.5 py-2 rounded-lg bg-brand-green text-white text-[13px] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40 transition-opacity"
+          className="min-h-10 px-3.5 py-2 rounded-lg bg-brand-green text-white text-[0.8125rem] font-semibold inline-flex items-center gap-1.5 disabled:opacity-40 transition-opacity"
         >
-          <Send size={14} />
+          <Send size={14} aria-hidden="true" />
           <span>Send</span>
         </button>
       </form>

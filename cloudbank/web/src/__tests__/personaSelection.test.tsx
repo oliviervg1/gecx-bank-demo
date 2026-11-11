@@ -6,10 +6,11 @@ import { PersonaProvider } from '../personas/PersonaProvider'
 import { ToastProvider } from '../components/ToastProvider'
 import { AgentContext, type AgentContextValue } from '../agent/AgentProvider'
 import { PageProvider } from '../pages/PageProvider'
-import { SpendingViewProvider } from '../agent/SpendingViewProvider'
+import { BankingViewStateProvider } from '../agent/BankingViewStateProvider'
+import { AuthSessionProvider } from '../auth/AuthProvider'
 import { HomePage } from '../pages/home/HomePage'
-import { allFixtures, getFixture, type Fixture } from '../data/fixture'
-import { buildSessionVariables } from '../agent/sessionVariables'
+import { allFixtures, type Fixture } from '../data/fixture'
+import { buildClientStart } from '../agent/sessionVariables'
 import { computeSpendingSummary } from '../util/spendingSummary'
 import { formatGBPFromPence } from '../util/currency'
 import type { Persona } from '../personas/personas'
@@ -52,11 +53,15 @@ describe.each(allFixtures())('persona selection: %s', (persona: Persona, f: Fixt
     setPersonaUrl(persona)
     render(
       <PersonaProvider>
-        <AgentContext.Provider value={stubAgent}>
-          <ToastProvider>
-            <ProfilePage />
-          </ToastProvider>
-        </AgentContext.Provider>
+        <BankingViewStateProvider>
+          <AgentContext.Provider value={stubAgent}>
+            <AuthSessionProvider>
+              <ToastProvider>
+                <ProfilePage />
+              </ToastProvider>
+            </AuthSessionProvider>
+          </AgentContext.Provider>
+        </BankingViewStateProvider>
       </PersonaProvider>,
     )
     expect(screen.getByText(`${f.user.first_name} ${f.user.last_name}`)).toBeInTheDocument()
@@ -67,7 +72,9 @@ describe.each(allFixtures())('persona selection: %s', (persona: Persona, f: Fixt
     render(
       <PersonaProvider initialDemoDate="2026-11-24">
         <PageProvider>
-          <HomePage />
+          <BankingViewStateProvider>
+            <HomePage />
+          </BankingViewStateProvider>
         </PageProvider>
       </PersonaProvider>,
     )
@@ -77,14 +84,18 @@ describe.each(allFixtures())('persona selection: %s', (persona: Persona, f: Fixt
     expect(screen.getAllByText(expected).length).toBeGreaterThan(0)
   })
 
-  it('start frame variables carry this persona’s verbatim fixture', () => {
-    const vars = buildSessionVariables(persona, getFixture(persona), {
+  it('start frame carries lean persona and clock metadata without raw customer_snapshot', () => {
+    const start = buildClientStart(persona, {
       demoDate: '2026-11-24',
       timeOfDay: 'morning',
     })
-    expect(vars.persona_id).toBe(persona)
-    expect(vars.first_name).toBe(f.user.first_name)
-    expect(vars.customer_snapshot).toBe(f)
+    expect(start).toEqual({
+      type: 'start',
+      persona,
+      demoDate: '2026-11-24',
+      timeOfDay: 'morning',
+    })
+    expect('variables' in start).toBe(false)
   })
 
   it('renders MortgagePage appropriately for homeowners vs renter', () => {
@@ -92,9 +103,9 @@ describe.each(allFixtures())('persona selection: %s', (persona: Persona, f: Fixt
     render(
       <PersonaProvider initialDemoDate="2026-11-24">
         <PageProvider>
-          <SpendingViewProvider>
+          <BankingViewStateProvider>
             <MortgagePage />
-          </SpendingViewProvider>
+          </BankingViewStateProvider>
         </PageProvider>
       </PersonaProvider>,
     )
@@ -113,11 +124,15 @@ describe('persona selection: distinctness & fallbacks', () => {
     setPersonaUrl('mallory')
     render(
       <PersonaProvider>
-        <AgentContext.Provider value={stubAgent}>
-          <ToastProvider>
-            <ProfilePage />
-          </ToastProvider>
-        </AgentContext.Provider>
+        <BankingViewStateProvider>
+          <AgentContext.Provider value={stubAgent}>
+            <AuthSessionProvider>
+              <ToastProvider>
+                <ProfilePage />
+              </ToastProvider>
+            </AuthSessionProvider>
+          </AgentContext.Provider>
+        </BankingViewStateProvider>
       </PersonaProvider>,
     )
     expect(screen.getByText('Chloe Williams')).toBeInTheDocument()

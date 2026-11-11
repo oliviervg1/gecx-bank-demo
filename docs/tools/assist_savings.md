@@ -1,7 +1,7 @@
 # `assist_savings` Specification
 
 - **Owning Agent:** `savings_agent`
-- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L1-L461) (entrypoint & thin dispatcher at [`#L26-L115`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L26-L115))
+- **Implementation:** [python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py) (thin entrypoint `assist_savings` delegating to `_dispatch_savings`)
 - **Manifest:** [assist_savings.json](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/assist_savings.json)
 
 ## 1. Overview & Architectural Principles
@@ -9,22 +9,23 @@
 `assist_savings` owns savings pot summaries, AER vs gross contractual interest rate inquiries, and month-by-month compound goal completion projections.
 
 Core invariants:
-- **One-shot `handoff_context` consumption:** Reads `context.state["handoff_context"]` on entry and immediately resets `context.state["handoff_context"] = {}`. When `query_type in ("", "projection")` and `extra_monthly_amount <= 0`, automatically applies `freed_monthly_pence` from a subscription discussed in Everyday Banking (attributing the vendor name in `agent_action`).
-- **Exact integer compounding (`gross_rate_bps` vs `aer_bps`):** Simulates up to `600` months using `_half_up(pot * gross_rate_bps, 120_000)` per month while quoting `aer_bps` in speech, matching `cloudbank/web/src/util/savingsMath.ts` and `cloudbank/shared/parity_vectors.json` penny-for-penny.
+- Hop-safe `handoff_context` consumption: preserves `context.state["handoff_context"]` when `switch_intent` performs a corrective hop to another spoke, and consumes then clears `context.state["handoff_context"] = {}` on local savings turns. When `query_type in ("", "projection")` and `extra_monthly_amount <= 0`, it applies `freed_monthly_pence` from a subscription discussed in Everyday Banking and attributes the vendor name in `agent_action`.
+- Exact integer compounding (`gross_rate_bps` vs `aer_bps`): simulates up to `600` months using `_half_up(pot * gross_rate_bps, 120_000)` per month while quoting `aer_bps` in speech, matching `cloudbank/web/src/util/savingsMath.ts` and `cloudbank/shared/parity_vectors.json` penny-for-penny.
+- Validated calendar dates & unified navigation: validates `demo_date` via `datetime.date` (`2000 <= year <= 2100`, defaulting to `(2026, 11, 24)`) and uses unified `NAVIGATE_HOME`, `NAVIGATE_PROFILE`, and `FAREWELL` copy.
 
 ## 2. Complete Workflow Flowchart
 
 ```mermaid
 flowchart TD
-    Entry["assist_savings(query_type, extra_monthly_amount, custom_target_amount, switch_intent)"] --> ClearHO["Capture & clear handoff_context = {}<br/>Convert pound floats via _to_pence()"]
-    ClearHO --> Switch{"switch_intent != ''?"}
-    Switch -->|"EVERYDAY_BANKING / MORTGAGES"| Stage["Stage target_agent (with per-invocation loop guard)"]
-    Switch -->|"NAVIGATE_HOME / NAVIGATE_PROFILE / CAPABILITIES / FAREWELL"| LocalNav["Handle navigation / capabilities / farewell locally"]
-    Switch -->|"Empty"| Norm["Normalise customer_snapshot & resolve demo_date"]
+    Entry["assist_savings(query_type, extra_monthly_amount, custom_target_amount, switch_intent)"] --> Switch{"switch_intent != ''?"}
+    Switch -->|"EVERYDAY_BANKING / MORTGAGES"| Stage["Preserve handoff_context and stage target_agent (with loop guard)"]
+    Switch -->|"NAVIGATE_HOME / NAVIGATE_PROFILE / CAPABILITIES / FAREWELL"| LocalNav["_handle_switch_intent() locally"]
+    Switch -->|"Empty"| Consume["Capture & clear handoff_context = {}, convert floats via _to_pence()"]
+    Consume --> Norm["Normalise customer_snapshot & validate demo_date"]
     Norm --> Mode{"Effective query_type"}
-    Mode -->|"summary"| Sum["_handle_summary()<br/>Emit ui_view_state(page=savings, extra_monthly_pence=0)"]
-    Mode -->|"interest_rate"| Rate["_handle_interest_rate()<br/>Quote AER + 12-month compound interest on current pot"]
-    Mode -->|"projection (or defaulted from handoff / amount > 0)"| Proj["_handle_projection()<br/>Baseline vs projected _project_savings_goal() + emit Savings UI"]
+    Mode -->|"summary"| Sum["_handle_summary(): emit ui_view_state(page=savings, extra_monthly_pence=0)"]
+    Mode -->|"interest_rate"| Rate["_handle_interest_rate(): quote AER + 12-month compound interest"]
+    Mode -->|"projection (or defaulted from handoff / amount > 0)"| Proj["_handle_projection(): _project_savings_goal() + emit Savings UI"]
     Mode -->|"Empty / Unclear"| Unclear["_handle_unclear() (2-strike non-terminating ladder)"]
 ```
 
@@ -56,20 +57,20 @@ def assist_savings(
 
 ## 4. Sub-Flow Details & Session State Reads/Writes
 
-### Helper Index
+### Helper Index ([python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py))
 
-- [`_half_up` / `_to_pence`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L118-L129): Exact integer half-up division and clamped model-float-to-pence conversion (`[0, £10,000,000]`).
-- [`_project_savings_goal` / `_annual_interest_on_balance` / `_target_month_label`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L132-L187): 600-month compound goal simulator, 12-step annual interest on current balance, and calendar completion month formatter.
-- [`_normalize_snapshot` .. `_emit_ui_view`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L190-L248): Snapshot integer coercion, `demo_date` parser, currency/rate formatters, and monotonic `ui_view_state` writer.
-- [`_handle_summary`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L251-L293), [`_handle_interest_rate`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L296-L310), and [`_handle_projection`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L313-L392): Savings pot balance/AER summary, rate details, and goal completion timeline delta.
-- [`_handle_switch_intent`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L395-L442) & [`_handle_unclear`](../../cloudbank/cxas_app/Cloudbank/tools/assist_savings/python_function/python_code.py#L445-L461): Spoke-local navigation, guarded cross-spoke pivots, and 2-strike unclear recovery.
+- `_half_up` and `_to_pence`: exact integer half-up division and clamped model-float-to-pence conversion (`[0, £10,000,000]`).
+- `_project_savings_goal`, `_annual_interest_on_balance`, and `_target_month_label`: 600-month compound goal simulator, 12-step annual interest on current balance, and calendar completion month formatter.
+- `_normalize_snapshot`, `_parse_demo_date`, `_format_gbp`, `_format_bps`, and `_emit_ui_view`: snapshot integer coercion, `datetime.date` parser, currency and rate formatters, and monotonic `ui_view_state` writer.
+- `_handle_summary`, `_handle_interest_rate`, `_format_projection_reply`, and `_handle_projection`: savings pot balance and AER summary, rate details, and goal completion timeline delta.
+- `_handle_switch_intent` and `_handle_unclear`: spoke-local navigation, guarded cross-spoke pivots, and 2-strike unclear recovery.
 
 ### Session State Reads & Writes
 
 | Variable | Direction | Purpose |
 | :--- | :--- | :--- |
-| `customer_snapshot` | Read | Reads `savings` (`name`, `balance_pence`, `gross_rate_bps`, `aer_bps`, `monthly_contribution_pence`, `goal_target_pence`). |
-| `handoff_context` | Read / Write | Reads optional `{vendor, freed_monthly_pence}` and clears to `{}` on entry. |
+| `customer_snapshot` | Read | Reads `savings` (`name`, `goal_name`, `balance_pence`, `gross_rate_bps`, `aer_bps`, `monthly_contribution_pence`, `goal_target_pence`). |
+| `handoff_context` | Read / Write | Preserved on `switch_intent` hops; consumed and cleared to `{}` on local savings turns. |
 | `demo_date` / `first_name` | Read | Computes completion month/year from statement date and personalises farewells. |
 | `pass_count` | Read | Bounds cross-spoke pivots (`int(pass_count) > 4` stops ping-pong loops). |
 | `savings_state` | Read / Write | Tracks `last_extra_monthly_pence` and `last_custom_target_pence`. |

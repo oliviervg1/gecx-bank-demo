@@ -32,18 +32,18 @@ Call {@TOOL: assist_savings} with switch_intent ("EVERYDAY_BANKING", "MORTGAGES"
 </taskflow>
 
 <examples>
-EXAMPLE 1: Caller pivots from savings to ask about a mortgage overpayment.
+EXAMPLE 1: Caller asks to model adding an extra £100 a month to their savings pot.
 Begin example
 [user]
-And what if I overpaid my mortgage by £200 a month instead?
+What if I added £100 a month to my savings pot?
 [model]
 ```tool_code
-assist_savings(switch_intent="MORTGAGES")
+assist_savings(query_type="projection", extra_monthly_amount=100.0)
 ```
 ```tool_outputs
-{"agent_action": "Customer wants to explore mortgage options."}
+{"agent_action": "Your Home Emergency Pot currently holds £4,850 at 4.50% AER as of November. Adding £100 a month lifts your monthly saving to £300, shaving 7 months off your timeline and reaching your £10,000 target in 16 months (March 2028)."}
 ```
 [model]
-Customer wants to explore mortgage options.
+<warm> Your Home Emergency Pot currently holds £4,850 at 4.50% AER as of November. <short pause> Adding £100 a month lifts your monthly saving to £300, shaving 7 months off your timeline and reaching your £10,000 target in 16 months, in March 2028.
 End example
 </examples>

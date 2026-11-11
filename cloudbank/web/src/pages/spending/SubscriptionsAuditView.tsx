@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef } from 'react'
 import { useFixture } from '../../data/useFixture'
 import { usePersona } from '../../personas/PersonaProvider'
-import { useSpendingView } from '../../agent/SpendingViewProvider'
+import { useBankingViewState } from '../../agent/BankingViewStateProvider'
 import { SpendingHeader } from './SpendingHeader'
 import { ListRow } from '../../components/ListRow'
 import { IconBadge } from '../../components/IconBadge'
@@ -9,6 +9,7 @@ import { iconForCategory, type SpendingCategory } from '../../components/iconFor
 import type { Transaction } from '../../data/fixture'
 import { formatGBPFromPence } from '../../util/currency'
 import { shortMonthForOffset } from '../../util/demoClock'
+import { prefersReducedMotion } from '../../util/motion'
 import { subscriptionsView, vendorsEqual } from '../../util/spendingViews'
 
 const EMPTY: Transaction[] = []
@@ -27,14 +28,17 @@ function SubscriptionRow({
   const ref = useRef<HTMLDivElement>(null)
   useEffect(() => {
     if (highlighted && ref.current && typeof ref.current.scrollIntoView === 'function') {
-      ref.current.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      ref.current.scrollIntoView({
+        behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+        block: 'center',
+      })
     }
   }, [highlighted])
 
   const styled = iconForCategory(transaction.category as SpendingCategory)
   const tone = highlighted ? 'gold' : styled.tone
   const wrapperClass = highlighted
-    ? 'px-3 -mx-3 rounded-lg bg-[#fcf9f2] border border-brand-gold/50 transition-colors'
+    ? 'px-3 -mx-3 rounded-lg bg-[#fcf9f2] border border-brand-gold-text/45 transition-colors'
     : 'transition-colors'
 
   const kind = transaction.category === 'bills' ? 'Direct Debit' : 'Subscription'
@@ -57,7 +61,7 @@ function SubscriptionRow({
         title={transaction.vendor}
         subtitle={subtitle}
         right={
-          <span className="text-[15px] font-semibold text-brand-text tabular-nums">
+          <span className="text-[0.9375rem] font-semibold text-brand-text tabular-nums">
             {formatGBPFromPence(transaction.amount_pence)}
           </span>
         }
@@ -69,7 +73,7 @@ function SubscriptionRow({
 export function SubscriptionsAuditView() {
   const fixture = useFixture()
   const { demoDate } = usePersona()
-  const { period, highlightVendor, anomalyStatus } = useSpendingView()
+  const { period, highlightVendor, anomalyStatus } = useBankingViewState()
   const transactions = fixture?.transactions ?? EMPTY
 
   const { items: subs, total_pence, monthName } = useMemo(
@@ -82,13 +86,13 @@ export function SubscriptionsAuditView() {
       <SpendingHeader breadcrumb="Subscriptions" />
 
       <div className="py-4 border-b border-brand-divider">
-        <div className="text-[11px] tracking-[0.08em] uppercase text-brand-muted font-medium">
+        <div className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium">
           {monthName} Recurring Subscriptions & Bills
         </div>
-        <div className="text-[28px] font-bold text-brand-text mt-1 leading-none tabular-nums">
+        <div className="text-[1.75rem] font-bold text-brand-text mt-1 leading-none tabular-nums">
           {formatGBPFromPence(total_pence)}
         </div>
-        <div className="text-[13px] text-brand-muted mt-1">
+        <div className="text-[0.8125rem] text-brand-muted mt-1">
           {subs.length} recurring {subs.length === 1 ? 'charge' : 'charges'}
         </div>
       </div>

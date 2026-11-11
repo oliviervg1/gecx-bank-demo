@@ -2,26 +2,29 @@ import { describe, it, expect } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { SavingsPage } from '../pages/savings/SavingsPage'
 import { PersonaProvider } from '../personas/PersonaProvider'
-import { SpendingViewProvider } from '../agent/SpendingViewProvider'
+import { BankingViewStateProvider } from '../agent/BankingViewStateProvider'
 
 function renderSavings(persona: 'chloe' | 'tom' = 'chloe') {
   return render(
     <PersonaProvider initialPersona={persona} initialDemoDate="2026-11-24">
-      <SpendingViewProvider>
+      <BankingViewStateProvider>
         <SavingsPage />
-      </SpendingViewProvider>
+      </BankingViewStateProvider>
     </PersonaProvider>,
   )
 }
 
 describe('SavingsPage', () => {
-  it('renders Chloe’s Home Emergency Pot balance, AER, gross p.a. rate, and baseline October 2028 target', () => {
+  it('renders Chloe’s Home Emergency Pot balance, AER, gross p.a. rate, progressbar, and baseline October 2028 target', () => {
     renderSavings('chloe')
-    expect(screen.getByText('Home Emergency Pot')).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'Home Emergency Pot' })).toBeInTheDocument()
     expect(screen.getByText('£4,850.00')).toBeInTheDocument()
     expect(screen.getByText('4.50% AER')).toBeInTheDocument()
     expect(screen.getByText('4.41% gross p.a. (variable)')).toBeInTheDocument()
     expect(screen.getByText('Regular monthly deposit')).toBeInTheDocument()
+    expect(
+      screen.getByRole('progressbar', { name: 'Home Emergency Pot savings progress' }),
+    ).toBeInTheDocument()
     expect(screen.getByText(/October 2028 \(23 months\)/)).toBeInTheDocument()
   })
 

@@ -56,12 +56,12 @@
   "variableDeclarations": [
     {
       "name": "persona_id",
-      "description": "Active demo persona identifier seeded by the web client.",
+      "description": "Active demo persona identifier seeded by the proxy.",
       "schema": { "type": "STRING", "required": [], "default": "" }
     },
     {
       "name": "first_name",
-      "description": "Customer first name seeded from the active persona fixture.",
+      "description": "Customer first name seeded from the active persona snapshot.",
       "schema": { "type": "STRING", "required": [], "default": "" }
     },
     {
@@ -71,12 +71,12 @@
     },
     {
       "name": "time_of_day",
-      "description": "Greeting period seeded by the client (morning, afternoon, or evening).",
+      "description": "Greeting period seeded by the proxy (morning, afternoon, or evening).",
       "schema": { "type": "STRING", "required": [], "default": "" }
     },
     {
       "name": "customer_snapshot",
-      "description": "Web-owned customer accounts and 3-month integer-pence transaction snapshot read strictly by Python controllers.",
+      "description": "Persona accounts and 3-month integer-pence transaction snapshot seeded by the proxy and read strictly by Python controllers.",
       "schema": { "type": "OBJECT", "required": [] }
     },
     {
