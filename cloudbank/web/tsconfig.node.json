@@ -9,6 +9,7 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true,
     "strict": true,
+    "types": ["node"],
     "emitDeclarationOnly": true,
     "outDir": "./.tsbuild/node"
   },

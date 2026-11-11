@@ -49,7 +49,6 @@ export function HorizontalMerchantBarChart({
       viewBox={`0 0 ${viewWidth} ${viewHeight}`}
       className="w-full h-auto block select-none"
     >
-      <title>{detailedSummary}</title>
       {data.map((item, idx) => {
         const yCenter = topPad + idx * rowHeight + rowHeight / 2
         const barHeight = 14
@@ -158,7 +157,6 @@ export function MonthlyComparisonBarChart({
       viewBox={`0 0 ${viewWidth} ${viewHeight}`}
       className="w-full h-48 block select-none"
     >
-      <title>{detailedSummary}</title>
       {ticks.map((t) => (
         <g key={t.pounds}>
           <line

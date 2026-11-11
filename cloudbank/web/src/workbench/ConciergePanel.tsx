@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type FormEvent } from 'react'
 import {
   AlertCircle,
   ExternalLink,
+  Keyboard,
   MicOff,
   PauseCircle,
   RefreshCw,
@@ -9,9 +10,13 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { useAgent } from '../agent/AgentProvider'
+import {
+  MAX_CLIENT_TEXT_CHARS,
+  type ServerSearchSuggestionsMsg,
+} from '../agent/protocol'
+import type { SessionPhase } from '../agent/sessionMachine'
 import type { CustomerSnapshot } from '../data/fixture'
 import { useFixture } from '../data/useFixture'
-import type { ServerSearchSuggestionsMsg } from '../agent/protocol'
 import { prefersReducedMotion } from '../util/motion'
 
 export function buildStarterPrompts(fixture: CustomerSnapshot): string[] {
@@ -61,6 +66,21 @@ function resolveSpecialistLabel(activeAgentName: string, latestPage?: string): s
   return null
 }
 
+function describePoliteSessionStatus(phase: SessionPhase, pushToTalk: boolean): string {
+  switch (phase) {
+    case 'capturing':
+      return pushToTalk ? 'Microphone active. Release to send.' : 'Listening.'
+    case 'thinking':
+      return 'Thinking…'
+    case 'paused':
+      return 'Concierge session paused.'
+    case 'ended':
+      return 'Concierge session ended.'
+    default:
+      return ''
+  }
+}
+
 function isSafeHttpUrl(raw: unknown): raw is string {
   if (typeof raw !== 'string') return false
   try {
@@ -71,12 +91,13 @@ function isSafeHttpUrl(raw: unknown): raw is string {
   }
 }
 
-function buildSandboxedSuggestionDoc(htmlSnippet: string): string {
+export function buildSandboxedSuggestionDoc(htmlSnippet: string): string {
   return [
     '<!doctype html>',
     '<html lang="en-GB"><head><meta charset="utf-8">',
+    '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data: https:; form-action \'none\';">',
     '<base target="_blank">',
-    '<style>html,body{margin:0;padding:4px 6px;font-family:system-ui,-apple-system,sans-serif;font-size:12px;background:#ffffff;color:#141413;overflow:hidden;}</style>',
+    '<style>html,body{margin:0;padding:4px 6px;font-family:system-ui,-apple-system,sans-serif;font-size:12px;line-height:1.35;background:#ffffff;color:#141413;}</style>',
     '</head><body>',
     htmlSnippet,
     '</body></html>',
@@ -157,17 +178,25 @@ function SearchSuggestionsBlock({
   )
   const fallbackQueries =
     suggestions.htmls.length === 0 ? suggestions.webSearchQueries : []
+  const hasVisibleContent =
+    suggestions.htmls.length > 0 || fallbackQueries.length > 0 || safeCitations.length > 0
+
+  if (!hasVisibleContent) return null
 
   return (
     <div className="mt-2.5 space-y-1.5" data-testid="search-suggestions-block">
+      <div className="text-[0.6875rem] font-medium text-brand-muted">
+        Web search results (external merchant pages — not verified by Cloudbank)
+      </div>
+
       {suggestions.htmls.map((html, idx) => (
         <iframe
           key={`gss-html-${idx}`}
-          title={`Google Search suggestion ${idx + 1}`}
+          title={`Google Search web result suggestion ${idx + 1}`}
           sandbox="allow-popups allow-popups-to-escape-sandbox"
           referrerPolicy="no-referrer"
           srcDoc={buildSandboxedSuggestionDoc(html)}
-          className="w-full h-10 rounded-lg border border-brand-divider bg-white"
+          className="w-full min-h-10 rounded-lg border border-brand-divider bg-white"
         />
       ))}
 
@@ -223,20 +252,38 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
     agent.activeAgentName,
     agent.latestUiState?.page,
   )
+  const spacebarEnabled = agent.spacebarShortcutEnabled ?? true
   const isMicBlockedOnly = agent.micDenied && agent.connState !== 'error'
   const isStreaming =
     agent.phase === 'thinking' || agent.turns.some((turn) => turn.partial)
+  const politePhaseAnnouncement = describePoliteSessionStatus(agent.phase, agent.pushToTalk)
 
-  // Announce strictly finalized assistant turns once so partial streaming tokens
-  // never spam assistive technology users.
+  // Announce strictly finalized text-only assistant turns once. Suppress text injection
+  // whenever the turn played 24 kHz WebAudio speech (`turn.hadAudio`), and alternate a
+  // zero-width space on consecutive identical text-only replies so screen readers announce
+  // repeated turns.
   const finalizedAssistantAnnouncement = useMemo(() => {
+    let latestIdx = -1
     for (let i = agent.turns.length - 1; i >= 0; i--) {
       const turn = agent.turns[i]
       if (turn && turn.role === 'assistant' && !turn.partial && !turn.interrupted && turn.text) {
-        return `Cloudbank Concierge: ${turn.text}`
+        latestIdx = i
+        break
       }
     }
-    return ''
+    if (latestIdx < 0) return ''
+    const latestTurn = agent.turns[latestIdx]
+    if (!latestTurn || latestTurn.hadAudio) return ''
+
+    let textOnlyOrdinal = 0
+    for (let i = 0; i <= latestIdx; i++) {
+      const t = agent.turns[i]
+      if (t && t.role === 'assistant' && !t.partial && !t.interrupted && t.text && !t.hadAudio) {
+        textOnlyOrdinal += 1
+      }
+    }
+    const repeatParitySuffix = textOnlyOrdinal > 1 && textOnlyOrdinal % 2 === 0 ? '\u200B' : ''
+    return `Cloudbank Concierge: ${latestTurn.text}${repeatParitySuffix}`
   }, [agent.turns])
 
   useEffect(() => {
@@ -254,10 +301,9 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
         endSentinelRef.current &&
         typeof endSentinelRef.current.scrollIntoView === 'function'
       ) {
-        const reduced = prefersReducedMotion()
         endSentinelRef.current.scrollIntoView({
           block: 'end',
-          behavior: reduced ? 'auto' : 'auto',
+          behavior: userJustSubmitted && !prefersReducedMotion() ? 'smooth' : 'auto',
         })
       }
     }
@@ -296,8 +342,18 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
         {finalizedAssistantAnnouncement}
       </div>
 
+      <div
+        data-testid="concierge-phase-announcer"
+        role="status"
+        aria-live="polite"
+        aria-atomic="true"
+        className="sr-only"
+      >
+        {politePhaseAnnouncement}
+      </div>
+
       {/* Clean Executive Header */}
-      <div className="px-5 py-3.5 border-b border-brand-divider flex items-center justify-between gap-3 shrink-0">
+      <div className="px-5 py-3.5 border-b border-brand-divider flex flex-wrap items-center justify-between gap-2.5 shrink-0">
         <div className="flex items-center gap-2">
           <Sparkles size={16} aria-hidden="true" className="text-brand-gold-text" />
           <PanelHeadingTag className="text-[1rem] font-bold tracking-[-0.01em] text-brand-text leading-none">
@@ -305,14 +361,35 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
           </PanelHeadingTag>
         </div>
 
-        {specialistLabel && (
-          <span
-            data-testid="active-specialist-pill"
-            className="px-2.5 py-1 rounded-full border border-brand-divider bg-[#faf9f6] text-[0.75rem] font-semibold text-brand-green"
-          >
-            {specialistLabel}
-          </span>
-        )}
+        <div className="flex items-center gap-2">
+          {agent.pushToTalk && agent.setSpacebarShortcutEnabled && (
+            <button
+              type="button"
+              data-testid="spacebar-shortcut-toggle"
+              aria-pressed={spacebarEnabled}
+              aria-label="Spacebar hold-to-talk shortcut"
+              onClick={() => agent.setSpacebarShortcutEnabled?.(!spacebarEnabled)}
+              className={
+                'min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[0.6875rem] font-semibold transition-colors ' +
+                (spacebarEnabled
+                  ? 'border-brand-border-strong bg-[#faf9f6] text-brand-text hover:border-brand-green'
+                  : 'border-brand-divider bg-white text-brand-muted hover:text-brand-text')
+              }
+            >
+              <Keyboard size={12} aria-hidden="true" />
+              <span>Spacebar: {spacebarEnabled ? 'On' : 'Off'}</span>
+            </button>
+          )}
+
+          {specialistLabel && (
+            <span
+              data-testid="active-specialist-pill"
+              className="px-2.5 py-1 rounded-full border border-brand-divider bg-[#faf9f6] text-[0.75rem] font-semibold text-brand-green"
+            >
+              {specialistLabel}
+            </span>
+          )}
+        </div>
       </div>
 
       {/* Conversation Stream / Executive Welcome */}
@@ -330,6 +407,7 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
           isMicBlockedOnly ? (
             <div
               data-testid="concierge-mic-blocked-state"
+              role="status"
               className="h-full flex flex-col justify-center items-start max-w-lg py-6"
             >
               <div className="inline-flex items-center gap-1.5 text-[0.75rem] font-semibold text-brand-muted mb-2">
@@ -356,6 +434,7 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
           ) : agent.phase === 'error' ? (
             <div
               data-testid="concierge-unavailable-state"
+              role="alert"
               className="h-full flex flex-col justify-center items-start max-w-md py-6"
             >
               <div className="inline-flex items-center gap-1.5 text-[0.75rem] font-semibold text-brand-muted mb-2">
@@ -377,6 +456,7 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
           ) : agent.phase === 'paused' ? (
             <div
               data-testid="concierge-paused-state"
+              role="status"
               className="h-full flex flex-col justify-center items-start max-w-md py-6"
             >
               <div className="inline-flex items-center gap-1.5 text-[0.75rem] font-semibold text-brand-gold-text mb-2">
@@ -396,11 +476,19 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
               </WelcomeHeadingTag>
               <p className="text-[0.875rem] text-brand-muted leading-relaxed mt-1.5">
                 {agent.pushToTalk ? (
-                  <>
-                    Hold or select{' '}
-                    <strong className="font-semibold text-brand-text">Hold to talk</strong>, or
-                    hold the Spacebar, to speak. You can also choose a question below.
-                  </>
+                  spacebarEnabled ? (
+                    <>
+                      Hold or select{' '}
+                      <strong className="font-semibold text-brand-text">Hold to talk</strong>, or
+                      hold the Spacebar, to speak. You can also choose a question below.
+                    </>
+                  ) : (
+                    <>
+                      Hold or select{' '}
+                      <strong className="font-semibold text-brand-text">Hold to talk</strong> above
+                      to speak, or choose a question below.
+                    </>
+                  )
                 ) : (
                   <>
                     Select{' '}
@@ -481,6 +569,7 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
             {isMicBlockedOnly ? (
               <div
                 data-testid="concierge-mic-blocked-banner"
+                role="status"
                 className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[0.8125rem] text-brand-text flex items-center gap-2.5"
               >
                 <MicOff size={15} aria-hidden="true" className="text-brand-gold-text shrink-0" />
@@ -492,6 +581,7 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
               agent.phase === 'error' && (
                 <div
                   data-testid="concierge-error-banner"
+                  role="alert"
                   className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[0.8125rem] text-brand-text flex items-center justify-between gap-3"
                 >
                   <span>We couldn&apos;t reach the concierge. Select Reconnect to continue.</span>
@@ -519,6 +609,7 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
         <input
           type="text"
           aria-label="Ask your Cloudbank concierge"
+          maxLength={MAX_CLIENT_TEXT_CHARS}
           value={draftText}
           onChange={(e) => setDraftText(e.target.value)}
           placeholder="Ask your Cloudbank concierge…"

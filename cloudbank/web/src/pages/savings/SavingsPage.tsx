@@ -62,7 +62,10 @@ export function SavingsPage() {
         <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
           {savings.name}
         </div>
-        <h1 className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-tight">
+        <h1
+          tabIndex={-1}
+          className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-tight"
+        >
           {savings.goal_name}
         </h1>
       </div>
@@ -71,9 +74,9 @@ export function SavingsPage() {
       <div className="py-4 border-b border-brand-divider">
         <div className="flex items-baseline justify-between gap-2">
           <div>
-            <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
+            <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
               Current Pot Balance
-            </div>
+            </h2>
             <div className="text-[1.875rem] font-bold tracking-[-0.02em] text-brand-text tabular-nums mt-1 leading-none">
               {formatGBPFromPence(savings.balance_pence)}
             </div>
@@ -114,32 +117,32 @@ export function SavingsPage() {
           </div>
         </div>
 
-        <div className="mt-3 grid grid-cols-2 gap-3 pt-3 border-t border-brand-divider text-[0.8125rem] tabular-nums">
+        <dl className="mt-3 grid grid-cols-2 gap-3 pt-3 border-t border-brand-divider text-[0.8125rem] tabular-nums">
           <div>
-            <div className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
+            <dt className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
               Regular monthly deposit
-            </div>
-            <div className="font-semibold text-brand-text mt-0.5">
+            </dt>
+            <dd className="font-semibold text-brand-text mt-0.5">
               {formatGBPFromPence(savings.monthly_contribution_pence)}/mo
-            </div>
+            </dd>
           </div>
           <div>
-            <div className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
+            <dt className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
               12-Month Balance Interest
-            </div>
-            <div className="font-semibold text-brand-text mt-0.5">
+            </dt>
+            <dd className="font-semibold text-brand-text mt-0.5">
               +{formatGBPFromPence(comparison.annual_interest_on_balance_pence)}/yr
-            </div>
+            </dd>
           </div>
-        </div>
+        </dl>
       </div>
 
       {/* Interactive Goal Projection Calculator (synced with ui_view_state) */}
       <div className="py-4 border-b border-brand-divider" data-testid="savings-calculator">
         <div className="flex items-center justify-between mb-2">
-          <span className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold">
+          <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold">
             Extra Monthly Contribution
-          </span>
+          </h2>
           <span className="text-[0.8125rem] font-semibold text-brand-green tabular-nums">
             +{formatGBPFromPence(extraMonthlyPence)}/mo
           </span>
@@ -232,10 +235,10 @@ export function SavingsPage() {
       </div>
 
       {/* Exact Goal Timeline Results */}
-      <div className="pt-4">
-        <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-2">
+      <div className="pt-4" aria-live="polite" aria-atomic="true" data-testid="savings-timeline-results">
+        <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold mb-2">
           Projected Goal Timeline
-        </div>
+        </h2>
 
         {comparison.unreachable ? (
           <div className="p-3.5 rounded-xl border border-brand-gold-text/50 bg-[#fcf9f2] text-[0.8125rem] text-brand-text">
@@ -248,44 +251,44 @@ export function SavingsPage() {
             {formatGBPFromPence(comparison.target_pence)} target.
           </div>
         ) : (
-          <div className="divide-y divide-brand-divider border-t border-b border-brand-divider tabular-nums">
+          <dl className="divide-y divide-brand-divider border-t border-b border-brand-divider tabular-nums">
             <div className="flex items-center justify-between py-2.5">
-              <span className="text-[0.8125rem] text-brand-muted">Projected completion</span>
-              <span className="text-[0.9375rem] font-bold text-brand-green">
+              <dt className="text-[0.8125rem] text-brand-muted">Projected completion</dt>
+              <dd className="text-[0.9375rem] font-bold text-brand-green">
                 {comparison.target_label} ({comparison.projected_months}{' '}
                 {comparison.projected_months === 1 ? 'month' : 'months'})
-              </span>
+              </dd>
             </div>
             <div className="flex items-center justify-between py-2.5">
-              <span className="text-[0.8125rem] text-brand-muted">Baseline timeline</span>
-              <span className="text-[0.875rem] font-medium text-brand-text">
+              <dt className="text-[0.8125rem] text-brand-muted">Baseline timeline</dt>
+              <dd className="text-[0.875rem] font-medium text-brand-text">
                 {comparison.baseline_months !== null
                   ? `${comparison.baseline_months} months (${formatMonthsDuration(comparison.baseline_months)})`
                   : 'Over 50 years'}
-              </span>
+              </dd>
             </div>
             {extraMonthlyPence > 0 && (
               <div className="flex items-center justify-between py-2.5">
-                <span className="text-[0.8125rem] text-brand-muted">Goal reached</span>
-                <span className="text-[0.875rem] font-semibold text-brand-gold-text">
+                <dt className="text-[0.8125rem] text-brand-muted">Goal reached</dt>
+                <dd className="text-[0.875rem] font-semibold text-brand-gold-text">
                   {comparison.months_saved}{' '}
                   {comparison.months_saved === 1 ? 'month' : 'months'} sooner
-                </span>
+                </dd>
               </div>
             )}
             <div className="flex items-center justify-between py-2.5">
-              <span className="text-[0.8125rem] text-brand-muted">Total monthly deposit</span>
-              <span className="text-[0.875rem] font-semibold text-brand-text">
+              <dt className="text-[0.8125rem] text-brand-muted">Total monthly deposit</dt>
+              <dd className="text-[0.875rem] font-semibold text-brand-text">
                 {formatGBPFromPence(savings.monthly_contribution_pence + extraMonthlyPence)}/mo
-              </span>
+              </dd>
             </div>
             <div className="flex items-center justify-between py-2.5">
-              <span className="text-[0.8125rem] text-brand-muted">Interest earned to goal</span>
-              <span className="text-[0.875rem] font-semibold text-brand-text">
+              <dt className="text-[0.8125rem] text-brand-muted">Interest earned to goal</dt>
+              <dd className="text-[0.875rem] font-semibold text-brand-text">
                 +{formatGBPFromPence(comparison.total_interest_earned_pence)}
-              </span>
+              </dd>
             </div>
-          </div>
+          </dl>
         )}
       </div>
     </div>

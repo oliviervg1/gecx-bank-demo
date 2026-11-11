@@ -5,15 +5,9 @@ import { MonthlyComparisonBarChart } from '../../components/SemanticBarCharts'
 import { SpendingHeader } from './SpendingHeader'
 import type { Transaction } from '../../data/fixture'
 import { formatGBPFromPence } from '../../util/currency'
-import { bucketByMonth, matchVendorRows } from '../../util/spendingViews'
+import { bucketByMonth, formatCategoryLabel, matchVendorRows } from '../../util/spendingViews'
 
 const EMPTY: Transaction[] = []
-
-function prettyCategory(category: string): string {
-  const spaced = category.replace(/_/g, ' ')
-  if (spaced.length === 0) return spaced
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
-}
 
 interface Props {
   category?: string
@@ -41,7 +35,7 @@ export function MonthlyTrendView({ category, vendor }: Props) {
     [transactions, category, canonicalVendor, demoDate],
   )
 
-  const scopeLabel = canonicalVendor ?? (category ? prettyCategory(category) : undefined)
+  const scopeLabel = canonicalVendor ?? (category ? formatCategoryLabel(category) : undefined)
   const breadcrumb = scopeLabel ? `Trend › ${scopeLabel}` : undefined
   const threeMonthTotalPence = buckets.reduce((sum, b) => sum + b.total_pence, 0)
   const prevMonthName = buckets[1]?.monthName ?? 'last month'
@@ -82,9 +76,9 @@ export function MonthlyTrendView({ category, vendor }: Props) {
       )}
 
       <div data-chart-slot="monthly_trend" className="py-4 border-b border-brand-divider">
-        <div className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium mb-2">
+        <h2 className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium mb-2">
           Three-Month Statement Comparison
-        </div>
+        </h2>
         <MonthlyComparisonBarChart
           data={chartData}
           ariaLabel={

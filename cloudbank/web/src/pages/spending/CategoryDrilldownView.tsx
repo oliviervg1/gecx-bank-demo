@@ -7,15 +7,9 @@ import { TransactionRow } from './TransactionRow'
 import { SpendingHeader } from './SpendingHeader'
 import type { Transaction } from '../../data/fixture'
 import { formatGBPFromPence } from '../../util/currency'
-import { categoryDrilldownView, vendorsEqual } from '../../util/spendingViews'
+import { categoryDrilldownView, formatCategoryLabel, vendorsEqual } from '../../util/spendingViews'
 
 const EMPTY: Transaction[] = []
-
-function prettyCategory(category: string): string {
-  const spaced = category.replace(/_/g, ' ')
-  if (spaced.length === 0) return spaced
-  return spaced.charAt(0).toUpperCase() + spaced.slice(1)
-}
 
 interface Props {
   category: string
@@ -39,14 +33,15 @@ export function CategoryDrilldownView({ category }: Props) {
       })),
     [byVendorPence],
   )
+  const categoryLabel = formatCategoryLabel(category)
 
   return (
     <div className="pb-6">
-      <SpendingHeader breadcrumb={prettyCategory(category)} />
+      <SpendingHeader breadcrumb={categoryLabel} />
 
       <div className="py-4 border-b border-brand-divider">
         <div className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium">
-          {monthName} · {prettyCategory(category)}
+          {monthName} · {categoryLabel}
         </div>
         <div className="text-[1.75rem] font-bold text-brand-text mt-1 leading-none tabular-nums">
           {formatGBPFromPence(total_pence)}
@@ -61,29 +56,30 @@ export function CategoryDrilldownView({ category }: Props) {
           data-chart-slot="category_vendors"
           className="py-4 border-b border-brand-divider"
         >
-          <div className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium mb-2">
+          <h2 className="text-[0.6875rem] tracking-[0.08em] uppercase text-brand-muted font-medium mb-2">
             By Merchant
-          </div>
+          </h2>
           <HorizontalMerchantBarChart
             data={barData}
-            ariaLabel={`${monthName} ${prettyCategory(category)} spending by merchant`}
+            ariaLabel={`${monthName} ${categoryLabel} spending by merchant`}
           />
         </div>
       )}
 
-      <div className="mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider">
+      <ul className="list-none m-0 p-0 mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider">
         {filtered.map((t) => (
-          <TransactionRow
-            key={t.id}
-            transaction={t}
-            highlighted={
-              highlightVendor
-                ? vendorsEqual(t.vendor, highlightVendor)
-                : Boolean(t.is_anomaly)
-            }
-          />
+          <li key={t.id}>
+            <TransactionRow
+              transaction={t}
+              highlighted={
+                highlightVendor
+                  ? vendorsEqual(t.vendor, highlightVendor)
+                  : Boolean(t.is_anomaly)
+              }
+            />
+          </li>
         ))}
-      </div>
+      </ul>
     </div>
   )
 }

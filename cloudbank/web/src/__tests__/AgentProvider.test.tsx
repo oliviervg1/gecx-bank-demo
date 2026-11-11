@@ -129,8 +129,9 @@ describe('AgentProvider (sessionMachine integration)', () => {
     }
   })
 
-  it('reconnects with sessionId + lastUiSeq on ServerGoAway and omits sessionId on manual reconnect', () => {
+  it('reconnects with sessionId + lastUiSeq on ServerGoAway and transient WS_CLOSED, and omits sessionId on manual reconnect', () => {
     const spy = installWebSocketSpy()
+    vi.useFakeTimers()
     try {
       renderWithProviders()
       act(() => {
@@ -156,15 +157,28 @@ describe('AgentProvider (sessionMachine integration)', () => {
       expect(resumedStart.sessionId).toBe('live-42')
       expect(resumedStart.lastUiSeq).toBe(4)
 
+      // Transient WS_CLOSED in ready schedules backoff reconnect with sessionId='live-42'!
       act(() => {
-        fireEvent.click(screen.getByText('reconnect'))
+        spy.instances[1]!.closeFromServer()
+        vi.advanceTimersByTime(400)
       })
       expect(spy.instances).toHaveLength(3)
       act(() => {
         spy.instances[2]!.openFromServer()
+        spy.instances[2]!.deliver({ type: 'ready', sessionId: 'live-42' })
       })
-      expect(JSON.parse(spy.instances[2]!.sent[0]!)).not.toHaveProperty('sessionId')
+      expect(JSON.parse(spy.instances[2]!.sent[0]!).sessionId).toBe('live-42')
+
+      act(() => {
+        fireEvent.click(screen.getByText('reconnect'))
+      })
+      expect(spy.instances).toHaveLength(4)
+      act(() => {
+        spy.instances[3]!.openFromServer()
+      })
+      expect(JSON.parse(spy.instances[3]!.sent[0]!)).not.toHaveProperty('sessionId')
     } finally {
+      vi.useRealTimers()
       spy.restore()
     }
   })

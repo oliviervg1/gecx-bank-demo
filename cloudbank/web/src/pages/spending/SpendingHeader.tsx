@@ -59,7 +59,10 @@ export function SpendingHeader({ breadcrumb, showPeriodSelector = true }: Props)
               <ChevronLeft size={18} aria-hidden="true" />
             </button>
           )}
-          <h1 className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text truncate leading-tight">
+          <h1
+            tabIndex={-1}
+            className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text truncate leading-tight"
+          >
             {breadcrumb ? `Spending › ${breadcrumb}` : 'Spending'}
           </h1>
         </div>

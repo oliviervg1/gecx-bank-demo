@@ -2,13 +2,18 @@
 
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
 import { render, screen, act, fireEvent, cleanup } from '@testing-library/react'
-import { AgentProvider, useAgent } from '../agent/AgentProvider'
+import {
+  AgentProvider,
+  PTT_MIC_IDLE_RELEASE_MS,
+  useAgent,
+} from '../agent/AgentProvider'
 import { BankingViewStateProvider } from '../agent/BankingViewStateProvider'
 import { PersonaProvider } from '../personas/PersonaProvider'
 
-let tracks: Array<{ enabled: boolean; stop: () => void }> = []
+let tracks: Array<{ enabled: boolean; stop: ReturnType<typeof vi.fn>; onended?: (() => void) | null }> = []
 let workletPort: { onmessage: ((e: { data: Float32Array }) => void) | null } | null = null
 let sockets: FakeSocket[] = []
+let audioContextsCreated = 0
 
 class FakeSocket {
   static readonly CONNECTING = 0
@@ -47,16 +52,19 @@ const originals = {
 }
 
 beforeEach(() => {
-  tracks = [{ enabled: true, stop: vi.fn() }]
+  tracks = [{ enabled: true, stop: vi.fn(), onended: null }]
   workletPort = null
   sockets = []
+  audioContextsCreated = 0
 
   class CtxStub {
     currentTime = 0
     state = 'running'
     destination = {}
     audioWorklet = { addModule: () => Promise.resolve() }
-    constructor(_o?: unknown) {}
+    constructor(_o?: unknown) {
+      audioContextsCreated += 1
+    }
     createMediaStreamSource() {
       return { connect() {}, disconnect() {} }
     }
@@ -162,7 +170,7 @@ async function mount() {
 function sentSilence(ws: FakeSocket): boolean {
   const before = ws.sent.length
   act(() => {
-    workletPort!.onmessage!({ data: new Float32Array(160).fill(0.5) })
+    workletPort?.onmessage?.({ data: new Float32Array(160).fill(0.5) })
   })
   const frames = ws.sent
     .slice(before)
@@ -174,9 +182,10 @@ function sentSilence(ws: FakeSocket): boolean {
 }
 
 describe('push-to-talk over the wire', () => {
-  it('is on by default', async () => {
+  it('is on by default and lazily defers AudioContext creation until user gesture or playback', async () => {
     await mount()
     expect(screen.getByTestId('ptt').textContent).toBe('true')
+    expect(audioContextsCreated).toBe(0)
   })
 
   it('sends silence before the presenter holds', async () => {
@@ -193,24 +202,65 @@ describe('push-to-talk over the wire', () => {
     expect(sentSilence(ws)).toBe(true)
   })
 
-  it('sends real audio while held and goes silent again on release', async () => {
-    const ws = await mount()
+  it('sends real audio while held, goes silent on release, and releases hardware mic tracks after PTT idle window', async () => {
+    vi.useFakeTimers()
+    try {
+      const ws = await mount()
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('begin'))
+        await Promise.resolve()
+        await Promise.resolve()
+      })
+      expect(screen.getByTestId('mic').textContent).toBe('held')
+      expect(tracks[0]!.enabled).toBe(true)
+      expect(sentSilence(ws)).toBe(false)
+
+      await act(async () => {
+        fireEvent.click(screen.getByTestId('end'))
+        await Promise.resolve()
+      })
+      expect(tracks[0]!.enabled).toBe(false)
+      expect(sentSilence(ws)).toBe(true)
+      expect(screen.getByTestId('mic').textContent).toBe('idle')
+
+      await act(async () => {
+        vi.advanceTimersByTime(PTT_MIC_IDLE_RELEASE_MS + 100)
+      })
+      expect(tracks[0]!.stop).toHaveBeenCalledTimes(1)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('returns to ready instead of freezing in thinking when blur/release fires while getUserMedia prompt is pending', async () => {
+    let resolveGum!: (stream: unknown) => void
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: {
+        getUserMedia: () =>
+          new Promise((resolve) => {
+            resolveGum = resolve
+          }),
+      },
+    })
+
+    await mount()
     await act(async () => {
       fireEvent.click(screen.getByTestId('begin'))
-      await Promise.resolve()
-      await Promise.resolve()
-    })
-    expect(screen.getByTestId('mic').textContent).toBe('held')
-    expect(tracks[0]!.enabled).toBe(true)
-    expect(sentSilence(ws)).toBe(false)
-
-    await act(async () => {
+      // Simulate immediate window.blur from browser permission prompt BEFORE getUserMedia resolves!
       fireEvent.click(screen.getByTestId('end'))
       await Promise.resolve()
     })
-    expect(tracks[0]!.enabled).toBe(false)
-    expect(sentSilence(ws)).toBe(true)
-    expect(screen.getByTestId('mic').textContent).toBe('idle')
+    expect(screen.getByTestId('phase').textContent).toBe('ready')
+
+    // When the user later clicks Allow on the dialog, orphaned stream tracks are stopped immediately.
+    await act(async () => {
+      resolveGum({ getTracks: () => tracks, getAudioTracks: () => tracks })
+      await Promise.resolve()
+      await Promise.resolve()
+    })
+    expect(screen.getByTestId('phase').textContent).toBe('ready')
+    expect(tracks[0]!.stop).toHaveBeenCalledTimes(1)
   })
 
   it('half-duplex: mutes mic when agent replies after release, and barge-in survives in-flight chunks', async () => {

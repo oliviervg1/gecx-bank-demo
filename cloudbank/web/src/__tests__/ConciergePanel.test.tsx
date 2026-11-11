@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
-import { MotionConfig } from 'framer-motion'
+import { render, screen, within, fireEvent, act, cleanup } from '@testing-library/react'
 import App from '../App'
+import { buildSandboxedSuggestionDoc } from '../workbench/ConciergePanel'
 
 interface CapturedSocket {
   url: string
@@ -78,12 +78,8 @@ afterEach(() => {
 })
 
 describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
-  it('renders executive greeting on ready, mode-aware helper copy for ?ptt=0, calm Reconnect status on error, and zero technical jargon', async () => {
-    const { unmount } = render(
-      <MotionConfig reducedMotion="always">
-        <App />
-      </MotionConfig>,
-    )
+  it('renders executive greeting on ready, mode-aware helper copy for ?ptt=0, calm Reconnect alert on error, and zero technical jargon', async () => {
+    const { unmount } = render(<App />)
 
     const ws = sockets[sockets.length - 1]!
     await act(async () => {
@@ -91,6 +87,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       ws.deliver({ type: 'ready', sessionId: 'sess-exec' })
     })
 
+    expect(document.title).toBe('Cloudbank — Home')
     expect(screen.getByText('How can I help today, Chloe?')).toBeInTheDocument()
     expect(screen.queryByTestId('active-specialist-pill')).toBeNull()
 
@@ -109,7 +106,9 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     await act(async () => {
       ws.deliver({ type: 'error', message: 'upstream 1007 failed_precondition' })
     })
-    expect(screen.getByTestId('concierge-unavailable-state')).toHaveTextContent(
+    const unavailable = screen.getByTestId('concierge-unavailable-state')
+    expect(unavailable).toHaveAttribute('role', 'alert')
+    expect(unavailable).toHaveTextContent(
       "We couldn't reach the concierge. Select Reconnect to try again.",
     )
     fireEvent.click(screen.getAllByRole('button', { name: 'Reconnect' })[0]!)
@@ -118,11 +117,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
 
     // Continuous mode (?ptt=0) renders hands-free helper copy instead of "Hold to talk".
     window.history.replaceState({}, '', '/?ptt=0')
-    render(
-      <MotionConfig reducedMotion="always">
-        <App />
-      </MotionConfig>,
-    )
+    render(<App />)
     const wsCont = sockets[sockets.length - 1]!
     await act(async () => {
       wsCont.open()
@@ -131,18 +126,22 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     expect(screen.getByText(/start hands-free listening/i)).toBeInTheDocument()
   })
 
-  it('drives every field of ui_view_state across all 5 tabs, announces navigation + finalized turns politely, and sandboxes search HTML', async () => {
-    render(
-      <MotionConfig reducedMotion="always">
-        <App />
-      </MotionConfig>,
+  it('drives every field of ui_view_state across all 5 tabs, updates document.title, and sandboxes search HTML with inner CSP', async () => {
+    const doc = buildSandboxedSuggestionDoc('<div>chip</div>')
+    expect(doc).toContain(
+      `http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; img-src data: https:; form-action 'none';"`,
     )
+
+    render(<App />)
 
     const ws = sockets[sockets.length - 1]!
     await act(async () => {
       ws.open()
       ws.deliver({ type: 'ready', sessionId: 'sess-e2e' })
     })
+
+    const input = screen.getByLabelText('Ask your Cloudbank concierge')
+    expect(input).toHaveAttribute('maxLength', '8192')
 
     // 1. Spending overview + highlight_vendor + anomaly_status + polite navigation announcement
     await act(async () => {
@@ -159,6 +158,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
         },
       })
     })
+    expect(document.title).toBe('Cloudbank — Spending')
     expect(await screen.findByTestId('anomaly-status-badge')).toHaveTextContent(
       'Marked as not recognised',
     )
@@ -220,7 +220,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       ws.deliver({
         type: 'text',
         partial: false,
-        text: '<reassuring> To cancel Netflix in the UK, open Account settings or FREEZE your card (4.50% AER, no ERC via BACS or CHAPS). [Diagnosis context: internal [nested] search payload]',
+        text: '<warm><positive> To cancel Netflix in the UK, open Account settings or FREEZE your card (4.50% AER, no ERC via BACS or CHAPS). [Diagnosis context: internal [nested] search payload]',
       })
       ws.deliver({
         type: 'search_suggestions',
@@ -252,14 +252,15 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     expect(stream.textContent).not.toContain('FLAGGED')
     expect(stream.textContent).not.toContain('FREEZE')
     expect(stream.textContent).not.toContain('Diagnosis context')
-    expect(stream.textContent).not.toContain('<reassuring>')
+    expect(stream.textContent).not.toContain('<positive>')
 
+    const suggestionsBlock = screen.getByTestId('search-suggestions-block')
+    expect(suggestionsBlock).toHaveTextContent(/Web search results/i)
     const iframe = stream.querySelector('iframe')
     expect(iframe).not.toBeNull()
+    expect(iframe?.className).toContain('min-h-10')
     expect(iframe?.getAttribute('sandbox')).toBe('allow-popups allow-popups-to-escape-sandbox')
-    const citationLinks = Array.from(
-      screen.getByTestId('search-suggestions-block').querySelectorAll('a'),
-    )
+    const citationLinks = Array.from(suggestionsBlock.querySelectorAll('a'))
     expect(citationLinks).toHaveLength(3)
     expect(citationLinks[0]).toHaveTextContent('Netflix Help Centre')
 
@@ -276,6 +277,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
         },
       })
     })
+    expect(document.title).toBe('Cloudbank — Savings')
     expect(await screen.findByText('Home Emergency Pot')).toBeInTheDocument()
     expect(screen.getByText('+£45.00/mo')).toBeInTheDocument()
     expect(screen.getByTestId('active-specialist-pill')).toHaveTextContent('Savings')
@@ -293,6 +295,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
         },
       })
     })
+    expect(document.title).toBe('Cloudbank — Mortgage')
     expect(await screen.findByTestId('mortgage-overpay-view')).toBeInTheDocument()
     expect(screen.getByTestId('ui-navigation-announcer')).toHaveTextContent(
       'Showing Mortgage: Overpay',
@@ -301,12 +304,49 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     await act(async () => {
       ws.deliver({ type: 'ui_state', tier: 1, state: { seq: 6, page: 'profile' } })
     })
+    expect(document.title).toBe('Cloudbank — Profile')
     expect(await screen.findByText('Debit Card Controls')).toBeInTheDocument()
 
     await act(async () => {
       ws.deliver({ type: 'ui_state', tier: 1, state: { seq: 7, page: 'home' } })
     })
+    expect(document.title).toBe('Cloudbank — Home')
     expect(await screen.findByText('Accounts Overview')).toBeInTheDocument()
+  })
+
+  it('suppresses concierge-turn-announcer when turn.hadAudio is true and alternates zero-width space on repeated text-only replies', async () => {
+    render(<App />)
+    const ws = sockets[sockets.length - 1]!
+    await act(async () => {
+      ws.open()
+      ws.deliver({ type: 'ready', sessionId: 'sess-audio-live' })
+    })
+
+    // 1. Text-only turn #1 -> announced cleanly without zero-width space.
+    await act(async () => {
+      ws.deliver({ type: 'transcript', text: 'Balance?', isFinal: true })
+      ws.deliver({ type: 'text', partial: false, text: 'Your balance is £4,250.75.' })
+      ws.deliver({ type: 'turn_complete', turnIndex: 1 })
+    })
+    const announcer = screen.getByTestId('concierge-turn-announcer')
+    expect(announcer.textContent).toBe('Cloudbank Concierge: Your balance is £4,250.75.')
+
+    // 2. Identical text-only turn #2 -> appends \u200B so screen readers announce the repeat!
+    await act(async () => {
+      ws.deliver({ type: 'transcript', text: 'Say that again', isFinal: true })
+      ws.deliver({ type: 'text', partial: false, text: 'Your balance is £4,250.75.' })
+      ws.deliver({ type: 'turn_complete', turnIndex: 2 })
+    })
+    expect(announcer.textContent).toBe('Cloudbank Concierge: Your balance is £4,250.75.\u200B')
+
+    // 3. Spoken audio turn -> announcer text suppressed so screen readers do not talk over WebAudio TTS!
+    await act(async () => {
+      ws.deliver({ type: 'transcript', text: 'Read it aloud', isFinal: true })
+      ws.deliver({ type: 'audio', data: 'AAAA' })
+      ws.deliver({ type: 'text', partial: false, text: 'Your balance is £4,250.75.' })
+      ws.deliver({ type: 'turn_complete', turnIndex: 3 })
+    })
+    expect(announcer.textContent).toBe('')
   })
 
   it('shows microphone permission guidance instead of connection error when mic is blocked on an open socket', async () => {
@@ -323,12 +363,15 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       },
     })
     ;(globalThis as unknown as { AudioContext: unknown }).AudioContext = class {
+      currentTime = 0
       state = 'running'
       sampleRate = 48000
       audioWorklet = { addModule: vi.fn().mockResolvedValue(undefined) }
       resume = vi.fn().mockResolvedValue(undefined)
       close = vi.fn().mockResolvedValue(undefined)
       createMediaStreamSource = vi.fn()
+      createBuffer = vi.fn()
+      createBufferSource = vi.fn()
       destination = {}
     }
 
@@ -338,11 +381,7 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
         releasePointerCapture: vi.fn(),
       })
 
-      render(
-        <MotionConfig reducedMotion="always">
-          <App />
-        </MotionConfig>,
-      )
+      render(<App />)
 
       const ws = sockets[sockets.length - 1]!
       await act(async () => {
@@ -378,13 +417,9 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     }
   })
 
-  it('tailors starter prompts per persona and opens mobile concierge drawer with h1 heading', async () => {
+  it('keeps mobile concierge drawer open across cross-page ServerUiState updates and closes on Escape', async () => {
     window.history.replaceState({}, '', '/?persona=tom')
-    const { unmount } = render(
-      <MotionConfig reducedMotion="always">
-        <App />
-      </MotionConfig>,
-    )
+    const { unmount } = render(<App />)
 
     const wsTom = sockets[sockets.length - 1]!
     await act(async () => {
@@ -410,16 +445,42 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     unmount()
 
     window.history.replaceState({}, '', '/?layout=mobile')
-    render(
-      <MotionConfig reducedMotion="always">
-        <App />
-      </MotionConfig>,
-    )
+    render(<App />)
+    const wsMob = sockets[sockets.length - 1]!
+    await act(async () => {
+      wsMob.open()
+      wsMob.deliver({ type: 'ready', sessionId: 'sess-mob' })
+    })
+
     expect(screen.getByRole('button', { name: 'Desktop View' })).toBeInTheDocument()
-    fireEvent.click(screen.getByTestId('mobile-concierge-toggle'))
+    const toggleBtn = screen.getByTestId('mobile-concierge-toggle')
+    fireEvent.click(toggleBtn)
     expect(screen.getByTestId('mobile-concierge-drawer')).toBeInTheDocument()
     expect(
       screen.getByRole('heading', { level: 1, name: 'Cloudbank Concierge' }),
     ).toBeInTheDocument()
+
+    // Cross-page navigation from Home -> Spending MUST NOT close the mobile chat drawer!
+    await act(async () => {
+      wsMob.deliver({
+        type: 'ui_state',
+        tier: 1,
+        state: { seq: 1, page: 'spending', view: 'subscriptions' },
+      })
+      wsMob.deliver({
+        type: 'text',
+        partial: false,
+        text: 'You have 6 recurring charges this month totalling £1,731.90.',
+      })
+      wsMob.deliver({ type: 'turn_complete', turnIndex: 1 })
+    })
+    expect(screen.getByTestId('mobile-concierge-drawer')).toBeInTheDocument()
+    expect(
+      within(screen.getByTestId('turn-assistant')).getByText(/£1,731.90/),
+    ).toBeInTheDocument()
+
+    // Pressing Escape closes the drawer cleanly!
+    fireEvent.keyDown(window, { key: 'Escape' })
+    expect(screen.queryByTestId('mobile-concierge-drawer')).toBeNull()
   })
 })

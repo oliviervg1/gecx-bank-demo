@@ -43,7 +43,7 @@ function visualFor(
           className="animate-pulse motion-reduce:animate-none"
         />
       ),
-      className: 'bg-brand-green text-white opacity-75',
+      className: 'bg-brand-green text-white opacity-80',
       onClick: null,
     }
   }
@@ -140,6 +140,7 @@ function tooltipFor(
   micState: MicState,
   micDenied: boolean,
   pushToTalk: boolean,
+  spacebarEnabled: boolean,
 ): string | undefined {
   if (micDenied || micState === 'muted') {
     return pushToTalk
@@ -151,13 +152,17 @@ function tooltipFor(
   }
   if (phase === 'paused') {
     return pushToTalk
-      ? 'Hold or select this button, or hold the Spacebar, to resume'
+      ? spacebarEnabled
+        ? 'Hold or select this button, or hold the Spacebar, to resume'
+        : 'Hold or select this button to resume'
       : 'Select to resume your concierge session'
   }
   if (pushToTalk) {
     return phase === 'capturing'
       ? 'Release, click, or press Enter to send'
-      : 'Hold or click this button, or hold the Spacebar, to talk'
+      : spacebarEnabled
+        ? 'Hold or click this button, or hold the Spacebar, to talk'
+        : 'Hold or click this button to talk'
   }
   return phase === 'capturing' ? 'Select to stop listening' : 'Select to start listening'
 }
@@ -167,6 +172,7 @@ export function ConciergePill() {
   const phase = resolvePhase(agent.phase, agent.connState, agent.micState)
   const micDenied = Boolean(agent.micDenied) || agent.micState === 'muted'
   const isCapturing = phase === 'capturing'
+  const spacebarEnabled = agent.spacebarShortcutEnabled ?? true
   const holdable =
     agent.pushToTalk && phase !== 'connecting' && !(phase === 'error' && !micDenied)
 
@@ -177,6 +183,7 @@ export function ConciergePill() {
     allowClickToggle: true,
     isCapturing,
     canClickStart: phase !== 'agentSpeaking' && phase !== 'drainingFarewell',
+    enableSpacebar: spacebarEnabled,
   })
 
   const v = visualFor(phase, agent.micState, micDenied, agent.pushToTalk, {
@@ -189,6 +196,7 @@ export function ConciergePill() {
 
   const { onClick: holdClick, ...pointerHoldProps } = hold
   const effectiveOnClick = holdable ? holdClick : (v.onClick ?? undefined)
+  const isInactive = effectiveOnClick === undefined && !holdable
   const exposePressedState =
     holdable ||
     (!agent.pushToTalk && phase !== 'connecting' && phase !== 'error' && phase !== 'paused')
@@ -198,10 +206,16 @@ export function ConciergePill() {
       type="button"
       data-concierge-pill="true"
       aria-pressed={exposePressedState ? isCapturing : undefined}
-      onClick={effectiveOnClick}
-      disabled={effectiveOnClick === undefined && !holdable}
+      aria-disabled={isInactive ? true : undefined}
+      onClick={(e) => {
+        if (isInactive) {
+          e.preventDefault()
+          return
+        }
+        effectiveOnClick?.(e)
+      }}
       style={holdable ? { touchAction: 'none' } : undefined}
-      title={tooltipFor(phase, agent.micState, micDenied, agent.pushToTalk)}
+      title={tooltipFor(phase, agent.micState, micDenied, agent.pushToTalk, spacebarEnabled)}
       {...(holdable ? pointerHoldProps : {})}
       className={
         'min-h-9 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full ' +

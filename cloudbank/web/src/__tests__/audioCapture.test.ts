@@ -8,6 +8,7 @@ import {
 interface FakeTrack {
   enabled: boolean
   stop: ReturnType<typeof vi.fn>
+  onended?: (() => void) | null
 }
 let tracks: FakeTrack[] = []
 let lastAudioContextOptions: unknown = 'UNSET'
@@ -27,7 +28,7 @@ const originals = {
 }
 
 beforeEach(() => {
-  tracks = [{ enabled: true, stop: vi.fn() }]
+  tracks = [{ enabled: true, stop: vi.fn(), onended: null }]
   lastAudioContextOptions = 'UNSET'
   contextClosed = false
   mediaSourceThrow = null
@@ -89,7 +90,7 @@ function decode(b64: string): Int16Array {
   return new Int16Array(bytes.buffer)
 }
 
-describe('createAudioCapture: hardware-rate context, bundled TS worklet, abort leak guard, and flush ordering', () => {
+describe('createAudioCapture: hardware-rate context, bundled TS worklet, abort leak guard, track.onended, and flush ordering', () => {
   it('creates AudioContext at native hardware rate and cleans up stream/context if createMediaStreamSource throws', async () => {
     const sent: string[] = []
     const cap = await createAudioCapture((b64) => sent.push(b64), { startMuted: true })
@@ -97,11 +98,20 @@ describe('createAudioCapture: hardware-rate context, bundled TS worklet, abort l
     expect(cap.isMuted()).toBe(true)
     cap.stop()
 
-    tracks = [{ enabled: true, stop: vi.fn() }]
+    tracks = [{ enabled: true, stop: vi.fn(), onended: null }]
     contextClosed = false
     mediaSourceThrow = new Error('Connecting AudioNodes from AudioContexts with different sample-rate')
     await expect(createAudioCapture(() => {})).rejects.toThrow(/different sample-rate/)
     expect(tracks[0]!.stop).toHaveBeenCalledTimes(1)
+    expect(contextClosed).toBe(true)
+  })
+
+  it('invokes onEnded and closes capture cleanly when a microphone hardware track ends unexpectedly', async () => {
+    const onEnded = vi.fn()
+    await createAudioCapture(() => {}, { onEnded })
+    expect(typeof tracks[0]!.onended).toBe('function')
+    tracks[0]!.onended?.()
+    expect(onEnded).toHaveBeenCalledTimes(1)
     expect(contextClosed).toBe(true)
   })
 

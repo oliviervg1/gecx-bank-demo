@@ -46,7 +46,7 @@ export function ProfilePage() {
     return (
       <div className="pt-12 flex flex-col items-center gap-4 text-center">
         <div className="p-6 rounded-xl border border-brand-divider bg-white w-full">
-          <h1 className="text-[1.125rem] font-semibold text-brand-text mb-2">
+          <h1 tabIndex={-1} className="text-[1.125rem] font-semibold text-brand-text mb-2">
             You&apos;ve been signed out
           </h1>
           <p className="text-[0.8125rem] text-brand-muted mb-4">
@@ -71,7 +71,10 @@ export function ProfilePage() {
           {initials}
         </div>
         <div className="min-w-0">
-          <h1 className="text-[1.25rem] font-bold tracking-[-0.01em] text-brand-text leading-tight truncate">
+          <h1
+            tabIndex={-1}
+            className="text-[1.25rem] font-bold tracking-[-0.01em] text-brand-text leading-tight truncate"
+          >
             {user.first_name} {user.last_name}
           </h1>
           <div className="text-[0.8125rem] text-brand-muted truncate">{email}</div>
@@ -79,53 +82,65 @@ export function ProfilePage() {
       </div>
 
       {/* Personal & Card Controls */}
-      <div className="divide-y divide-brand-divider border-b border-brand-divider">
-        <ListRow
-          icon={<IconBadge icon={User} tone="green" />}
-          title="Personal Details"
-          subtitle={`${user.employment} · ${user.location} · Age ${user.age}`}
-        />
+      <h2 className="sr-only">Account and security settings</h2>
+      <ul
+        aria-label="Account and security settings"
+        className="list-none m-0 p-0 divide-y divide-brand-divider border-b border-brand-divider"
+      >
+        <li>
+          <ListRow
+            icon={<IconBadge icon={User} tone="green" />}
+            title="Personal Details"
+            subtitle={`${user.employment} · ${user.location} · Age ${user.age}`}
+          />
+        </li>
 
-        <ListRow
-          icon={<IconBadge icon={CreditCard} tone={cardFrozen ? 'gold' : 'green'} />}
-          title="Debit Card Controls"
-          subtitle={
-            cardFrozen
-              ? 'Card temporarily frozen · Recurring direct debits unaffected'
-              : 'Card active · Instant freeze available for unrecognised charges'
-          }
-          right={
-            <button
-              type="button"
-              onClick={() => {
-                const next = !cardFrozen
-                setCardFrozen(next)
-                show(next ? 'Your debit card is frozen.' : 'Your debit card is unfrozen.')
-              }}
-              className={
-                'min-h-9 px-3 py-1.5 rounded-lg text-[0.75rem] font-semibold border transition-colors ' +
-                (cardFrozen
-                  ? 'border-brand-gold-text text-brand-gold-text bg-[#fcf9f2]'
-                  : 'border-brand-border-strong text-brand-text bg-white hover:bg-[#faf9f6]')
-              }
-            >
-              {cardFrozen ? 'Unfreeze' : 'Freeze card'}
-            </button>
-          }
-        />
+        <li>
+          <ListRow
+            icon={<IconBadge icon={CreditCard} tone={cardFrozen ? 'gold' : 'green'} />}
+            title="Debit Card Controls"
+            subtitle={
+              cardFrozen
+                ? 'Card temporarily frozen · Recurring direct debits unaffected'
+                : 'Card active · Instant freeze available for unrecognised charges'
+            }
+            right={
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !cardFrozen
+                  setCardFrozen(next)
+                  show(next ? 'Your debit card is frozen.' : 'Your debit card is unfrozen.')
+                }}
+                className={
+                  'min-h-9 px-3 py-1.5 rounded-lg text-[0.75rem] font-semibold border transition-colors ' +
+                  (cardFrozen
+                    ? 'border-brand-gold-text text-brand-gold-text bg-[#fcf9f2]'
+                    : 'border-brand-border-strong text-brand-text bg-white hover:bg-[#faf9f6]')
+                }
+              >
+                {cardFrozen ? 'Unfreeze' : 'Freeze card'}
+              </button>
+            }
+          />
+        </li>
 
-        <ListRow
-          icon={<IconBadge icon={Shield} tone="green" />}
-          title="Privacy & Security"
-          subtitle="Two-step verification on · Biometric sign-in active"
-        />
+        <li>
+          <ListRow
+            icon={<IconBadge icon={Shield} tone="green" />}
+            title="Privacy & Security"
+            subtitle="Two-step verification on · Biometric sign-in active"
+          />
+        </li>
 
-        <ListRow
-          icon={<IconBadge icon={PhoneCall} tone="muted" />}
-          title="Specialist Support"
-          subtitle="Freephone 0808 157 0100 · Samaritans 116 123"
-        />
-      </div>
+        <li>
+          <ListRow
+            icon={<IconBadge icon={PhoneCall} tone="muted" />}
+            title="Specialist Support"
+            subtitle="Freephone 0808 157 0100 · Samaritans 116 123"
+          />
+        </li>
+      </ul>
 
       <button
         type="button"

@@ -1,6 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent, act } from '@testing-library/react'
-import { MotionConfig } from 'framer-motion'
 import App from '../App'
 import { ProfilePage } from '../pages/ProfilePage'
 import { ToastProvider } from '../components/ToastProvider'
@@ -35,11 +34,11 @@ function makeAgent() {
 function renderProfile(agent = makeAgent()) {
   render(
     <PersonaProvider>
-      <AgentContext.Provider value={agent}>
+      <AgentContext value={agent}>
         <ToastProvider>
           <ProfilePage />
         </ToastProvider>
-      </AgentContext.Provider>
+      </AgentContext>
     </PersonaProvider>,
   )
   return agent
@@ -73,11 +72,7 @@ describe('ProfilePage & app-level sign-out', () => {
   })
 
   it('lifts Log out securely to app level, hiding TabBar, ConciergePanel, and turns until Sign back in or persona switch', async () => {
-    render(
-      <MotionConfig reducedMotion="always">
-        <App />
-      </MotionConfig>,
-    )
+    render(<App />)
 
     // Submit a question so a turn is visible in ConciergePanel, then navigate to Profile.
     const input = screen.getByLabelText('Ask your Cloudbank concierge')

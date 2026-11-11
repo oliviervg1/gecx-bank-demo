@@ -4,12 +4,16 @@
 import type { SpendCategory } from '../data/fixture'
 import type { SpendingPeriod } from '../util/demoClock'
 
+export const MAX_AUDIO_B64_LEN = 87_384
+export const MAX_CLIENT_TEXT_CHARS = 8_192
+
 export type PersonaId = 'chloe' | 'david' | 'tom' | 'sarah'
 export type TimeOfDay = 'morning' | 'afternoon' | 'evening'
 
 export type UiPageId = 'home' | 'spending' | 'savings' | 'mortgage' | 'profile'
 export type UiSpendingViewId = 'overview' | 'category' | 'vendor' | 'trend' | 'subscriptions'
 export type UiMortgageSubviewId = 'overview' | 'overpay' | 'rates'
+export type WireAnomalyStatus = 'confirmed' | 'unrecognised'
 
 export interface UiViewStatePayload {
   seq: number
@@ -19,7 +23,8 @@ export interface UiViewStatePayload {
   category?: SpendCategory | string
   vendor?: string
   highlight_vendor?: string
-  anomaly_status?: 'confirmed' | 'unrecognised'
+  anomaly_status?: WireAnomalyStatus
+  anomaly_by_vendor?: Record<string, WireAnomalyStatus>
   extra_monthly_pence?: number
   custom_target_pence?: number
   subview?: UiMortgageSubviewId
@@ -156,6 +161,7 @@ const ALLOWED_UI_STATE_KEYS = new Set<string>([
   'vendor',
   'highlight_vendor',
   'anomaly_status',
+  'anomaly_by_vendor',
   'extra_monthly_pence',
   'custom_target_pence',
   'subview',
@@ -184,6 +190,10 @@ function isValidUiPeriod(val: unknown): val is SpendingPeriod {
 
 function isValidUiSubview(val: unknown): val is UiMortgageSubviewId {
   return typeof val === 'string' && VALID_UI_SUBVIEWS.has(val as UiMortgageSubviewId)
+}
+
+function isValidAnomalyStatus(val: unknown): val is WireAnomalyStatus {
+  return val === 'confirmed' || val === 'unrecognised'
 }
 
 function parseBoundedPence(val: unknown, field: string): number {
@@ -259,10 +269,24 @@ export function parseUiViewStatePayload(raw: unknown): UiViewStatePayload {
     out.highlight_vendor = parseSafeVendorString(raw.highlight_vendor, 'highlight_vendor')
   }
   if (raw.anomaly_status !== undefined) {
-    if (raw.anomaly_status !== 'confirmed' && raw.anomaly_status !== 'unrecognised') {
+    if (!isValidAnomalyStatus(raw.anomaly_status)) {
       throw new Error('ui_state frame: invalid anomaly_status')
     }
     out.anomaly_status = raw.anomaly_status
+  }
+  if (raw.anomaly_by_vendor !== undefined) {
+    if (!isPlainObject(raw.anomaly_by_vendor)) {
+      throw new Error('ui_state frame: invalid anomaly_by_vendor')
+    }
+    const byVendor: Record<string, WireAnomalyStatus> = {}
+    for (const [vendorKey, statusVal] of Object.entries(raw.anomaly_by_vendor)) {
+      const safeKey = parseSafeVendorString(vendorKey, 'anomaly_by_vendor')
+      if (!isValidAnomalyStatus(statusVal)) {
+        throw new Error('ui_state frame: invalid anomaly_by_vendor status')
+      }
+      byVendor[safeKey] = statusVal
+    }
+    out.anomaly_by_vendor = byVendor
   }
   if (raw.extra_monthly_pence !== undefined) {
     out.extra_monthly_pence = parseBoundedPence(raw.extra_monthly_pence, 'extra_monthly_pence')
@@ -430,6 +454,18 @@ export function serializeClientMsg(msg: ClientMsg): string {
       startPayload.lastUiSeq = Math.trunc(msg.lastUiSeq)
     }
     return JSON.stringify(startPayload)
+  }
+  if (msg.type === 'audio') {
+    if (typeof msg.data !== 'string' || msg.data.length === 0 || msg.data.length > MAX_AUDIO_B64_LEN) {
+      throw new Error(`audio frame: data length must be between 1 and ${MAX_AUDIO_B64_LEN}`)
+    }
+    return JSON.stringify(msg)
+  }
+  if (msg.type === 'text') {
+    if (typeof msg.text !== 'string' || msg.text.length > MAX_CLIENT_TEXT_CHARS) {
+      throw new Error(`text frame: text exceeds maximum length ${MAX_CLIENT_TEXT_CHARS}`)
+    }
+    return JSON.stringify(msg)
   }
   return JSON.stringify(msg)
 }

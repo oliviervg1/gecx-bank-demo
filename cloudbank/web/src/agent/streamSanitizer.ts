@@ -6,56 +6,110 @@ import { allFixtures, type CustomerSnapshot } from '../data/fixture'
 
 const PLATFORM_ENVELOPE_RE =
   /<\s*(?:state_update|context|event)\b[^>]*>[\s\S]*?<\s*\/\s*(?:state_update|context|event)\s*>/gi
-const UNTRUSTED_SNIPPET_TAG_RE = /<\s*\/?\s*untrusted_web_snippet\s*>/gi
+const CLOSED_UNTRUSTED_SNIPPET_RE =
+  /<\s*untrusted_web_snippet\b[^>]*>[\s\S]*?<\s*\/\s*untrusted_web_snippet\s*>/gi
+const UNCLOSED_UNTRUSTED_SNIPPET_RE = /<\s*untrusted_web_snippet\b[^>]*>[\s\S]*$/gi
+const ORPHAN_UNTRUSTED_SNIPPET_CLOSE_RE = /<\s*\/\s*untrusted_web_snippet\s*>/gi
 const PROSODY_OR_BREAK_TAG_RE = /<\s*\/?\s*(?:prosody|break)\b[^>]*>/gi
 const AGENT_TOKEN_RE = /\{@AGENT:\s*[a-zA-Z0-9_]+\}/gi
 
-// Explicit Composite v2 inline vocal-delivery, emotion, and pause vocabulary.
+// Explicit Composite v2 inline vocal-delivery, emotion, paralinguistic, and pause vocabulary.
 // Restricting `<...>` stripping to tags composed of known vocal/stage words (bounded outside
 // alphanumeric tokens) ensures mathematical or prose comparisons such as `x<y and y>z` or
 // `a < b and c > d` are never eaten.
-const COMPOSITE_AUDIO_TAG_WORDS = new Set([
+export const COMPOSITE_AUDIO_TAG_WORDS: ReadonlySet<string> = new Set([
+  'admiration',
+  'adoration',
+  'aggression',
+  'agitation',
+  'alarm',
+  'amused',
+  'amusement',
+  'anger',
+  'angry',
+  'annoyance',
+  'anxiety',
+  'anxious',
   'apologetic',
   'apologetically',
+  'argh',
   'audible',
+  'awe',
   'beat',
+  'bored',
   'breath',
   'breathe',
   'breathes',
   'breathing',
   'brief',
   'bright',
+  'cackle',
+  'cackles',
   'calm',
   'calmly',
+  'cautious',
+  'celebratory',
   'cheerful',
   'cheerfully',
   'chuckle',
   'chuckles',
   'clear',
   'clearly',
+  'clears',
+  'concerned',
   'confident',
   'confidently',
+  'confused',
+  'confusion',
   'conversational',
+  'cough',
+  'coughs',
+  'cries',
+  'cry',
+  'crying',
+  'curiosity',
   'curious',
   'curiously',
+  'deadpan',
   'deep',
+  'determination',
+  'disgusted',
+  'earnest',
   'empathetic',
   'empathetically',
   'encouraging',
+  'enthusiasm',
   'enthusiastic',
   'excited',
   'excitedly',
+  'excitement',
   'exhale',
   'exhales',
+  'extremely',
   'fast',
+  'faster',
+  'fearful',
   'firm',
+  'formal',
   'friendly',
+  'frustrated',
+  'frustration',
+  'gasp',
+  'gasps',
   'gentle',
   'gently',
+  'giggle',
+  'giggles',
+  'grateful',
+  'groan',
+  'groans',
   'happy',
+  'heavy',
   'hesitation',
+  'hope',
   'inhale',
   'inhales',
+  'interest',
   'kind',
   'laugh',
   'laughing',
@@ -68,12 +122,18 @@ const COMPOSITE_AUDIO_TAG_WORDS = new Set([
   'measured',
   'medium',
   'natural',
+  'negative',
+  'nervousness',
   'neutral',
   'pace',
+  'panic',
+  'pant',
+  'pants',
   'pause',
   'pauses',
   'polite',
   'politely',
+  'positive',
   'professional',
   'quick',
   'quiet',
@@ -81,33 +141,65 @@ const COMPOSITE_AUDIO_TAG_WORDS = new Set([
   'reassuring',
   'reassuringly',
   'relaxed',
+  'relief',
+  'relieved',
+  'robotic',
+  'sad',
+  'sarcasm',
+  'scared',
   'serious',
   'seriously',
+  'seriousness',
   'short',
+  'shouting',
   'sigh',
+  'sighing',
   'sighs',
+  'sleepy',
   'slight',
   'slow',
+  'slower',
   'slowly',
   'smile',
   'smiling',
+  'sneeze',
+  'sneezes',
+  'snicker',
+  'snickers',
+  'snort',
+  'snorts',
+  'sob',
+  'sobs',
   'soft',
   'softly',
   'speaking',
   'steady',
   'supportive',
+  'surprised',
   'sympathetic',
+  'tension',
   'thoughtful',
   'thoughtfully',
+  'throat',
+  'throat-clearing',
   'tone',
+  'tsk',
+  'uhm',
+  'um',
   'understanding',
   'upbeat',
+  'urgent',
   'voice',
   'warm',
   'warmly',
+  'whimper',
+  'whimpers',
   'whisper',
   'whispering',
   'whispers',
+  'yawn',
+  'yawns',
+  'yelling',
 ])
 
 const CANDIDATE_ANGLE_TAG_RE =
@@ -195,13 +287,29 @@ function collectUppercaseTokensFromFixture(fixture: CustomerSnapshot, target: Se
   }
 }
 
+const PRESERVED_ACRONYM_CACHE = new WeakMap<CustomerSnapshot, ReadonlySet<string>>()
+
 const DEFAULT_PRESERVED_ACRONYMS: ReadonlySet<string> = (() => {
+  const entries = allFixtures()
   const merged = new Set<string>(BASE_PRESERVED_ACRONYMS)
-  for (const [, fixture] of allFixtures()) {
+  for (const [, fixture] of entries) {
     collectUppercaseTokensFromFixture(fixture, merged)
+  }
+  for (const [, fixture] of entries) {
+    PRESERVED_ACRONYM_CACHE.set(fixture, merged)
   }
   return merged
 })()
+
+function resolvePreservedAcronyms(activeFixture?: CustomerSnapshot): ReadonlySet<string> {
+  if (!activeFixture) return DEFAULT_PRESERVED_ACRONYMS
+  const cached = PRESERVED_ACRONYM_CACHE.get(activeFixture)
+  if (cached) return cached
+  const custom = new Set<string>(DEFAULT_PRESERVED_ACRONYMS)
+  collectUppercaseTokensFromFixture(activeFixture, custom)
+  PRESERVED_ACRONYM_CACHE.set(activeFixture, custom)
+  return custom
+}
 
 /**
  * Strips `[Diagnosis context: ...]` blocks using bracket-depth scanning so nested `[...]`
@@ -299,16 +407,13 @@ function normalizeCapsStressWords(text: string, preserved: ReadonlySet<string>):
 
 export function sanitizeAgentProse(raw: string, activeFixture?: CustomerSnapshot): string {
   if (!raw) return ''
-  let preserved = DEFAULT_PRESERVED_ACRONYMS
-  if (activeFixture) {
-    const custom = new Set<string>(DEFAULT_PRESERVED_ACRONYMS)
-    collectUppercaseTokensFromFixture(activeFixture, custom)
-    preserved = custom
-  }
+  const preserved = resolvePreservedAcronyms(activeFixture)
 
   const withoutEnvelopes = raw
     .replace(PLATFORM_ENVELOPE_RE, ' ')
-    .replace(UNTRUSTED_SNIPPET_TAG_RE, ' ')
+    .replace(CLOSED_UNTRUSTED_SNIPPET_RE, ' ')
+    .replace(UNCLOSED_UNTRUSTED_SNIPPET_RE, ' ')
+    .replace(ORPHAN_UNTRUSTED_SNIPPET_CLOSE_RE, ' ')
   const withoutDiagnosis = stripDiagnosisBlocks(withoutEnvelopes)
   const stripped = stripCompositeAudioTags(
     withoutDiagnosis.replace(PROSODY_OR_BREAK_TAG_RE, ' '),

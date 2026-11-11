@@ -76,15 +76,18 @@ export function MortgagePage() {
           <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
             First-Time Buyer Guide
           </div>
-          <h1 className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-tight">
+          <h1
+            tabIndex={-1}
+            className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-tight"
+          >
             First-Home Borrowing Readiness
           </h1>
         </div>
 
         <div className="py-4 border-b border-brand-divider tabular-nums">
-          <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
+          <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
             Indicative Maximum Borrowing (4.5× Income)
-          </div>
+          </h2>
           <div className="text-[1.875rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-none">
             {formatGBPFromPence(readiness.max_borrowing_pence)}
           </div>
@@ -98,7 +101,7 @@ export function MortgagePage() {
 
         <div className="py-4 border-b border-brand-divider tabular-nums">
           <div className="flex items-center justify-between text-[0.8125rem]">
-            <span className="font-semibold text-brand-text">{savings.goal_name}</span>
+            <h2 className="font-semibold text-brand-text">{savings.goal_name}</h2>
             <span className="font-semibold text-brand-gold-text">
               {formatBps(readiness.deposit_progress_bps)}
             </span>
@@ -121,20 +124,20 @@ export function MortgagePage() {
             <span>Goal: {formatGBPFromPence(readiness.goal_deposit_pence)}</span>
           </div>
 
-          <div className="mt-4 divide-y divide-brand-divider border-t border-brand-divider">
+          <dl className="mt-4 divide-y divide-brand-divider border-t border-brand-divider">
             <div className="flex items-center justify-between py-2.5 text-[0.8125rem]">
-              <span className="text-brand-muted">Remaining to deposit goal</span>
-              <span className="font-semibold text-brand-text">
+              <dt className="text-brand-muted">Remaining to deposit goal</dt>
+              <dd className="font-semibold text-brand-text">
                 {formatGBPFromPence(readiness.remaining_to_goal_pence)}
-              </span>
+              </dd>
             </div>
             <div className="flex items-center justify-between py-2.5 text-[0.8125rem]">
-              <span className="text-brand-muted">Indicative property budget at goal</span>
-              <span className="font-bold text-brand-green text-[0.9375rem]">
+              <dt className="text-brand-muted">Indicative property budget at goal</dt>
+              <dd className="font-bold text-brand-green text-[0.9375rem]">
                 {formatGBPFromPence(readiness.indicative_budget_with_goal_pence)}
-              </span>
+              </dd>
             </div>
-          </div>
+          </dl>
 
           <button
             type="button"
@@ -192,7 +195,10 @@ export function MortgagePage() {
         <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
           {mortgage.address}
         </div>
-        <h1 className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-tight">
+        <h1
+          tabIndex={-1}
+          className="text-[1.375rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-tight"
+        >
           Your Mortgage
         </h1>
 
@@ -214,45 +220,49 @@ export function MortgagePage() {
             return (
               <div>
                 <div className="py-4 border-b border-brand-divider tabular-nums">
-                  <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
+                  <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
                     Remaining Balance
-                  </div>
+                  </h2>
                   <div className="text-[1.875rem] font-bold tracking-[-0.02em] text-brand-text mt-1 leading-none">
                     {formatGBPFromPence(mortgage.balance_pence)}
                   </div>
 
-                  <div className="mt-4 grid grid-cols-2 gap-3 pt-3 border-t border-brand-divider text-[0.8125rem]">
+                  <dl className="mt-4 grid grid-cols-2 gap-3 pt-3 border-t border-brand-divider text-[0.8125rem]">
                     <div>
-                      <div className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
+                      <dt className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
                         Current Rate
-                      </div>
-                      <div className="font-semibold text-brand-text mt-0.5">
-                        {formatBps(mortgage.interest_rate_bps)} {mortgage.rate_type}
-                      </div>
-                      <div className="text-[0.75rem] text-brand-muted">
-                        Until {formatIsoDayMonthYear(mortgage.fixed_until)}
-                      </div>
+                      </dt>
+                      <dd className="mt-0.5">
+                        <div className="font-semibold text-brand-text">
+                          {formatBps(mortgage.interest_rate_bps)} {mortgage.rate_type}
+                        </div>
+                        <div className="text-[0.75rem] text-brand-muted">
+                          Until {formatIsoDayMonthYear(mortgage.fixed_until)}
+                        </div>
+                      </dd>
                     </div>
                     <div>
-                      <div className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
+                      <dt className="text-[0.6875rem] uppercase tracking-[0.06em] text-brand-muted">
                         Remaining Term
-                      </div>
-                      <div className="font-semibold text-brand-text mt-0.5">
-                        {formatMonthsDuration(mortgage.term_remaining_months)}
-                      </div>
-                      <div className="text-[0.75rem] text-brand-muted">
-                        ({mortgage.term_remaining_months} months)
-                      </div>
+                      </dt>
+                      <dd className="mt-0.5">
+                        <div className="font-semibold text-brand-text">
+                          {formatMonthsDuration(mortgage.term_remaining_months)}
+                        </div>
+                        <div className="text-[0.75rem] text-brand-muted">
+                          ({mortgage.term_remaining_months} months)
+                        </div>
+                      </dd>
                     </div>
-                  </div>
+                  </dl>
                 </div>
 
                 {/* Next Scheduled Payment */}
                 <div className="py-4 border-b border-brand-divider flex items-center justify-between gap-2 tabular-nums">
                   <div>
-                    <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
+                    <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
                       Next Payment
-                    </div>
+                    </h2>
                     <div className="text-[1.25rem] font-bold text-brand-text mt-0.5">
                       {formatGBPFromPence(mortgage.next_payment.amount_pence)}
                     </div>
@@ -272,9 +282,9 @@ export function MortgagePage() {
                 {/* Annual 10% ERC-Free Overpayment Allowance */}
                 <div className="py-4 border-b border-brand-divider tabular-nums">
                   <div className="flex items-center justify-between text-[0.8125rem]">
-                    <span className="font-semibold text-brand-text">
+                    <h2 className="font-semibold text-brand-text">
                       10% Fee-Free Overpayment Allowance
-                    </span>
+                    </h2>
                     <span className="font-semibold text-brand-green">
                       {formatGBPFromPence(remainingAllowancePence)} left
                     </span>
@@ -324,9 +334,9 @@ export function MortgagePage() {
               <div data-testid="mortgage-overpay-view">
                 <div className="py-4 border-b border-brand-divider">
                   <div className="flex items-center justify-between mb-2">
-                    <span className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold">
+                    <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold">
                       Monthly Overpayment
-                    </span>
+                    </h2>
                     <span className="text-[0.8125rem] font-semibold text-brand-green tabular-nums">
                       +{formatGBPFromPence(monthlyOverpaymentPence)}/mo
                     </span>
@@ -389,9 +399,9 @@ export function MortgagePage() {
                   {/* Lump-Sum Overpayment */}
                   <div className="mt-4 pt-3 border-t border-brand-divider">
                     <div className="flex items-center justify-between mb-2">
-                      <span className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold">
+                      <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-semibold">
                         Single Lump-Sum Overpayment
-                      </span>
+                      </h2>
                       <span className="text-[0.8125rem] font-semibold text-brand-green tabular-nums">
                         {formatGBPFromPence(lumpSumOverpaymentPence)}
                       </span>
@@ -448,67 +458,73 @@ export function MortgagePage() {
                   </div>
                 </div>
 
-                {/* Allowance Status Banner */}
                 <div
-                  data-testid="overpay-allowance-status"
-                  className={
-                    'mt-4 p-3 rounded-xl border text-[0.75rem] flex items-start gap-2 tabular-nums ' +
-                    (overpayResult.exceeds_allowance
-                      ? 'border-brand-danger/40 bg-[#fdf6f6] text-brand-danger'
-                      : 'border-brand-green/30 bg-[#f6faf8] text-brand-green')
-                  }
+                  aria-live="polite"
+                  aria-atomic="true"
+                  data-testid="mortgage-overpay-results"
                 >
-                  {overpayResult.exceeds_allowance ? (
-                    <AlertTriangle size={16} aria-hidden="true" className="shrink-0 mt-0.5" />
-                  ) : (
-                    <CheckCircle2 size={16} aria-hidden="true" className="shrink-0 mt-0.5" />
-                  )}
-                  <span>
-                    {overpayResult.exceeds_allowance
-                      ? `Year-one overpayment of ${formatGBPFromPence(overpayResult.first_year_overpayment_pence)} exceeds your remaining ${formatGBPFromPence(overpayResult.remaining_allowance_pence)} 10% fee-free allowance by ${formatGBPFromPence(overpayResult.excess_over_allowance_pence)} (an early repayment charge may apply on the excess).`
-                      : `Year-one overpayment of ${formatGBPFromPence(overpayResult.first_year_overpayment_pence)} stays within your ${formatGBPFromPence(overpayResult.remaining_allowance_pence)} remaining 10% fee-free allowance.`}
-                  </span>
-                </div>
+                  {/* Allowance Status Banner */}
+                  <div
+                    data-testid="overpay-allowance-status"
+                    className={
+                      'mt-4 p-3 rounded-xl border text-[0.75rem] flex items-start gap-2 tabular-nums ' +
+                      (overpayResult.exceeds_allowance
+                        ? 'border-brand-danger/40 bg-[#fdf6f6] text-brand-danger'
+                        : 'border-brand-green/30 bg-[#f6faf8] text-brand-green')
+                    }
+                  >
+                    {overpayResult.exceeds_allowance ? (
+                      <AlertTriangle size={16} aria-hidden="true" className="shrink-0 mt-0.5" />
+                    ) : (
+                      <CheckCircle2 size={16} aria-hidden="true" className="shrink-0 mt-0.5" />
+                    )}
+                    <span>
+                      {overpayResult.exceeds_allowance
+                        ? `Year-one overpayment of ${formatGBPFromPence(overpayResult.first_year_overpayment_pence)} exceeds your remaining ${formatGBPFromPence(overpayResult.remaining_allowance_pence)} 10% fee-free allowance by ${formatGBPFromPence(overpayResult.excess_over_allowance_pence)} (an early repayment charge may apply on the excess).`
+                        : `Year-one overpayment of ${formatGBPFromPence(overpayResult.first_year_overpayment_pence)} stays within your ${formatGBPFromPence(overpayResult.remaining_allowance_pence)} remaining 10% fee-free allowance.`}
+                    </span>
+                  </div>
 
-                {/* Amortisation Comparison Ledger */}
-                <div className="mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider tabular-nums">
-                  <div className="flex items-center justify-between py-2.5">
-                    <span className="text-[0.8125rem] text-brand-muted">
-                      Total interest saved
-                    </span>
-                    <span className="text-[1rem] font-bold text-brand-green">
-                      {formatGBPFromPence(overpayResult.interest_saved_pence)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2.5">
-                    <span className="text-[0.8125rem] text-brand-muted">
-                      Time shaved off term
-                    </span>
-                    <span className="text-[0.875rem] font-semibold text-brand-gold-text">
-                      {formatMonthsDuration(overpayResult.months_saved)}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2.5">
-                    <span className="text-[0.8125rem] text-brand-muted">
-                      Projected payoff term
-                    </span>
-                    <span className="text-[0.875rem] font-medium text-brand-text">
-                      {overpayResult.paid_off
-                        ? formatMonthsDuration(overpayResult.projected_months)
-                        : 'Over 50 years'}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between py-2.5">
-                    <span className="text-[0.8125rem] text-brand-muted">
-                      New monthly payment
-                    </span>
-                    <span className="text-[0.875rem] font-semibold text-brand-text">
-                      {formatGBPFromPence(
-                        mortgage.next_payment.amount_pence + monthlyOverpaymentPence,
-                      )}
-                      /mo
-                    </span>
-                  </div>
+                  {/* Amortisation Comparison Ledger */}
+                  <dl className="mt-4 divide-y divide-brand-divider border-t border-b border-brand-divider tabular-nums">
+                    <div className="flex items-center justify-between py-2.5">
+                      <dt className="text-[0.8125rem] text-brand-muted">
+                        Total interest saved
+                      </dt>
+                      <dd className="text-[1rem] font-bold text-brand-green">
+                        {formatGBPFromPence(overpayResult.interest_saved_pence)}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between py-2.5">
+                      <dt className="text-[0.8125rem] text-brand-muted">
+                        Time shaved off term
+                      </dt>
+                      <dd className="text-[0.875rem] font-semibold text-brand-gold-text">
+                        {formatMonthsDuration(overpayResult.months_saved)}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between py-2.5">
+                      <dt className="text-[0.8125rem] text-brand-muted">
+                        Projected payoff term
+                      </dt>
+                      <dd className="text-[0.875rem] font-medium text-brand-text">
+                        {overpayResult.paid_off
+                          ? formatMonthsDuration(overpayResult.projected_months)
+                          : 'Over 50 years'}
+                      </dd>
+                    </div>
+                    <div className="flex items-center justify-between py-2.5">
+                      <dt className="text-[0.8125rem] text-brand-muted">
+                        New monthly payment
+                      </dt>
+                      <dd className="text-[0.875rem] font-semibold text-brand-text">
+                        {formatGBPFromPence(
+                          mortgage.next_payment.amount_pence + monthlyOverpaymentPence,
+                        )}
+                        /mo
+                      </dd>
+                    </div>
+                  </dl>
                 </div>
 
                 <p className="mt-4 text-[0.75rem] text-brand-muted leading-relaxed">
@@ -521,9 +537,9 @@ export function MortgagePage() {
           return (
             <div data-testid="mortgage-rates-view">
               <div className="py-4 border-b border-brand-divider tabular-nums">
-                <div className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
+                <h2 className="text-[0.6875rem] uppercase tracking-[0.08em] text-brand-muted font-medium">
                   Current Deal (Ends {formatIsoDayMonthYear(mortgage.fixed_until)})
-                </div>
+                </h2>
                 <div className="flex items-baseline justify-between mt-1">
                   <span className="text-[1.25rem] font-bold text-brand-text">
                     {formatBps(mortgage.interest_rate_bps)} {mortgage.rate_type}
@@ -534,7 +550,10 @@ export function MortgagePage() {
                 </div>
               </div>
 
-              <div className="mt-3 divide-y divide-brand-divider border-b border-brand-divider tabular-nums">
+              <ul
+                aria-label="Fixed-rate renewal options"
+                className="list-none m-0 p-0 mt-3 divide-y divide-brand-divider border-b border-brand-divider tabular-nums"
+              >
                 {renewalItems.map((item) => {
                   const deltaSummary =
                     item.delta_pence < 0
@@ -543,7 +562,7 @@ export function MortgagePage() {
                         ? `+${formatGBPFromPence(item.delta_pence)}/mo vs today`
                         : '£0.00/mo vs today'
                   return (
-                    <div key={item.id} className="py-3.5 flex items-center justify-between">
+                    <li key={item.id} className="py-3.5 flex items-center justify-between">
                       <div>
                         <div className="text-[0.9375rem] font-semibold text-brand-text">
                           {item.label}
@@ -568,10 +587,10 @@ export function MortgagePage() {
                           {deltaSummary}
                         </div>
                       </div>
-                    </div>
+                    </li>
                   )
                 })}
-              </div>
+              </ul>
 
               <p className="mt-4 text-[0.75rem] text-brand-muted leading-relaxed">
                 {ILLUSTRATION_NOTE} Illustrative rates exclude product arrangement fees.

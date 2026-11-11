@@ -1,7 +1,7 @@
 import {
   createContext,
+  use,
   useCallback,
-  useContext,
   useEffect,
   useMemo,
   useState,
@@ -9,6 +9,8 @@ import {
   type ReactNode,
 } from 'react'
 import {
+  MAX_AUDIO_B64_LEN,
+  MAX_CLIENT_TEXT_CHARS,
   parseServerMsg,
   serializeClientMsg,
   type PersonaId,
@@ -37,6 +39,8 @@ import { buildClientStart } from './sessionVariables'
 import { readPushToTalkFromLocation } from './pushToTalk'
 import { useBankingViewState } from './BankingViewStateProvider'
 
+export const PTT_MIC_IDLE_RELEASE_MS = 5_000
+
 export type ConnState = 'idle' | 'connecting' | 'ready' | 'error'
 export type MicState = 'idle' | 'listening' | 'held' | 'speaking' | 'muted'
 
@@ -54,6 +58,8 @@ export interface AgentContextValue {
   errorMessage: string | null
   micDenied: boolean
   pushToTalk: boolean
+  spacebarShortcutEnabled?: boolean
+  setSpacebarShortcutEnabled?: (enabled: boolean) => void
   beginTalking: () => Promise<void>
   endTalking: () => void
   startMic: () => Promise<void>
@@ -86,8 +92,28 @@ interface SessionRuntime {
     demoDate: string,
     callbacks: RuntimeCallbacks,
   ) => void
+  unlockAudioOnGesture: () => void
   dispatch: (event: SessionEvent) => void
   awaitPendingCapture: () => Promise<void>
+}
+
+function classifyMicCaptureError(err: unknown): string {
+  const errName = err instanceof Error ? err.name : ''
+  const errMsg = err instanceof Error ? err.message : String(err)
+  if (
+    errName === 'NotAllowedError' ||
+    errName === 'PermissionDeniedError' ||
+    errName === 'SecurityError'
+  ) {
+    return 'Microphone access denied. Allow microphone access and hold to retry.'
+  }
+  if (errName === 'NotFoundError' || errName === 'DevicesNotFoundError') {
+    return 'No microphone detected. Connect a microphone and hold to retry.'
+  }
+  if (errName === 'NotReadableError' || errName === 'TrackStartError') {
+    return 'Microphone is busy in another application. Hold to retry.'
+  }
+  return `Audio capture failed (${errMsg}). Hold to retry.`
 }
 
 function createSessionRuntime(
@@ -107,6 +133,7 @@ function createSessionRuntime(
   let ws: WebSocket | null = null
   let connectTimeoutTimer: number | null = null
   let reconnectTimer: number | null = null
+  let pttIdleReleaseTimer: number | null = null
   let capture: AudioCapture | null = null
   let captureInitPromise: Promise<AudioCapture | null> | null = null
   let captureAbortController: AbortController | null = null
@@ -149,7 +176,26 @@ function createSessionRuntime(
     }
   }
 
+  function clearPttIdleReleaseTimer() {
+    if (pttIdleReleaseTimer !== null) {
+      clearTimeout(pttIdleReleaseTimer)
+      pttIdleReleaseTimer = null
+    }
+  }
+
+  function schedulePttIdleHardwareRelease() {
+    if (!pushToTalk) return
+    clearPttIdleReleaseTimer()
+    pttIdleReleaseTimer = window.setTimeout(() => {
+      pttIdleReleaseTimer = null
+      if (state.phase !== 'capturing') {
+        abortAndStopCapture()
+      }
+    }, PTT_MIC_IDLE_RELEASE_MS)
+  }
+
   function abortAndStopCapture() {
+    clearPttIdleReleaseTimer()
     captureEpoch += 1
     if (captureAbortController) {
       captureAbortController.abort()
@@ -181,6 +227,7 @@ function createSessionRuntime(
   }
 
   async function ensureCaptureAndStart(): Promise<void> {
+    clearPttIdleReleaseTimer()
     const requestedEpoch = captureEpoch
     try {
       if (!capture) {
@@ -189,11 +236,25 @@ function createSessionRuntime(
           captureAbortController = abortCtrl
           captureInitPromise = createAudioCapture(
             (b64) => {
+              if (!b64 || b64.length > MAX_AUDIO_B64_LEN) return
+              if (state.phase === 'capturing' && !state.hasCapturedAudioInTurn) {
+                dispatch({ type: 'MIC_CAPTURE_ACTIVE' })
+              }
               if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(serializeClientMsg({ type: 'audio', data: b64 }))
               }
             },
-            { startMuted: pushToTalk, signal: abortCtrl.signal },
+            {
+              startMuted: pushToTalk,
+              signal: abortCtrl.signal,
+              onEnded: () => {
+                if (requestedEpoch === captureEpoch) {
+                  capture = null
+                  captureInitPromise = null
+                  dispatch({ type: 'MIC_DEVICE_ENDED' })
+                }
+              },
+            },
           )
             .then((created) => {
               if (requestedEpoch !== captureEpoch || abortCtrl.signal.aborted) {
@@ -223,6 +284,7 @@ function createSessionRuntime(
       }
       if (state.phase !== 'capturing') {
         activeCapture.setMuted(true)
+        schedulePttIdleHardwareRelease()
         return
       }
       await activeCapture.start()
@@ -232,18 +294,14 @@ function createSessionRuntime(
       }
       if (state.phase === 'capturing') {
         activeCapture.setMuted(false)
+        dispatch({ type: 'MIC_CAPTURE_ACTIVE' })
       }
     } catch (err) {
       if (requestedEpoch !== captureEpoch) return
       if (err instanceof Error && err.name === 'AbortError') return
-      const detail = err instanceof Error ? `${err.name} ${err.message}` : ''
-      const isNonPermissionError =
-        Boolean(detail) && !/denied|permission|notallowed|security/i.test(detail)
       dispatch({
         type: 'MIC_DENIED',
-        message: isNonPermissionError
-          ? `Audio capture failed (${(err as Error).message}). Hold to retry.`
-          : 'Microphone access denied. Allow microphone access and hold to retry.',
+        message: classifyMicCaptureError(err),
       })
     }
   }
@@ -271,7 +329,6 @@ function createSessionRuntime(
     switch (effect.type) {
       case 'OPEN_WS': {
         closeActiveSocket()
-        ensurePlayer()
         const epoch = effect.epoch
         const targetPersona = effect.persona
         const resumeId = effect.sessionId
@@ -377,6 +434,7 @@ function createSessionRuntime(
       }
 
       case 'UNMUTE_MIC': {
+        clearPttIdleReleaseTimer()
         if (state.phase === 'capturing') {
           capture?.setMuted(false)
         }
@@ -386,6 +444,7 @@ function createSessionRuntime(
       case 'FLUSH_MIC_AND_SEND_SILENCE': {
         if (pushToTalk) {
           capture?.flushAndSendTrailingSilence()
+          schedulePttIdleHardwareRelease()
         }
         break
       }
@@ -426,7 +485,8 @@ function createSessionRuntime(
 
       case 'SEND_CLIENT_TEXT': {
         if (ws && ws.readyState === WebSocket.OPEN) {
-          ws.send(serializeClientMsg({ type: 'text', text: effect.text }))
+          const clampedText = effect.text.slice(0, MAX_CLIENT_TEXT_CHARS)
+          ws.send(serializeClientMsg({ type: 'text', text: clampedText }))
         }
         break
       }
@@ -487,6 +547,7 @@ function createSessionRuntime(
   function destroy() {
     clearReconnectTimer()
     clearWatchdog()
+    clearPttIdleReleaseTimer()
     closeActiveSocket()
     abortAndStopCapture()
     player?.close()
@@ -535,6 +596,9 @@ function createSessionRuntime(
         dispatch({ type: 'PERSONA_SWITCH', persona: nextPersona })
       }
     },
+    unlockAudioOnGesture() {
+      ensurePlayer()?.unlock()
+    },
     dispatch,
     awaitPendingCapture() {
       return pendingCaptureStart
@@ -581,6 +645,7 @@ function latestTurnText(turns: ConversationTurn[], role: 'user' | 'assistant'): 
 export function AgentProvider({ children }: { children: ReactNode }) {
   const { persona, demoDate } = usePersona()
   const { applyServerUiState, resetUiState } = useBankingViewState()
+  const [spacebarShortcutEnabled, setSpacebarShortcutEnabled] = useState(true)
 
   const [runtime] = useState<SessionRuntime>(() =>
     createSessionRuntime(persona, demoDate, { applyServerUiState, resetUiState }),
@@ -599,6 +664,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   }, [runtime, persona, demoDate, applyServerUiState, resetUiState])
 
   const beginTalking = useCallback(async () => {
+    runtime.unlockAudioOnGesture()
     runtime.dispatch({ type: 'PTT_PRESS' })
     await runtime.awaitPendingCapture()
   }, [runtime])
@@ -608,23 +674,21 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     runtime.dispatch({ type: 'PTT_RELEASE' })
   }, [runtime])
 
-  const startMic = useCallback(async () => {
-    runtime.dispatch({ type: 'PTT_PRESS' })
-    await runtime.awaitPendingCapture()
-  }, [runtime])
-
   const stopMic = useCallback(() => {
     runtime.dispatch({ type: 'STOP_MIC_ONLY' })
   }, [runtime])
 
   const submitText = useCallback(
     (text: string) => {
-      runtime.dispatch({ type: 'CLIENT_TEXT_SUBMIT', text })
+      const clamped = text.slice(0, MAX_CLIENT_TEXT_CHARS)
+      runtime.unlockAudioOnGesture()
+      runtime.dispatch({ type: 'CLIENT_TEXT_SUBMIT', text: clamped })
     },
     [runtime],
   )
 
   const reconnect = useCallback(() => {
+    runtime.unlockAudioOnGesture()
     runtime.dispatch({ type: 'DISCONNECT_REQUESTED' })
     runtime.dispatch({ type: 'CONNECT_REQUESTED' })
   }, [runtime])
@@ -653,9 +717,11 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       errorMessage: machineState.errorMessage,
       micDenied: machineState.micDenied,
       pushToTalk: runtime.pushToTalk,
+      spacebarShortcutEnabled,
+      setSpacebarShortcutEnabled,
       beginTalking,
       endTalking,
-      startMic,
+      startMic: beginTalking,
       stopMic,
       submitText,
       reconnect,
@@ -664,20 +730,20 @@ export function AgentProvider({ children }: { children: ReactNode }) {
   }, [
     machineState,
     runtime.pushToTalk,
+    spacebarShortcutEnabled,
     beginTalking,
     endTalking,
-    startMic,
     stopMic,
     submitText,
     reconnect,
     disconnect,
   ])
 
-  return <AgentContext.Provider value={value}>{children}</AgentContext.Provider>
+  return <AgentContext value={value}>{children}</AgentContext>
 }
 
 export function useAgent(): AgentContextValue {
-  const ctx = useContext(AgentContext)
+  const ctx = use(AgentContext)
   if (!ctx) throw new Error('useAgent must be used within <AgentProvider>')
   return ctx
 }

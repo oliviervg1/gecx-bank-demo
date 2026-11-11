@@ -76,6 +76,14 @@ export function simulateMortgage(
         paid_off: true,
       }
     }
+    if (interest >= monthlyPaymentPence) {
+      return {
+        months: maxMonths,
+        total_interest_pence: totalInterest + interest,
+        ending_balance_pence: bal + interest - monthlyPaymentPence,
+        paid_off: false,
+      }
+    }
     bal = bal + interest - monthlyPaymentPence
     totalInterest = totalInterest + interest
   }

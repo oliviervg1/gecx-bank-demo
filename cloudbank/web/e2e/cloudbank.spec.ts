@@ -11,15 +11,8 @@ async function waitForPageTransitionSettled(page: Page): Promise<void> {
         if (!main) return false
         const heading = main.querySelector('h1')
         if (!heading) return false
-        let current: Element | null = heading
-        while (current) {
-          const opacity = Number.parseFloat(window.getComputedStyle(current).opacity)
-          if (!Number.isFinite(opacity) || opacity < 0.99) {
-            return false
-          }
-          current = current.parentElement
-        }
-        return true
+        const opacity = Number.parseFloat(window.getComputedStyle(heading).opacity)
+        return Number.isFinite(opacity) && opacity >= 0.99
       }),
     )
     .toBe(true)
@@ -41,10 +34,11 @@ async function expectZeroAxeViolations(page: Page, contextLabel: string): Promis
 }
 
 test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
-  test('syncs Tier 1 ui_view_state, live announcements, sandboxed search chips, and GoAway resume', async ({
+  test('syncs Tier 1 ui_view_state, numerical screen/speech parity, live announcements, sandboxed search chips, and GoAway resume', async ({
     page,
   }) => {
     await page.goto('/')
+    await expect(page).toHaveTitle('Cloudbank — Home')
 
     const pill = page.locator('[data-concierge-pill="true"]')
     await expect(pill).toContainText('Hold to talk')
@@ -58,25 +52,37 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
       .getByRole('navigation', { name: 'Primary banking navigation' })
       .getByRole('button', { name: 'Spending' })
     await expect(spendingTab).toHaveAttribute('aria-current', 'page')
+    await expect(page).toHaveTitle('Cloudbank — Spending')
     await expect(page.getByRole('heading', { name: 'Spending › Subscriptions' })).toBeVisible()
+
+    // Left-pane figures match canonical chloe.json (£1,731.90 across 6 recurring charges, Netflix £45.00).
+    const bankingPane = page.getByRole('region', { name: 'Cloudbank Personal Banking' })
+    await expect(bankingPane).toContainText('£1,731.90')
+    await expect(bankingPane).toContainText('6 recurring charges')
 
     const netflixRow = page.locator('[data-highlighted="true"]').filter({ hasText: 'Netflix' })
     await expect(netflixRow).toBeVisible()
+    await expect(netflixRow).toContainText('£45.00')
 
-    // Polite live-region announcers update once with clean sanitized text (no inline <warm> tag).
+    // Polite live-region announcers update once with clean sanitized text (no <warm> or <positive> tags)
+    // and exact numerical parity with the left-hand screen.
     await expect(page.getByTestId('ui-navigation-announcer')).toHaveText(
       'Showing Spending: Subscriptions',
     )
     await expect(page.getByTestId('concierge-turn-announcer')).toContainText(
-      'Cloudbank Concierge: You have 4 recurring charges this month totalling £152.98',
+      'Cloudbank Concierge: You have 6 recurring charges this month totalling £1,731.90, including Netflix at £45.00.',
     )
     await expect(page.getByTestId('concierge-turn-announcer')).not.toContainText('<warm>')
+    await expect(page.getByTestId('concierge-turn-announcer')).not.toContainText('<positive>')
     await expect(page.getByTestId('active-specialist-pill')).toHaveText('Everyday Banking')
 
-    // Sandboxed Google Search suggestions iframe + validated official help citation chip.
+    // Sandboxed Google Search web-result suggestions iframe + validated official help citation chip.
     const searchBlock = page.getByTestId('search-suggestions-block')
     await expect(searchBlock).toBeVisible()
-    const suggestionIframe = searchBlock.locator('iframe[title="Google Search suggestion 1"]')
+    await expect(searchBlock).toContainText('Web search results')
+    const suggestionIframe = searchBlock.locator(
+      'iframe[title="Google Search web result suggestion 1"]',
+    )
     await expect(suggestionIframe).toBeVisible()
     await expect(suggestionIframe).toHaveAttribute(
       'sandbox',
@@ -89,12 +95,14 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
     await input.fill('trigger goaway')
     await page.getByRole('button', { name: 'Send message' }).click()
     await expect(page.getByRole('heading', { name: 'Home Emergency Pot' })).toBeVisible()
+    await expect(page).toHaveTitle('Cloudbank — Savings')
     await expect(pill).toContainText('Hold to talk')
     await expect(page.getByTestId('turn-assistant')).toHaveCount(2)
 
     await input.fill('confirm resumed')
     await page.getByRole('button', { name: 'Send message' }).click()
     await expect(page.getByRole('heading', { name: 'Your Mortgage' })).toBeVisible()
+    await expect(page).toHaveTitle('Cloudbank — Mortgage')
     await expect(page.getByRole('tab', { name: 'Fixed Rates' })).toHaveAttribute(
       'aria-selected',
       'true',
@@ -185,7 +193,8 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
     await expect(ratesTab).toBeFocused()
     await expect(ratesTab).toHaveAttribute('aria-selected', 'true')
 
-    // 3. Click and Enter toggle-to-talk on ConciergePill toggling aria-pressed
+    // 3. Click and Enter toggle-to-talk on ConciergePill toggling aria-pressed;
+    //    spoken replies suppress concierge-turn-announcer so screen readers do not talk over TTS.
     await pill.click()
     await expect(pill).toHaveAttribute('aria-pressed', 'true')
     await expect(pill).toContainText('Release to send')
@@ -193,6 +202,7 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
     await expect(pill).toHaveAttribute('aria-pressed', 'false')
     await expect(pill).toContainText('Hold to talk', { timeout: 10_000 })
     await expect(page.getByTestId('conversation-stream')).toContainText('£4,250.75')
+    await expect(page.getByTestId('concierge-turn-announcer')).toHaveText('')
 
     // Wait briefly so the wire audio gap (>450 ms) arms the next voice utterance
     await page.waitForTimeout(550)
@@ -248,6 +258,38 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
     await pill.click()
     await expect(pill).toContainText('Talk to concierge')
     await expect(pill).toHaveAttribute('aria-pressed', 'false')
+  })
+
+  test('keeps mobile concierge chat open across cross-page ServerUiState navigation and closes on Escape', async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 390, height: 844 })
+    await page.goto('/?layout=mobile')
+    await expect(page.locator('[data-concierge-pill="true"]')).toContainText('Hold to talk')
+
+    const mobileToggle = page.getByTestId('mobile-concierge-toggle')
+    await mobileToggle.click()
+    const drawer = page.getByTestId('mobile-concierge-drawer')
+    await expect(drawer).toBeVisible()
+    await expect(
+      page.getByRole('heading', { level: 1, name: 'Cloudbank Concierge' }),
+    ).toBeVisible()
+
+    // Ask a question that triggers cross-page Home -> Spending navigation: drawer MUST stay open!
+    const input = drawer.getByLabel('Ask your Cloudbank concierge')
+    await input.fill('Which recurring subscriptions am I paying for, and how do I cancel Netflix?')
+    await drawer.getByRole('button', { name: 'Send message' }).click()
+
+    await expect(drawer).toBeVisible()
+    await expect(drawer).toContainText('£1,731.90')
+    await expect(drawer).toContainText('£45.00')
+    await expect(page).toHaveTitle('Cloudbank — Spending')
+
+    // Pressing Escape closes the mobile drawer, reveals Spending › Subscriptions, and restores focus.
+    await page.keyboard.press('Escape')
+    await expect(drawer).toHaveCount(0)
+    await expect(mobileToggle).toBeFocused()
+    await expect(page.getByRole('heading', { name: 'Spending › Subscriptions' })).toBeVisible()
   })
 
   test('passes WCAG 2.1 AA axe-core scans across all 5 tabs, SVG charts, renter Tom, and Mobile View', async ({

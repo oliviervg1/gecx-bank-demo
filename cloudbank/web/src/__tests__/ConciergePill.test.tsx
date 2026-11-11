@@ -31,9 +31,9 @@ function makeAgent(overrides: Partial<AgentContextValue> = {}): AgentContextValu
 
 function withAgent(value: AgentContextValue) {
   return (
-    <AgentContext.Provider value={value}>
+    <AgentContext value={value}>
       <ConciergePill />
-    </AgentContext.Provider>
+    </AgentContext>
   )
 }
 
@@ -101,11 +101,16 @@ describe('ConciergePill', () => {
     expect(v.beginTalking).toHaveBeenCalledTimes(1)
   })
 
-  it('does not hold while connecting', () => {
+  it('uses aria-disabled instead of native disabled while connecting so keyboard focus is never dropped', () => {
     const v = makeAgent({ pushToTalk: true, phase: 'connecting', connState: 'connecting' })
     render(withAgent(v))
-    expect(screen.getByText('Connecting…')).toBeInTheDocument()
-    fireEvent.pointerDown(screen.getByRole('button'), { pointerId: 1 })
+    const pill = screen.getByRole('button', { name: 'Connecting…' })
+    expect(pill).not.toBeDisabled()
+    expect(pill).toHaveAttribute('aria-disabled', 'true')
+    pill.focus()
+    expect(pill).toHaveFocus()
+    fireEvent.pointerDown(pill, { pointerId: 1 })
+    fireEvent.click(pill)
     expect(v.beginTalking).not.toHaveBeenCalled()
   })
 

@@ -1,17 +1,27 @@
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest'
 import { render, screen, fireEvent, act, cleanup } from '@testing-library/react'
-import { useHoldToTalk, MAX_HOLD_MS } from '../agent/useHoldToTalk'
+import { useHoldToTalk, MAX_HOLD_MS, MAX_LATCH_MS } from '../agent/useHoldToTalk'
 
 function Probe({
   enabled = true,
+  allowClickToggle = false,
+  enableSpacebar = true,
   onBegin,
   onEnd,
 }: {
   enabled?: boolean
+  allowClickToggle?: boolean
+  enableSpacebar?: boolean
   onBegin: () => void
   onEnd: () => void
 }) {
-  const hold = useHoldToTalk({ enabled, onBegin, onEnd })
+  const hold = useHoldToTalk({
+    enabled,
+    allowClickToggle,
+    enableSpacebar,
+    onBegin,
+    onEnd,
+  })
   return (
     <button data-testid="pill" data-concierge-pill="true" {...hold}>
       hold
@@ -77,13 +87,21 @@ describe('pointer', () => {
 })
 
 describe('spacebar', () => {
-  it('begins on keydown and ends on keyup, ignoring auto-repeat and text inputs', () => {
+  it('begins on keydown and ends on keyup, ignoring auto-repeat, modifier keys, IME composition, and text inputs', () => {
     render(
       <>
         <input data-testid="field" />
         <Probe onBegin={onBegin} onEnd={onEnd} />
       </>,
     )
+    // Modifiers and IME composition MUST be ignored (WCAG 2.1.4 / M-13)
+    fireEvent.keyDown(window, { code: 'Space', key: ' ', shiftKey: true })
+    fireEvent.keyDown(window, { code: 'Space', key: ' ', ctrlKey: true })
+    fireEvent.keyDown(window, { code: 'Space', key: ' ', altKey: true })
+    fireEvent.keyDown(window, { code: 'Space', key: ' ', metaKey: true })
+    fireEvent.keyDown(window, { code: 'Space', key: ' ', isComposing: true })
+    expect(onBegin).not.toHaveBeenCalled()
+
     fireEvent.keyDown(window, { code: 'Space', key: ' ' })
     fireEvent.keyDown(window, { code: 'Space', key: ' ', repeat: true })
     expect(onBegin).toHaveBeenCalledTimes(1)
@@ -94,6 +112,17 @@ describe('spacebar', () => {
     field.focus()
     fireEvent.keyDown(field, { code: 'Space', key: ' ', bubbles: true })
     expect(onBegin).toHaveBeenCalledTimes(1)
+  })
+
+  it('respects enableSpacebar={false} shortcut toggle while keeping pointer PTT active', () => {
+    render(<Probe enableSpacebar={false} onBegin={onBegin} onEnd={onEnd} />)
+    fireEvent.keyDown(window, { code: 'Space', key: ' ' })
+    expect(onBegin).not.toHaveBeenCalled()
+
+    fireEvent.pointerDown(pill(), { pointerId: 1, button: 0 })
+    expect(onBegin).toHaveBeenCalledTimes(1)
+    fireEvent.pointerUp(pill(), { pointerId: 1, button: 0 })
+    expect(onEnd).toHaveBeenCalledTimes(1)
   })
 
   it('ignores space on keyboard-focused (:focus-visible) buttons/tabs, while keeping Spacebar active after mouse clicks', () => {
@@ -136,10 +165,13 @@ describe('spacebar', () => {
 })
 
 describe('stuck-mic escape hatches', () => {
-  it('releases on window blur, hidden tab, unmount, and 30s MAX_HOLD_MS watchdog without double-releasing', () => {
+  it('releases on window blur, hidden tab, unmount, 30s MAX_HOLD_MS hold watchdog, and 60s MAX_LATCH_MS latched toggle cap', () => {
+    expect(MAX_LATCH_MS).toBe(60_000)
     vi.useFakeTimers()
     try {
-      const { unmount } = render(<Probe onBegin={onBegin} onEnd={onEnd} />)
+      const { unmount } = render(
+        <Probe allowClickToggle onBegin={onBegin} onEnd={onEnd} />,
+      )
       fireEvent.keyDown(window, { code: 'Space', key: ' ' })
       fireEvent.blur(window)
       expect(onEnd).toHaveBeenCalledTimes(1)
@@ -150,16 +182,31 @@ describe('stuck-mic escape hatches', () => {
       expect(onEnd).toHaveBeenCalledTimes(2)
       Object.defineProperty(document, 'hidden', { configurable: true, value: false })
 
+      // Continuous hold times out at 30,000ms.
       fireEvent.pointerDown(pill(), { pointerId: 1 })
       act(() => {
         vi.advanceTimersByTime(MAX_HOLD_MS + 100)
       })
       fireEvent.pointerUp(pill(), { pointerId: 1 })
+      act(() => {
+        vi.advanceTimersByTime(1)
+      })
       expect(onEnd).toHaveBeenCalledTimes(3)
+
+      // Latched Enter/synthetic click toggle stays open at 30s and auto-releases at 60,000ms.
+      fireEvent.click(pill(), { detail: 0 })
+      act(() => {
+        vi.advanceTimersByTime(MAX_HOLD_MS + 1_000)
+      })
+      expect(onEnd).toHaveBeenCalledTimes(3)
+      act(() => {
+        vi.advanceTimersByTime(MAX_LATCH_MS - MAX_HOLD_MS)
+      })
+      expect(onEnd).toHaveBeenCalledTimes(4)
 
       fireEvent.pointerDown(pill(), { pointerId: 1 })
       unmount()
-      expect(onEnd).toHaveBeenCalledTimes(4)
+      expect(onEnd).toHaveBeenCalledTimes(5)
     } finally {
       vi.useRealTimers()
     }
