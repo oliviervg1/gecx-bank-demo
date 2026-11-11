@@ -75,6 +75,45 @@ def test_pending_anomaly_two_strike_ladder_and_stray_confirmation_safety(
     assert state["ui_view_state"]["page"] == "home"
     assert "home" in strike2["agent_action"].lower()
 
+    # 3. "Just to check" re-ask (anomaly_followup with empty confirmed) arms pending_anomaly_vendor (L-14)
+    reask_state = make_seeded_state("chloe", struct_fixtures)
+    reask_ns = load_controller_namespace("assist_everyday_banking", reask_state)
+    just_check = reask_ns["assist_everyday_banking"](query_type="anomaly_followup")
+    assert "Just to check" in just_check["agent_action"]
+    assert reask_state["everyday_state"]["pending_anomaly_vendor"] == "Netflix"
+    bare_no = reask_ns["assist_everyday_banking"](anomaly_confirmed="no")
+    assert "not recognised" in bare_no["agent_action"]
+    assert reask_state["everyday_state"]["anomaly_by_vendor"] == {
+        "Netflix": "unrecognised"
+    }
+
+    # 4. cancel_subscription + anomaly_confirmed="no" marks unrecognised + freeze-card guidance (P1-7),
+    #    whereas anomaly_confirmed="" leaves anomaly_by_vendor untouched!
+    cancel_no_state = make_seeded_state("chloe", struct_fixtures)
+    cancel_no_ns = load_controller_namespace("assist_everyday_banking", cancel_no_state)
+    cancel_no_ns["assist_everyday_banking"](query_type="overview")
+    cancel_no = cancel_no_ns["assist_everyday_banking"](
+        query_type="cancel_subscription", vendor_name="Netflix", anomaly_confirmed="no"
+    )
+    assert "not recognised" in cancel_no["agent_action"]
+    assert "freeze" in cancel_no["agent_action"]
+    assert cancel_no_state["everyday_state"]["anomaly_by_vendor"] == {
+        "Netflix": "unrecognised"
+    }
+    assert cancel_no_state["everyday_state"]["pending_anomaly_vendor"] == ""
+    assert cancel_no_state["everyday_state"]["pending_redirect_offer"] is False
+    assert cancel_no_state["everyday_state"]["last_discussed_subscription"] == {}
+
+    cancel_empty_state = make_seeded_state("chloe", struct_fixtures)
+    cancel_empty_ns = load_controller_namespace(
+        "assist_everyday_banking", cancel_empty_state
+    )
+    cancel_empty_ns["assist_everyday_banking"](query_type="overview")
+    cancel_empty_ns["assist_everyday_banking"](
+        query_type="cancel_subscription", vendor_name="Netflix"
+    )
+    assert cancel_empty_state["everyday_state"].get("anomaly_by_vendor", {}) == {}
+
 
 def test_pending_redirect_offer_two_strike_ladder_and_bare_yes_no(
     struct_fixtures: dict[str, dict[str, Any]],

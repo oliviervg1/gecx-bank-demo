@@ -8,7 +8,7 @@
     "savings_projection": "target_pence = custom_target_pence if custom_target_pence > 0 else goal_target_pence. If balance_pence >= target_pence: months_to_goal = 0, unreachable = false, projected_balance_pence = balance_pence, total_interest_earned_pence = 0. Else iterate m = 1..600: interest = half_up(pot * gross_rate_bps, 120_000); pot += interest + monthly_contribution_pence + extra_monthly_pence; total_interest += interest; if pot >= target_pence return months_to_goal = m. If loop finishes 600 months without reaching target_pence: months_to_goal = null, unreachable = true.",
     "annual_interest_on_balance_pence": "12-step monthly compounding of gross_rate_bps starting from balance_pence with zero monthly contributions (summing the 12 monthly half_up(pot * gross_rate_bps, 120_000) steps).",
     "target_year_month": "From demo_date (year, month in 1..12) and months_to_goal m: total_m = year * 12 + (month - 1) + m; target_year = total_m // 12; target_month = (total_m % 12) + 1.",
-    "simulate_mortgage": "If opening_balance_pence <= 0: months = 0, total_interest_pence = 0, ending_balance_pence = 0, paid_off = true. Else iterate m = 1..max_months (default 600): interest = half_up(bal * interest_rate_bps, 120_000); if bal + interest <= monthly_payment_pence return {months: m, total_interest_pence: total_interest + interest, ending_balance_pence: 0, paid_off: true}; else bal = bal + interest - monthly_payment_pence; total_interest += interest. After max_months return {months: max_months, total_interest_pence: total_interest, ending_balance_pence: bal, paid_off: false}.",
+    "simulate_mortgage": "If opening_balance_pence <= 0: months = 0, total_interest_pence = 0, ending_balance_pence = 0, paid_off = true. Else iterate m = 1..max_months (default 600): interest = half_up(bal * interest_rate_bps, 120_000); if bal + interest <= monthly_payment_pence return {months: m, total_interest_pence: total_interest + interest, ending_balance_pence: 0, paid_off: true}; if interest >= monthly_payment_pence return {months: max_months, total_interest_pence: total_interest + interest, ending_balance_pence: bal + interest - monthly_payment_pence, paid_off: false}; else bal = bal + interest - monthly_payment_pence; total_interest += interest. After max_months return {months: max_months, total_interest_pence: total_interest, ending_balance_pence: bal, paid_off: false}.",
     "mortgage_overpayment": "effective_lump_pence = min(max(0, lump_sum_overpayment_pence), balance_pence). Baseline runs simulate_mortgage(balance_pence, interest_rate_bps, next_payment.amount_pence, 600). Projected runs simulate_mortgage(balance_pence - effective_lump_pence, interest_rate_bps, next_payment.amount_pence + monthly_overpayment_pence, 600). both_amortize = baseline.paid_off && projected.paid_off; months_saved = max(0, baseline.months - projected.months) when both_amortize else 0; interest_saved_pence = max(0, baseline.total_interest_pence - projected.total_interest_pence) when both_amortize else 0. first_year_overpayment_pence = min(balance_pence, effective_lump_pence + min(12, projected.months) * monthly_overpayment_pence). remaining_allowance_pence = max(0, annual_overpayment_allowance_pence - overpaid_this_year_pence). exceeds_allowance = first_year_overpayment_pence > remaining_allowance_pence (strict >, so equality is ERC-free). excess_over_allowance_pence = max(0, first_year_overpayment_pence - remaining_allowance_pence).",
     "renewal_payment_bisection": "If balance_pence <= 0 return 0. If term_remaining_months <= 0 return balance_pence + half_up(balance_pence * rate_bps, 120_000). Else integer bisection over simulate_mortgage(balance_pence, rate_bps, mid, max_months=term_remaining_months).paid_off with low = half_up(balance_pence * rate_bps, 120_000) + 1 and high = balance_pence + low, returning smallest payment_pence that pays off within term_remaining_months.",
     "renter_readiness": "max_borrowing_pence = half_up(annual_income_pence * 45, 10); indicative_budget_with_goal_pence = max_borrowing_pence + goal_target_pence; remaining_to_goal_pence = max(0, goal_target_pence - balance_pence); deposit_progress_bps = min(10000, half_up(balance_pence * 10000, goal_target_pence))."
@@ -506,7 +506,7 @@
         "baseline_months": 600,
         "projected_months": 174,
         "months_saved": 0,
-        "baseline_interest_pence": 42926349,
+        "baseline_interest_pence": 40000,
         "projected_interest_pence": 3890687,
         "interest_saved_pence": 0,
         "remaining_allowance_pence": 1000000,
@@ -532,8 +532,8 @@
         "baseline_months": 600,
         "projected_months": 600,
         "months_saved": 0,
-        "baseline_interest_pence": 42926349,
-        "projected_interest_pence": 33463186,
+        "baseline_interest_pence": 40000,
+        "projected_interest_pence": 40000,
         "interest_saved_pence": 0,
         "remaining_allowance_pence": 1000000,
         "first_year_overpayment_pence": 60000,
@@ -553,8 +553,21 @@
       "max_months": 600,
       "expected": {
         "months": 600,
-        "total_interest_pence": 63643942,
-        "ending_balance_pence": 73643342,
+        "total_interest_pence": 33333,
+        "ending_balance_pence": 10033332,
+        "paid_off": false
+      }
+    },
+    {
+      "id": "edge_schema_max_10m_50pct_non_amortizing_early_exit",
+      "balance_pence": 1000000000,
+      "interest_rate_bps": 5000,
+      "monthly_payment_pence": 100000,
+      "max_months": 600,
+      "expected": {
+        "months": 600,
+        "total_interest_pence": 41666667,
+        "ending_balance_pence": 1041566667,
         "paid_off": false
       }
     },

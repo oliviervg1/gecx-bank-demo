@@ -6,26 +6,9 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-_PLATFORM_CURRENT_DATE_KEY = "current_date"
-_DEFAULT_DEMO_DATE = "2026-11-24"
-_DEFAULT_DEMO_YMD = (2026, 11, 24)
 _MAX_MORTGAGE_MONTHS = 600
 _ILLUSTRATION_NOTE = (
     "These figures are an indicative illustration only and not personalised mortgage advice."
-)
-_MONTH_NAMES = (
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
 )
 
 
@@ -109,14 +92,170 @@ def assist_mortgages(
         }
 
 
+# BEGIN SYNCED_CONTROLLER_COMMON
+_PLATFORM_CURRENT_DATE_KEY = "current_date"
+_DEFAULT_DEMO_DATE = "2026-11-24"
+_DEFAULT_DEMO_YMD = (2026, 11, 24)
+_MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
+
+
+def _parse_demo_date() -> tuple[int, int, int]:
+    """Parse and validate YYYY-MM-DD as a real calendar date in 2000..2100."""
+    raw = (
+        str(context.state.get("demo_date") or "").strip()
+        or str(context.state.get(_PLATFORM_CURRENT_DATE_KEY) or "").strip()
+        or _DEFAULT_DEMO_DATE
+    )
+    parts = raw.split("-")
+    if (
+        len(parts) == 3
+        and len(parts[0]) == 4
+        and len(parts[1]) == 2
+        and len(parts[2]) == 2
+        and all(p.isdigit() for p in parts)
+    ):
+        year = int(parts[0])
+        month = int(parts[1])
+        day = int(parts[2])
+        if 2000 <= year <= 2100:
+            try:
+                date(year, month, day)
+                return year, month, day
+            except ValueError:
+                pass
+    return _DEFAULT_DEMO_YMD
+
+
+def _emit_ui_view(payload: dict[str, Any]) -> None:
+    """Increment ui_view_state.seq monotonically and attach per-vendor anomaly state on spending views."""
+    current = dict(context.state.get("ui_view_state") or {})
+    next_seq = int(current.get("seq") or 0) + 1
+    updated = dict(payload)
+    if updated.get("page") == "spending" and "anomaly_by_vendor" not in updated:
+        raw_everyday = context.state.get("everyday_state")
+        by_vendor = (
+            raw_everyday.get("anomaly_by_vendor")
+            if isinstance(raw_everyday, dict)
+            else None
+        )
+        if isinstance(by_vendor, dict) and by_vendor:
+            updated["anomaly_by_vendor"] = {
+                str(k): str(v)
+                for k, v in by_vendor.items()
+                if v in ("confirmed", "unrecognised")
+            }
+    updated["seq"] = next_seq
+    context.state["ui_view_state"] = updated
+
+
+def _format_gbp(amount_pence: int) -> str:
+    """Format integer pence as £X,XXX when whole pounds else £X,XXX.XX."""
+    sign = "-" if amount_pence < 0 else ""
+    pounds, pence = divmod(abs(amount_pence), 100)
+    if pence == 0:
+        return f"{sign}£{pounds:,}"
+    return f"{sign}£{pounds:,}.{pence:02d}"
+
+
+def _format_bps(rate_bps: int) -> str:
+    """Format integer basis points as X.XX%."""
+    whole, frac = divmod(abs(rate_bps), 100)
+    return f"{whole}.{frac:02d}%"
+
+
+def _half_up(n: int, d: int) -> int:
+    """Exact integer half-up division for n >= 0 and d > 0."""
+    return (n * 2 + d) // (2 * d)
+
+
+def _to_pence(raw: float | int) -> int:
+    """Clamp model-supplied pound float to [0, £10M] and convert to integer pence."""
+    fx = float(raw or 0.0)
+    if not math.isfinite(fx):
+        return 0
+    clamped = max(0.0, min(fx, 10_000_000.0))
+    return int(math.floor(clamped * 100.0 + 0.5))
+
+
+def _capabilities_message() -> str:
+    """Return the shared three-product capabilities summary."""
+    return (
+        "I can help with everyday banking and spending, your savings pot and goal "
+        "projections, or your mortgage payments, overpayments, and fixed-rate renewal "
+        "options. Which area would you like to explore?"
+    )
+
+
+def _farewell_response() -> dict[str, str]:
+    """Latch session completion, clear handoff state, and return the closing line."""
+    first_name = str(context.state.get("first_name") or "").strip()
+    context.state["unclear_count"] = "0"
+    context.state["handoff_context"] = {}
+    context.state["escalation_reason"] = "CALL_COMPLETED"
+    context.state["call_complete"] = "true"
+    suffix = f", {first_name}" if first_name else ""
+    return {
+        "agent_action": f"You are very welcome{suffix}. Have a great rest of your day, and goodbye."
+    }
+
+
+def _shared_navigation_response(intent: str) -> dict[str, str]:
+    """Handle NAVIGATE_HOME, NAVIGATE_PROFILE, or CAPABILITIES consistently across hub and spokes."""
+    context.state["unclear_count"] = "0"
+    if intent == "NAVIGATE_HOME":
+        context.state["handoff_context"] = {}
+        _emit_ui_view({"page": "home"})
+        return {
+            "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
+        }
+    if intent == "NAVIGATE_PROFILE":
+        context.state["handoff_context"] = {}
+        _emit_ui_view({"page": "profile"})
+        return {
+            "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
+        }
+    return {"agent_action": _capabilities_message()}
+
+
+def _increment_unclear(strike_one_prompt: str) -> dict[str, str] | None:
+    """Advance two-strike unclear counter; return Strike 1 prompt or None on Strike 2."""
+    strikes = int(context.state.get("unclear_count") or "0")
+    if strikes == 0:
+        context.state["unclear_count"] = "1"
+        return {"agent_action": strike_one_prompt}
+    context.state["unclear_count"] = "0"
+    context.state["handoff_context"] = {}
+    return None
+
+
+def _unclear_reset_home_response() -> dict[str, str]:
+    """Navigate to Home and restate capabilities on Strike 2 without ending the session."""
+    _emit_ui_view({"page": "home"})
+    return {
+        "agent_action": f"I have opened your Home summary on screen. {_capabilities_message()}"
+    }
+# END SYNCED_CONTROLLER_COMMON
+
+
 def _handle_pivot_confirmation(confirm_pivot: str) -> dict:
     """Handle affirmative or negative reply to the renter savings-pot offer."""
     if confirm_pivot == "yes":
         return _handle_switch_intent("SAVINGS")
     context.state["unclear_count"] = "0"
-    mortgage_st = dict(context.state.get("mortgage_state") or {})
-    mortgage_st["pending_savings_pivot"] = False
-    context.state["mortgage_state"] = mortgage_st
+    context.state["mortgage_state"] = {"pending_savings_pivot": False}
     return {
         "agent_action": "No problem at all. Would you like to check anything on your everyday banking and spending, or your savings pot?"
     }
@@ -133,6 +272,7 @@ def _dispatch_mortgage(
     anchor_year, anchor_month, anchor_day = _parse_demo_date()
     statement_month = _MONTH_NAMES[anchor_month - 1]
     mortgage = snapshot["mortgage"]
+    # ui_view_state.subview replaces legacy mortgage_state.last_subview; only pending_savings_pivot is stored.
     mortgage_st = dict(context.state.get("mortgage_state") or {})
 
     if mortgage is None:
@@ -178,27 +318,13 @@ def _dispatch_mortgage(
     return handler()
 
 
-def _half_up(n: int, d: int) -> int:
-    """Exact integer half-up division for n >= 0 and d > 0."""
-    return (n * 2 + d) // (2 * d)
-
-
-def _to_pence(raw: float | int) -> int:
-    """Convert model-supplied pound float to clamped integer pence without float division."""
-    fx = float(raw or 0.0)
-    if not math.isfinite(fx):
-        return 0
-    clamped = max(0.0, min(fx, 10_000_000.0))
-    return int(math.floor(clamped * 100.0 + 0.5))
-
-
 def _simulate_mortgage(
     opening_balance_pence: int,
     interest_rate_bps: int,
     monthly_payment_pence: int,
     max_months: int = _MAX_MORTGAGE_MONTHS,
 ) -> dict[str, Any]:
-    """Run month-by-month integer amortisation capped at max_months."""
+    """Run month-by-month integer amortisation capped at max_months with non-amortising early exit."""
     if opening_balance_pence <= 0:
         return {
             "months": 0,
@@ -217,6 +343,13 @@ def _simulate_mortgage(
                 "total_interest_pence": total_interest + interest,
                 "ending_balance_pence": 0,
                 "paid_off": True,
+            }
+        if interest >= monthly_payment_pence:
+            return {
+                "months": max_months,
+                "total_interest_pence": total_interest + interest,
+                "ending_balance_pence": bal + interest - monthly_payment_pence,
+                "paid_off": False,
             }
         bal = bal + interest - monthly_payment_pence
         total_interest = total_interest + interest
@@ -350,48 +483,6 @@ def _normalize_snapshot(raw: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
-def _parse_demo_date() -> tuple[int, int, int]:
-    """Parse and validate YYYY-MM-DD as a real calendar date in 2000..2100."""
-    raw = (
-        str(context.state.get("demo_date") or "").strip()
-        or str(context.state.get(_PLATFORM_CURRENT_DATE_KEY) or "").strip()
-        or _DEFAULT_DEMO_DATE
-    )
-    parts = raw.split("-")
-    if (
-        len(parts) == 3
-        and len(parts[0]) == 4
-        and len(parts[1]) == 2
-        and len(parts[2]) == 2
-        and all(p.isdigit() for p in parts)
-    ):
-        year = int(parts[0])
-        month = int(parts[1])
-        day = int(parts[2])
-        if 2000 <= year <= 2100:
-            try:
-                date(year, month, day)
-                return year, month, day
-            except ValueError:
-                pass
-    return _DEFAULT_DEMO_YMD
-
-
-def _format_gbp(amount_pence: int) -> str:
-    """Format integer pence as £X,XXX when whole pounds else £X,XXX.XX."""
-    sign = "-" if amount_pence < 0 else ""
-    pounds, pence = divmod(abs(amount_pence), 100)
-    if pence == 0:
-        return f"{sign}£{pounds:,}"
-    return f"{sign}£{pounds:,}.{pence:02d}"
-
-
-def _format_bps(rate_bps: int) -> str:
-    """Format integer basis points as X.XX%."""
-    whole, frac = divmod(abs(rate_bps), 100)
-    return f"{whole}.{frac:02d}%"
-
-
 def _format_months_duration(total_months: int) -> str:
     """Format integer months as 'X years and Y months'."""
     years, months = divmod(max(0, total_months), 12)
@@ -442,15 +533,6 @@ def _format_iso_month_year(iso_date: str) -> str:
     return iso_date
 
 
-def _emit_ui_view(payload: dict[str, Any]) -> None:
-    """Increment ui_view_state.seq monotonically and store payload."""
-    current = dict(context.state.get("ui_view_state") or {})
-    next_seq = int(current.get("seq") or 0) + 1
-    updated = dict(payload)
-    updated["seq"] = next_seq
-    context.state["ui_view_state"] = updated
-
-
 def _handle_summary(
     mg: dict[str, Any], anchor_year: int, anchor_month: int, anchor_day: int
 ) -> dict:
@@ -462,7 +544,7 @@ def _handle_summary(
     rem_allow = max(
         0, mg["annual_overpayment_allowance_pence"] - mg["overpaid_this_year_pence"]
     )
-    context.state["mortgage_state"] = {"last_subview": "overview"}
+    context.state["mortgage_state"] = {}
     _emit_ui_view({"page": "mortgage", "subview": "overview"})
     return {
         "agent_action": (
@@ -484,7 +566,7 @@ def _handle_next_payment(
     next_due = _next_payment_label(
         mg["next_payment"]["day_of_month"], anchor_year, anchor_month, anchor_day
     )
-    context.state["mortgage_state"] = {"last_subview": "overview"}
+    context.state["mortgage_state"] = {}
     _emit_ui_view({"page": "mortgage", "subview": "overview"})
     return {
         "agent_action": (
@@ -499,7 +581,7 @@ def _handle_allowance(mg: dict[str, Any], statement_month: str) -> dict:
     rem_allow = max(
         0, mg["annual_overpayment_allowance_pence"] - mg["overpaid_this_year_pence"]
     )
-    context.state["mortgage_state"] = {"last_subview": "overview"}
+    context.state["mortgage_state"] = {}
     _emit_ui_view({"page": "mortgage", "subview": "overview"})
     return {
         "agent_action": (
@@ -562,11 +644,7 @@ def _handle_overpayment_projection(
     mg: dict[str, Any], monthly_pence: int, lump_pence: int, statement_month: str
 ) -> dict:
     """Project term reduction, interest saved, and ERC-free cap check."""
-    context.state["mortgage_state"] = {
-        "last_subview": "overpay",
-        "monthly_overpayment_pence": monthly_pence,
-        "lump_sum_overpayment_pence": lump_pence,
-    }
+    context.state["mortgage_state"] = {}
     _emit_ui_view(
         {
             "page": "mortgage",
@@ -615,7 +693,7 @@ def _handle_rate_options(mg: dict[str, Any], statement_month: str) -> dict:
             f"the {opt['label']} at {_format_bps(opt['rate_bps'])} would be {_format_gbp(new_pmt)} a month ({delta_str})"
         )
 
-    context.state["mortgage_state"] = {"last_subview": "rates"}
+    context.state["mortgage_state"] = {}
     _emit_ui_view({"page": "mortgage", "subview": "rates"})
     joined = ", while ".join(comparisons)
     return {
@@ -634,10 +712,7 @@ def _handle_renter_guidance(snapshot: dict[str, Any], statement_month: str) -> d
     budget_with_goal_pence = max_borrow_pence + sav["goal_target_pence"]
     remaining_deposit_pence = max(0, sav["goal_target_pence"] - sav["balance_pence"])
 
-    context.state["mortgage_state"] = {
-        "last_subview": "overview",
-        "pending_savings_pivot": True,
-    }
+    context.state["mortgage_state"] = {"pending_savings_pivot": True}
     _emit_ui_view({"page": "mortgage", "subview": "overview"})
     return {
         "agent_action": (
@@ -654,36 +729,15 @@ def _handle_renter_guidance(snapshot: dict[str, Any], statement_month: str) -> d
 def _handle_switch_intent(switch_intent: str) -> dict:
     """Handle local navigation, capabilities, farewell, or cross-spoke pivots."""
     if switch_intent == "FAREWELL":
-        first_name = str(context.state.get("first_name") or "").strip()
-        context.state["unclear_count"] = "0"
         context.state["mortgage_state"] = {}
-        context.state["handoff_context"] = {}
-        context.state["escalation_reason"] = "CALL_COMPLETED"
-        context.state["call_complete"] = "true"
-        suffix = f", {first_name}" if first_name else ""
-        return {
-            "agent_action": f"You are very welcome{suffix}. Have a great rest of your day, and goodbye."
-        }
+        return _farewell_response()
 
     if switch_intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES"):
-        context.state["unclear_count"] = "0"
         if switch_intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE"):
             mortgage_st = dict(context.state.get("mortgage_state") or {})
             mortgage_st["pending_savings_pivot"] = False
             context.state["mortgage_state"] = mortgage_st
-        if switch_intent == "NAVIGATE_HOME":
-            _emit_ui_view({"page": "home"})
-            return {
-                "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
-            }
-        if switch_intent == "NAVIGATE_PROFILE":
-            _emit_ui_view({"page": "profile"})
-            return {
-                "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
-            }
-        return {
-            "agent_action": "I can help with everyday banking and spending, your savings pot and goal projections, or your mortgage payments, overpayments, and fixed-rate renewal options. Which area would you like to explore?"
-        }
+        return _shared_navigation_response(switch_intent)
 
     if switch_intent in ("EVERYDAY_BANKING", "SAVINGS"):
         target = (
@@ -710,25 +764,15 @@ def _handle_switch_intent(switch_intent: str) -> dict:
 
 def _handle_unclear() -> dict:
     """Two-strike non-terminating unclear input ladder, clearing pending pivot on strike 2."""
-    strikes = int(context.state.get("unclear_count") or "0")
     mortgage_st = dict(context.state.get("mortgage_state") or {})
-    if strikes == 0:
-        context.state["unclear_count"] = "1"
-        if mortgage_st.get("pending_savings_pivot"):
-            return {
-                "agent_action": "Would you like to look at your savings deposit pot projection, or check something else on your accounts?"
-            }
-        return {
-            "agent_action": "Sorry, I did not quite catch that. Would you like help with your mortgage, your savings pot, or everyday banking?"
-        }
-    context.state["unclear_count"] = "0"
+    prompt = (
+        "Would you like to look at your savings deposit pot projection, or check something else on your accounts?"
+        if mortgage_st.get("pending_savings_pivot")
+        else "Sorry, I did not quite catch that. Would you like help with your mortgage, your savings pot, or everyday banking?"
+    )
+    strike_one = _increment_unclear(prompt)
+    if strike_one is not None:
+        return strike_one
     mortgage_st["pending_savings_pivot"] = False
     context.state["mortgage_state"] = mortgage_st
-    _emit_ui_view({"page": "home"})
-    return {
-        "agent_action": (
-            "I have opened your Home summary on screen. I can help with everyday banking and "
-            "spending, your savings pot and goal projections, or your mortgage payments, "
-            "overpayments, and fixed-rate renewal options. Which area would you like to explore?"
-        )
-    }
+    return _unclear_reset_home_response()

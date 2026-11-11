@@ -1,6 +1,5 @@
 import json
 import logging
-import re
 
 logger = logging.getLogger(__name__)
 
@@ -17,10 +16,6 @@ _ALLOWED_AGENTS = frozenset(
 )
 _SAFE_FALLBACK_TEXT = (
     "Sorry, something went wrong on my side. Could you try asking that again?"
-)
-_PLATFORM_TAG_RE = re.compile(
-    r"<(?:state_update|context|event)\b[^>]*>.*?</(?:state_update|context|event)>",
-    re.DOTALL | re.IGNORECASE,
 )
 
 
@@ -62,25 +57,6 @@ def _last_returned_tool_name(llm_request: LlmRequest) -> str:
     return names[-1] if names else ""
 
 
-def _clean_user_utterance(llm_request: LlmRequest) -> str:
-    """Extract clean caller text or transcript without platform turn envelopes."""
-    contents = llm_request.contents or []
-    if not contents:
-        return ""
-    last = contents[-1]
-    if not last.is_user() or not last.parts:
-        return ""
-    chunks = []
-    for part in last.parts:
-        txt = part.text_or_transcript()
-        if txt:
-            chunks.append(txt)
-    if not chunks:
-        return ""
-    cleaned = _PLATFORM_TAG_RE.sub(" ", " ".join(chunks))
-    return " ".join(cleaned.split())[:500]
-
-
 def before_model_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
 ) -> LlmResponse | None:
@@ -102,11 +78,17 @@ def before_model_callback(
             count = int(state.get("pass_count") or "0") + 1
         state["pass_count"] = str(count)
 
-        # Post-tool pass: hide returned controller first, then route or emit Tier 1 UI.
-        if _is_tool_response(llm_request):
+        is_tool_resp = _is_tool_response(llm_request)
+        returned_tool = ""
+        if is_tool_resp:
             returned_tool = _last_returned_tool_name(llm_request)
             if returned_tool:
-                llm_request.config.hide_tool(returned_tool)
+                try:
+                    llm_request.config.hide_tool(returned_tool)
+                except Exception:
+                    logger.exception(
+                        "capture_utterance failed to hide returned tool %s", returned_tool
+                    )
 
             target = str(state.get("target_agent") or "").strip()
             if target:
@@ -119,28 +101,7 @@ def before_model_callback(
                         parts=[Part.from_agent_transfer(agent=target)]
                     )
 
-            session_id = callback_context.session_id or ""
-            if (
-                _ENABLE_TIER1_PARTIAL_UI
-                and returned_tool != "transfer_to_agent"
-                and not session_id.startswith("evaluation")
-            ):
-                view = dict(state.get("ui_view_state") or {})
-                seq = int(view.get("seq") or 0)
-                prev_seq = int(state.get("ui_emitted_seq") or "0")
-                if seq >= 1 and seq > prev_seq:
-                    state["ui_emitted_seq"] = str(seq)
-                    resp = LlmResponse.from_parts(
-                        parts=[Part.from_json(data=json.dumps(view))]
-                    )
-                    resp.partial = True
-                    return resp
-        else:
-            utterance = _clean_user_utterance(llm_request)
-            if utterance:
-                state["last_user_utterance"] = utterance
-
-        # Loop-cap guard: finish any valid staged route first, else close cleanly.
+        # Loop-cap guard runs BEFORE Tier 1 partial UI return so runaway passes always stop.
         if count > _MAX_PASSES:
             target = str(state.get("target_agent") or "").strip()
             if target:
@@ -168,6 +129,27 @@ def before_model_callback(
                     ),
                 ]
             )
+
+        # Post-tool Tier 1 partial UI emission (BidiRunSession streams JSON without suppressing LLM speech).
+        session_id = callback_context.session_id or ""
+        if (
+            is_tool_resp
+            and _ENABLE_TIER1_PARTIAL_UI
+            and returned_tool != "transfer_to_agent"
+            and not session_id.startswith("evaluation")
+        ):
+            view = dict(state.get("ui_view_state") or {})
+            seq = int(view.get("seq") or 0)
+            prev_seq = int(state.get("ui_emitted_seq") or "0")
+            if seq >= 1 and seq > prev_seq:
+                payload_json = json.dumps(view)
+                state["ui_emitted_seq"] = str(seq)
+                resp = LlmResponse.from_parts(
+                    parts=[Part.from_json(data=payload_json)]
+                )
+                resp.partial = True
+                return resp
+
         return None
     except Exception:
         logger.exception("capture_utterance failed")

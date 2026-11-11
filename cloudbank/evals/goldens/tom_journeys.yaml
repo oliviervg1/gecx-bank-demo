@@ -105,11 +105,11 @@ conversations:
           - "# silent"
           - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000 suggests borrowing up to £189,000, or a property budget around £224,000 once your £35,000 First Home Deposit is complete (£20,800 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
 
-      - user: "Yes, check my First Home Deposit savings summary."
+      - user: "Yes, please show me that."
         tool_calls:
           - action: assist_mortgages
             args:
-              switch_intent: "SAVINGS"
+              confirm_pivot: "yes"
           - action: transfer_to_agent
             args:
               agent: "savings_agent"
@@ -125,6 +125,77 @@ conversations:
           - action: assist_savings
             args:
               switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Tom. Have a great rest of your day, and goodbye."
+
+  - conversation: "tom_renter_declines_savings_pivot_journey"
+    tags:
+      - "P1"
+      - "renter"
+      - "confirm_pivot_no"
+    turns:
+      - user: "Could you check roughly how much I could borrow for a first home?"
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "MORTGAGES"
+              topic_hint:
+                $matchType: "ignore"
+          - action: transfer_to_agent
+            args:
+              agent: "mortgage_agent"
+          - action: assist_mortgages
+            args:
+              query_type: "summary"
+        agent:
+          - "# silent"
+          - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000 suggests borrowing up to £189,000, or a property budget around £224,000 once your £35,000 First Home Deposit is complete (£20,800 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
+
+      - user: "No thanks, not right now."
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              confirm_pivot: "no"
+        agent: "No problem at all. Would you like to check anything on your everyday banking and spending, or your savings pot?"
+
+      - user: "Nothing else today, thanks, goodbye."
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Tom. Have a great rest of your day, and goodbye."
+
+  - conversation: "tom_two_strike_unclear_recovery_journey"
+    tags:
+      - "P1"
+      - "unclear_recovery"
+    turns:
+      - user: "Testing, one two."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "UNCLEAR"
+        agent: "Sorry, I did not quite catch that. Would you like help with everyday banking, savings, or mortgages?"
+
+      - user: "Hmm, still not sure."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "UNCLEAR"
+        agent: "I have opened your Home summary on screen. I can help with everyday banking and spending, your savings pot and goal projections, or your mortgage payments, overpayments, and fixed-rate renewal options. Which area would you like to explore?"
+
+      - user: "All good for now, goodbye."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "FAREWELL"
           - action: end_session
             args:
               session_escalated: false

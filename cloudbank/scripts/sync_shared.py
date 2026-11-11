@@ -13,11 +13,11 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-"""Synchronize canonical CXAS callbacks and persona snapshots into bundle and evals.
+"""Synchronize canonical CXAS callbacks, controller helpers, help hosts, and persona snapshots.
 
-Preserves standalone per-agent callback files under ``cxas_app/Cloudbank/agents/``
-for 100% ``cxas pull`` compatibility while keeping a single source of truth in
-``cxas_shared/callbacks/`` and ``shared/personas/*.json``.
+Preserves standalone per-agent callback files and single-file Python controllers under
+``cxas_app/Cloudbank/`` for 100% ``cxas pull`` / ``import_app`` compatibility while keeping
+a single source of truth in ``cxas_shared/`` and ``shared/``.
 """
 
 from __future__ import annotations
@@ -31,9 +31,14 @@ from typing import Any
 import yaml
 
 CLOUDBANK_DIR = Path(__file__).resolve().parent.parent
+SHARED_DIR = CLOUDBANK_DIR / "shared"
 SHARED_CALLBACKS_DIR = CLOUDBANK_DIR / "cxas_shared" / "callbacks"
-BUNDLE_AGENTS_DIR = CLOUDBANK_DIR / "cxas_app" / "Cloudbank" / "agents"
-PERSONAS_DIR = CLOUDBANK_DIR / "shared" / "personas"
+CONTROLLER_COMMON_PATH = CLOUDBANK_DIR / "cxas_shared" / "controller_common.py"
+OFFICIAL_HELP_HOSTS_PATH = SHARED_DIR / "official_help_hosts.json"
+BUNDLE_DIR = CLOUDBANK_DIR / "cxas_app" / "Cloudbank"
+BUNDLE_AGENTS_DIR = BUNDLE_DIR / "agents"
+BUNDLE_TOOLS_DIR = BUNDLE_DIR / "tools"
+PERSONAS_DIR = SHARED_DIR / "personas"
 GOLDENS_DIR = CLOUDBANK_DIR / "evals" / "goldens"
 SIMULATIONS_DIR = CLOUDBANK_DIR / "evals" / "simulations"
 
@@ -44,11 +49,87 @@ AGENT_NAMES = (
     "mortgage_agent",
 )
 
+CONTROLLER_NAMES = (
+    "route_banking_intent",
+    "assist_everyday_banking",
+    "assist_savings",
+    "assist_mortgages",
+)
+
 CALLBACK_TARGETS = (
     ("capture_utterance.py", "before_model_callbacks/capture_utterance/python_code.py"),
-    ("agent_transfer.py", "after_model_callbacks/agent_transfer/python_code.py"),
     ("release_line.py", "after_model_callbacks/release_line/python_code.py"),
 )
+
+COMMON_BEGIN = "# BEGIN SYNCED_CONTROLLER_COMMON"
+COMMON_END = "# END SYNCED_CONTROLLER_COMMON"
+HOSTS_BEGIN = "# BEGIN SYNCED_OFFICIAL_HELP_HOSTS"
+HOSTS_END = "# END SYNCED_OFFICIAL_HELP_HOSTS"
+
+
+def _extract_marked_block(text: str, begin_marker: str, end_marker: str, source_label: str) -> str:
+    """Extract inclusive marked region [begin_marker .. end_marker] from text."""
+    start = text.find(begin_marker)
+    if start == -1:
+        raise RuntimeError(f"Missing {begin_marker!r} in {source_label}")
+    end_pos = text.find(end_marker, start)
+    if end_pos == -1:
+        raise RuntimeError(f"Missing {end_marker!r} in {source_label}")
+    end = end_pos + len(end_marker)
+    return text[start:end]
+
+
+def _replace_marked_block(
+    text: str,
+    begin_marker: str,
+    end_marker: str,
+    replacement_block: str,
+    target_label: str,
+) -> str:
+    """Replace inclusive marked region [begin_marker .. end_marker] inside text."""
+    start = text.find(begin_marker)
+    if start == -1:
+        raise RuntimeError(f"Missing {begin_marker!r} in {target_label}")
+    end_pos = text.find(end_marker, start)
+    if end_pos == -1:
+        raise RuntimeError(f"Missing {end_marker!r} in {target_label}")
+    end = end_pos + len(end_marker)
+    return text[:start] + replacement_block + text[end:]
+
+
+def _render_official_help_hosts_block() -> str:
+    """Render deterministic Python constants from shared/official_help_hosts.json."""
+    if not OFFICIAL_HELP_HOSTS_PATH.is_file():
+        raise FileNotFoundError(f"Missing {OFFICIAL_HELP_HOSTS_PATH}")
+    payload = json.loads(OFFICIAL_HELP_HOSTS_PATH.read_text(encoding="utf-8"))
+    vendors: dict[str, list[str]] = payload["vendors"]
+    path_prefixes: dict[str, list[str]] = payload.get("path_prefixes") or {}
+
+    lines = [
+        HOSTS_BEGIN,
+        "_VENDOR_OFFICIAL_HOSTS: dict[str, tuple[str, ...]] = {",
+    ]
+    for vendor in sorted(vendors):
+        hosts = tuple(str(h) for h in vendors[vendor])
+        tuple_literal = (
+            f"({json.dumps(hosts[0])},)"
+            if len(hosts) == 1
+            else "(" + ", ".join(json.dumps(h) for h in hosts) + ")"
+        )
+        lines.append(f"    {json.dumps(vendor)}: {tuple_literal},")
+    lines.append("}")
+    lines.append("_HOST_REQUIRED_PATH_PREFIXES: dict[str, tuple[str, ...]] = {")
+    for host in sorted(path_prefixes):
+        prefixes = tuple(str(p) for p in path_prefixes[host])
+        tuple_literal = (
+            f"({json.dumps(prefixes[0])},)"
+            if len(prefixes) == 1
+            else "(" + ", ".join(json.dumps(p) for p in prefixes) + ")"
+        )
+        lines.append(f"    {json.dumps(host)}: {tuple_literal},")
+    lines.append("}")
+    lines.append(HOSTS_END)
+    return "\n".join(lines)
 
 
 def _yaml_scalar(value: Any) -> str:
@@ -180,14 +261,22 @@ def _rewrite_yaml_session_blocks(
     if header_key == "common_session_parameters":
         cp = verified["common_session_parameters"]
         pid = cp["persona_id"]
-        if cp["customer_snapshot"] != personas[pid] or cp["first_name"] != personas[pid]["user"]["first_name"]:
+        if (
+            cp["customer_snapshot"] != personas[pid]
+            or cp["first_name"] != personas[pid]["user"]["first_name"]
+        ):
             raise RuntimeError(f"Post-render YAML verification failed for persona {pid!r}")
     else:
         for item in verified["evals"]:
             sp = item["session_parameters"]
             pid = sp["persona_id"]
-            if sp["customer_snapshot"] != personas[pid] or sp["first_name"] != personas[pid]["user"]["first_name"]:
-                raise RuntimeError(f"Post-render YAML verification failed for simulation {item['name']!r}")
+            if (
+                sp["customer_snapshot"] != personas[pid]
+                or sp["first_name"] != personas[pid]["user"]["first_name"]
+            ):
+                raise RuntimeError(
+                    f"Post-render YAML verification failed for simulation {item['name']!r}"
+                )
     return rendered
 
 
@@ -202,7 +291,7 @@ def load_personas() -> dict[str, dict[str, Any]]:
 
 
 def sync_all(write: bool) -> list[str]:
-    """Compare or write all synced callback and eval YAML files, returning drifted paths."""
+    """Compare or write all synced callbacks, controllers, and eval YAMLs, returning drifted paths."""
     drifted: list[str] = []
 
     for src_name, rel_dest in CALLBACK_TARGETS:
@@ -218,6 +307,41 @@ def sync_all(write: bool) -> list[str]:
                 if write:
                     dest_path.parent.mkdir(parents=True, exist_ok=True)
                     dest_path.write_text(canonical_text, encoding="utf-8")
+
+    if not CONTROLLER_COMMON_PATH.is_file():
+        raise FileNotFoundError(f"Missing canonical controller common: {CONTROLLER_COMMON_PATH}")
+    common_block = _extract_marked_block(
+        CONTROLLER_COMMON_PATH.read_text(encoding="utf-8"),
+        COMMON_BEGIN,
+        COMMON_END,
+        str(CONTROLLER_COMMON_PATH),
+    )
+    hosts_block = _render_official_help_hosts_block()
+
+    for ctrl_name in CONTROLLER_NAMES:
+        ctrl_path = BUNDLE_TOOLS_DIR / ctrl_name / "python_function" / "python_code.py"
+        if not ctrl_path.is_file():
+            raise FileNotFoundError(f"Missing controller file: {ctrl_path}")
+        original_ctrl = ctrl_path.read_text(encoding="utf-8")
+        updated_ctrl = _replace_marked_block(
+            original_ctrl,
+            COMMON_BEGIN,
+            COMMON_END,
+            common_block,
+            str(ctrl_path),
+        )
+        if ctrl_name == "assist_everyday_banking":
+            updated_ctrl = _replace_marked_block(
+                updated_ctrl,
+                HOSTS_BEGIN,
+                HOSTS_END,
+                hosts_block,
+                str(ctrl_path),
+            )
+        if updated_ctrl != original_ctrl:
+            drifted.append(str(ctrl_path.relative_to(CLOUDBANK_DIR)))
+            if write:
+                ctrl_path.write_text(updated_ctrl, encoding="utf-8")
 
     personas = load_personas()
 
@@ -248,18 +372,18 @@ def build_parser() -> argparse.ArgumentParser:
     """Build the CLI argument parser for sync_shared.py."""
     parser = argparse.ArgumentParser(
         prog="sync_shared.py",
-        description="Synchronize canonical callbacks and persona fixtures into the CXAS bundle and evals.",
+        description="Synchronize canonical callbacks, controller helpers, and persona fixtures into the CXAS bundle and evals.",
     )
     mode = parser.add_mutually_exclusive_group(required=True)
     mode.add_argument(
         "--check",
         action="store_true",
-        help="Verify all callbacks and eval YAML snapshots match canonical sources without modifying files.",
+        help="Verify all callbacks, controller blocks, and eval YAML snapshots match canonical sources.",
     )
     mode.add_argument(
         "--write",
         action="store_true",
-        help="Write canonical callbacks and persona snapshots into agent callbacks and eval YAMLs.",
+        help="Write canonical callbacks, controller blocks, and persona snapshots into bundle and eval files.",
     )
     return parser
 
@@ -277,7 +401,15 @@ def main(argv: list[str] | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
-        print("All 12 agent callbacks and evaluation persona snapshots are in sync.")
+        num_callbacks = len(CALLBACK_TARGETS) * len(AGENT_NAMES)
+        num_controllers = len(CONTROLLER_NAMES)
+        num_evals = len(list(GOLDENS_DIR.glob("*.yaml"))) + len(
+            list(SIMULATIONS_DIR.glob("*.yaml"))
+        )
+        print(
+            f"All {num_callbacks} agent callbacks, {num_controllers} controller shared blocks, "
+            f"and {num_evals} evaluation files are in sync."
+        )
         return 0
 
     if drifted:

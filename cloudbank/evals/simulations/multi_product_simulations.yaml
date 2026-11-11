@@ -276,7 +276,7 @@ evals:
             goal_target_pence: 2500000
           mortgage:
             balance_pence: 9650000
-            address: "8 Clifton Vale, Bristol"
+            address: "8 Cloudbank Mews, Bristol"
             interest_rate_bps: 405
             rate_type: "Fixed"
             fixed_until: "2028-03-31"
@@ -354,3 +354,131 @@ evals:
     expectations:
       - "The assistant warns that £4,800 in year one exceeds Sarah's remaining £3,650 fee-free overpayment allowance by £1,150 and could incur an early repayment charge."
       - "The assistant states the indicative term reduction of 2 years and interest saving of £4,340.38 with the indicative-illustration sentence."
+
+  - name: sim_david_remortgage_renewal_and_family_reserve
+    tags:
+      - P1
+      - mortgage
+      - renewal
+    max_turns: 8
+    use_tool_fakes: true
+    session_parameters:
+      persona_id: "david"
+      first_name: "David"
+      demo_date: "2026-11-24"
+      time_of_day: "morning"
+      customer_snapshot:
+        user:
+          first_name: "David"
+          last_name: "Bennett"
+          age: 45
+          location: "Leeds, UK"
+          employment: "Engineering Director"
+          email: "david.bennett@example.com"
+          annual_income_pence: 9200000
+          goals:
+            - "Compare renewal deals before fixed rate ends"
+            - "Keep an accessible family rainy-day buffer"
+        accounts:
+          current:
+            name: "Cloudbank Everyday Account"
+            sort_code: "00-00-99"
+            account_number_last4: "7309"
+            balance_pence: 682040
+            currency: "GBP"
+          savings:
+            name: "Cloudbank Family Rainy-Day Saver"
+            balance_pence: 1240000
+            gross_rate_bps: 417
+            aer_bps: 425
+            monthly_contribution_pence: 30000
+            goal_name: "Family Reserve Pot"
+            goal_target_pence: 1800000
+          mortgage:
+            balance_pence: 14820000
+            address: "42 Cloudbank Crescent, Leeds"
+            interest_rate_bps: 390
+            rate_type: "Fixed"
+            fixed_until: "2027-05-31"
+            term_remaining_months: 120
+            next_payment:
+              amount_pence: 149342
+              day_of_month: 1
+            annual_overpayment_allowance_pence: 1482000
+            overpaid_this_year_pence: 120000
+            renewal_options:
+              - id: "fix-2yr"
+                label: "2-year Fixed"
+                term_years: 2
+                rate_bps: 415
+              - id: "fix-5yr"
+                label: "5-year Fixed"
+                term_years: 5
+                rate_bps: 375
+        transactions:
+          - { id: "txn-salary", month_offset: 0, day: 1, vendor: "Salary", category: "income", amount_pence: -540000 }
+          - { id: "txn-mortgage-dd", month_offset: 0, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 149342, is_subscription: true }
+          - { id: "txn-council-tax", month_offset: 0, day: 3, vendor: "Leeds City Council", category: "bills", amount_pence: 19800, is_subscription: true }
+          - { id: "txn-rail", month_offset: 0, day: 4, vendor: "Northern Rail", category: "transport", amount_pence: 9200 }
+          - { id: "txn-energy", month_offset: 0, day: 5, vendor: "British Gas", category: "bills", amount_pence: 14260, is_subscription: true }
+          - { id: "txn-costa-d", month_offset: 0, day: 6, vendor: "Costa", category: "coffee_shops", amount_pence: 375 }
+          - { id: "txn-broadband", month_offset: 0, day: 7, vendor: "Sky", category: "bills", amount_pence: 6800, is_subscription: true }
+          - { id: "txn-sainsburys", month_offset: 0, day: 8, vendor: "Sainsbury's", category: "groceries", amount_pence: 12840 }
+          - { id: "txn-mobile", month_offset: 0, day: 9, vendor: "EE", category: "bills", amount_pence: 4500, is_subscription: true }
+          - { id: "txn-fuel", month_offset: 0, day: 10, vendor: "Shell", category: "transport", amount_pence: 7120 }
+          - { id: "txn-pizza", month_offset: 0, day: 11, vendor: "Pizza Express", category: "eating_out", amount_pence: 6450 }
+          - { id: "txn-netflix-d", month_offset: 0, day: 12, vendor: "Netflix", category: "subscriptions", amount_pence: 1799, is_subscription: true }
+          - { id: "txn-costa-d2", month_offset: 0, day: 13, vendor: "Costa", category: "coffee_shops", amount_pence: 375 }
+          - { id: "txn-sainsburys-2", month_offset: 0, day: 15, vendor: "Sainsbury's", category: "groceries", amount_pence: 9615 }
+          - { id: "txn-jl", month_offset: 0, day: 16, vendor: "John Lewis", category: "shopping", amount_pence: 21000 }
+          - { id: "txn-cinema-d", month_offset: 0, day: 18, vendor: "Everyman Leeds", category: "entertainment", amount_pence: 4400 }
+          - { id: "txn-coop", month_offset: 0, day: 19, vendor: "Co-op", category: "groceries", amount_pence: 2460 }
+          - { id: "txn-curry", month_offset: 0, day: 20, vendor: "Akbar's", category: "eating_out", amount_pence: 7840 }
+          - { id: "txn-sainsburys-3", month_offset: 0, day: 21, vendor: "Sainsbury's", category: "groceries", amount_pence: 14120 }
+          - { id: "txn-gym", month_offset: 0, day: 22, vendor: "PureGym Family", category: "subscriptions", amount_pence: 6200, is_subscription: true, is_anomaly: true }
+          - { id: "txn-salary-2", month_offset: 1, day: 1, vendor: "Salary", category: "income", amount_pence: -540000 }
+          - { id: "txn-mortgage-dd-2", month_offset: 1, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 149342, is_subscription: true }
+          - { id: "txn-council-tax-2", month_offset: 1, day: 3, vendor: "Leeds City Council", category: "bills", amount_pence: 19800, is_subscription: true }
+          - { id: "txn-rail-2", month_offset: 1, day: 4, vendor: "Northern Rail", category: "transport", amount_pence: 9200 }
+          - { id: "txn-energy-2", month_offset: 1, day: 5, vendor: "British Gas", category: "bills", amount_pence: 14260, is_subscription: true }
+          - { id: "txn-broadband-2", month_offset: 1, day: 7, vendor: "Sky", category: "bills", amount_pence: 6800, is_subscription: true }
+          - { id: "txn-mobile-2", month_offset: 1, day: 9, vendor: "EE", category: "bills", amount_pence: 4500, is_subscription: true }
+          - { id: "txn-sainsburys-4", month_offset: 1, day: 10, vendor: "Sainsbury's", category: "groceries", amount_pence: 13280 }
+          - { id: "txn-netflix-d-2", month_offset: 1, day: 12, vendor: "Netflix", category: "subscriptions", amount_pence: 1799, is_subscription: true }
+          - { id: "txn-fuel-2", month_offset: 1, day: 14, vendor: "Shell", category: "transport", amount_pence: 6890 }
+          - { id: "txn-costa-d3", month_offset: 1, day: 15, vendor: "Costa", category: "coffee_shops", amount_pence: 750 }
+          - { id: "txn-pizza-2", month_offset: 1, day: 17, vendor: "Pizza Express", category: "eating_out", amount_pence: 5820 }
+          - { id: "txn-sainsburys-5", month_offset: 1, day: 18, vendor: "Sainsbury's", category: "groceries", amount_pence: 11895 }
+          - { id: "txn-jl-2", month_offset: 1, day: 20, vendor: "John Lewis", category: "shopping", amount_pence: 8999 }
+          - { id: "txn-gym-2", month_offset: 1, day: 22, vendor: "PureGym Family", category: "subscriptions", amount_pence: 3800, is_subscription: true }
+          - { id: "txn-coop-2", month_offset: 1, day: 24, vendor: "Co-op", category: "groceries", amount_pence: 3115 }
+          - { id: "txn-curry-2", month_offset: 1, day: 25, vendor: "Akbar's", category: "eating_out", amount_pence: 7110 }
+          - { id: "txn-decathlon", month_offset: 1, day: 26, vendor: "Decathlon", category: "shopping", amount_pence: 11250 }
+          - { id: "txn-kwikfit-2", month_offset: 1, day: 27, vendor: "Kwik Fit", category: "transport", amount_pence: 21800 }
+          - { id: "txn-york-museum-2", month_offset: 1, day: 28, vendor: "National Railway Museum", category: "entertainment", amount_pence: 6400 }
+          - { id: "txn-salary-3", month_offset: 2, day: 1, vendor: "Salary", category: "income", amount_pence: -540000 }
+          - { id: "txn-mortgage-dd-3", month_offset: 2, day: 1, vendor: "Cloudbank Mortgage", category: "bills", amount_pence: 149342, is_subscription: true }
+          - { id: "txn-council-tax-3", month_offset: 2, day: 3, vendor: "Leeds City Council", category: "bills", amount_pence: 19800, is_subscription: true }
+          - { id: "txn-rail-3", month_offset: 2, day: 4, vendor: "Northern Rail", category: "transport", amount_pence: 9200 }
+          - { id: "txn-energy-3", month_offset: 2, day: 5, vendor: "British Gas", category: "bills", amount_pence: 14260, is_subscription: true }
+          - { id: "txn-broadband-3", month_offset: 2, day: 7, vendor: "Sky", category: "bills", amount_pence: 6800, is_subscription: true }
+          - { id: "txn-mobile-3", month_offset: 2, day: 9, vendor: "EE", category: "bills", amount_pence: 4500, is_subscription: true }
+          - { id: "txn-sainsburys-6", month_offset: 2, day: 11, vendor: "Sainsbury's", category: "groceries", amount_pence: 12430 }
+          - { id: "txn-netflix-d-3", month_offset: 2, day: 12, vendor: "Netflix", category: "subscriptions", amount_pence: 1799, is_subscription: true }
+          - { id: "txn-fuel-3", month_offset: 2, day: 15, vendor: "Shell", category: "transport", amount_pence: 7410 }
+          - { id: "txn-costa-d4", month_offset: 2, day: 17, vendor: "Costa", category: "coffee_shops", amount_pence: 375 }
+          - { id: "txn-cinema-d2", month_offset: 2, day: 19, vendor: "Everyman Leeds", category: "entertainment", amount_pence: 3800 }
+          - { id: "txn-sainsburys-7", month_offset: 2, day: 21, vendor: "Sainsbury's", category: "groceries", amount_pence: 11005 }
+          - { id: "txn-gym-3", month_offset: 2, day: 22, vendor: "PureGym Family", category: "subscriptions", amount_pence: 3800, is_subscription: true }
+          - { id: "txn-clarks-3", month_offset: 2, day: 23, vendor: "Clarks", category: "shopping", amount_pence: 14500 }
+          - { id: "txn-coop-3", month_offset: 2, day: 25, vendor: "Co-op", category: "groceries", amount_pence: 2840 }
+          - { id: "txn-pizza-3", month_offset: 2, day: 26, vendor: "Pizza Express", category: "eating_out", amount_pence: 7650 }
+          - { id: "txn-sainsburys-8", month_offset: 2, day: 27, vendor: "Sainsbury's", category: "groceries", amount_pence: 12350 }
+    steps:
+      - goal: "Ask to compare the 2-year and 5-year fixed-rate renewal options on your mortgage ahead of your current deal ending, then check how your Family Reserve Pot savings goal is tracking."
+        success_criteria: "The assistant compares the £1,493.42 current monthly payment at 3.90% against the 2-year Fixed at 4.15% (£1,511.05/mo, £17.63 more) and 5-year Fixed at 3.75% (£1,482.91/mo, £10.51 less), then reports the £12,400 Family Reserve Pot reaching £18,000 in 16 months (March 2028)."
+        response_guide: "Ask first to compare fixed-rate remortgage renewal deals, then ask about your Family Reserve Pot progress, and say goodbye once answered."
+        max_turns: 4
+    expectations:
+      - "The assistant compares David's £1,493.42 monthly payment at 3.90% against the 2-year Fixed at 4.15% (£1,511.05 a month) and the 5-year Fixed at 3.75% (£1,482.91 a month) with an indicative-illustration note."
+      - "The assistant reports David's Family Reserve Pot balance of £12,400 at 4.25% AER reaching the £18,000 target in 16 months (March 2028)."

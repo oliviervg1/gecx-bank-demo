@@ -149,3 +149,56 @@ def test_verify_expected_tools_rejects_missing_or_orphan_tools(
         match=r"missing=\['assist_mortgages'\], orphans=\['get_overview'\]",
     ):
         manage_app.verify_expected_tools(ws, ws.prod_app_resource)
+
+
+def test_confirm_prod_overwrite_blocks_all_unconfirmed_prod_aliases(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Verify M-2: non-interactive push to prod via any alias/UUID/resource requires --yes."""
+    monkeypatch.setenv("CLOUDBANK_GCP_PROJECT_ID", "demo-bank-proj")
+    monkeypatch.setenv("CLOUDBANK_LOCATION", "eu")
+    monkeypatch.setenv("CLOUDBANK_APP_ID", "11111111-2222-3333-4444-555555555555")
+    ws = load_workspace(CLOUDBANK_ROOT)
+
+    fake_apps = MagicMock()
+    fake_apps.get_app_by_display_name.side_effect = lambda name: (
+        SimpleNamespace(
+            name="projects/999999/locations/eu/apps/11111111-2222-3333-4444-555555555555"
+        )
+        if name == "Cloudbank"
+        else SimpleNamespace(
+            name="projects/999999/locations/eu/apps/22222222-2222-3333-4444-555555555555"
+        )
+    )
+    pushed: list[tuple[str, str]] = []
+    monkeypatch.setattr(manage_app, "apps_client", lambda _ws: fake_apps)
+    monkeypatch.setattr(
+        manage_app,
+        "push_app",
+        lambda _ws, res, disp: pushed.append((res, disp)),
+    )
+    monkeypatch.setattr(manage_app.sys, "stdin", SimpleNamespace(isatty=lambda: False))
+
+    for prod_alias in (
+        None,
+        "prod",
+        "production",
+        "Cloudbank",
+        "11111111-2222-3333-4444-555555555555",
+        "projects/999999/locations/eu/apps/11111111-2222-3333-4444-555555555555",
+    ):
+        args_no = manage_app.build_parser().parse_args(
+            ["push"] + ([prod_alias] if prod_alias is not None else [])
+        )
+        with pytest.raises(RuntimeError, match="pass --yes"):
+            args_no.func(ws, args_no)
+    assert pushed == []
+
+    # Passing --yes on Cloudbank / prod succeeds; dev without --yes also succeeds.
+    args_yes = manage_app.build_parser().parse_args(["push", "Cloudbank", "--yes"])
+    args_yes.func(ws, args_yes)
+    assert len(pushed) == 1
+
+    args_dev = manage_app.build_parser().parse_args(["push", "dev"])
+    args_dev.func(ws, args_dev)
+    assert len(pushed) == 2

@@ -1,0 +1,95 @@
+{
+  "vendors": {
+    "adobe": [
+      "helpx.adobe.com"
+    ],
+    "adobe creative cloud": [
+      "helpx.adobe.com"
+    ],
+    "amazon": [
+      "www.amazon.co.uk"
+    ],
+    "amazon prime": [
+      "www.amazon.co.uk"
+    ],
+    "apple": [
+      "support.apple.com"
+    ],
+    "audible": [
+      "help.audible.co.uk",
+      "help.audible.com"
+    ],
+    "aviva": [
+      "www.aviva.co.uk",
+      "aviva.co.uk"
+    ],
+    "aviva home insurance": [
+      "www.aviva.co.uk",
+      "aviva.co.uk"
+    ],
+    "british gas": [
+      "www.britishgas.co.uk"
+    ],
+    "bt": [
+      "www.bt.com"
+    ],
+    "disney": [
+      "help.disneyplus.com"
+    ],
+    "disney plus": [
+      "help.disneyplus.com"
+    ],
+    "ee": [
+      "ee.co.uk"
+    ],
+    "giffgaff": [
+      "help.giffgaff.com"
+    ],
+    "icloud": [
+      "support.apple.com"
+    ],
+    "national trust": [
+      "www.nationaltrust.org.uk",
+      "nationaltrust.org.uk"
+    ],
+    "netflix": [
+      "help.netflix.com"
+    ],
+    "new york times": [
+      "help.nytimes.com"
+    ],
+    "nytimes": [
+      "help.nytimes.com"
+    ],
+    "octopus energy": [
+      "octopus.energy"
+    ],
+    "ovo energy": [
+      "help.ovoenergy.com"
+    ],
+    "peloton": [
+      "support.onepeloton.com",
+      "support.onepeloton.co.uk"
+    ],
+    "puregym": [
+      "www.puregym.com",
+      "puregym.com"
+    ],
+    "puregym family": [
+      "www.puregym.com",
+      "puregym.com"
+    ],
+    "sky": [
+      "www.sky.com"
+    ],
+    "spotify": [
+      "support.spotify.com"
+    ]
+  },
+  "path_prefixes": {
+    "www.amazon.co.uk": [
+      "/gp/help",
+      "/hz/contact-us"
+    ]
+  }
+}

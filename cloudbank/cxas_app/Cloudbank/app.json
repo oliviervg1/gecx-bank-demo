@@ -105,18 +105,8 @@
       "schema": { "type": "STRING", "required": [], "default": "0" }
     },
     {
-      "name": "router_state",
-      "description": "Private state owned by route_banking_intent.",
-      "schema": { "type": "OBJECT", "required": [] }
-    },
-    {
       "name": "everyday_state",
       "description": "Private state owned by assist_everyday_banking.",
-      "schema": { "type": "OBJECT", "required": [] }
-    },
-    {
-      "name": "savings_state",
-      "description": "Private state owned by assist_savings.",
       "schema": { "type": "OBJECT", "required": [] }
     },
     {
@@ -133,11 +123,6 @@
       "name": "pass_count",
       "description": "Model pass count within the active invocation.",
       "schema": { "type": "STRING", "required": [], "default": "0" }
-    },
-    {
-      "name": "last_user_utterance",
-      "description": "Sanitized text or transcript of the latest caller turn.",
-      "schema": { "type": "STRING", "required": [], "default": "" }
     },
     {
       "name": "call_complete",

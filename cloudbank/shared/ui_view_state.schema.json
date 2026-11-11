@@ -57,6 +57,17 @@
       "type": "string",
       "enum": ["confirmed", "unrecognised"]
     },
+    "anomaly_by_vendor": {
+      "type": "object",
+      "propertyNames": {
+        "minLength": 1,
+        "maxLength": 120
+      },
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["confirmed", "unrecognised"]
+      }
+    },
     "extra_monthly_pence": {
       "type": "integer",
       "minimum": 0,

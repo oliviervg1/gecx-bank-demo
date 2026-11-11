@@ -482,9 +482,31 @@ def _display_name_for_target(ws: Workspace, target: str | None) -> str:
     return target
 
 
+def confirm_prod_overwrite(
+    ws: Workspace,
+    app_resource: str,
+    assume_yes: bool,
+) -> None:
+    """Require --yes or interactive TTY confirmation before overwriting prod_app_resource."""
+    if app_resource != ws.prod_app_resource or assume_yes:
+        return
+    if not sys.stdin.isatty():
+        raise RuntimeError(
+            f"Refusing non-interactive OVERWRITE of prod app '{app_resource}': pass --yes to confirm."
+        )
+    sys.stderr.write(
+        f"Confirm OVERWRITE import to prod app '{ws.prod_app_id}' in project '{ws.project_id}'? [y/N]: "
+    )
+    sys.stderr.flush()
+    reply = sys.stdin.readline().strip().lower()
+    if reply not in ("y", "yes"):
+        raise RuntimeError("Aborted prod OVERWRITE deployment.")
+
+
 def _push_cli(ws: Workspace, args: argparse.Namespace) -> None:
-    """Execute ``push [target] [--create-version [VERSION_NAME]]``."""
+    """Execute ``push [target] [--yes] [--create-version [VERSION_NAME]]``."""
     app_resource = resolve_app_resource(ws, args.target)
+    confirm_prod_overwrite(ws, app_resource, bool(args.assume_yes))
     display_name = _display_name_for_target(ws, args.target)
     push_app(ws, app_resource, display_name)
     if args.create_version is not None:
@@ -520,6 +542,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p_push = sub.add_parser("push", add_help=False)
     p_push.add_argument("target", nargs="?", default=None)
+    p_push.add_argument(
+        "-y",
+        "--yes",
+        dest="assume_yes",
+        action="store_true",
+        default=False,
+    )
     p_push.add_argument(
         "--create-version",
         dest="create_version",

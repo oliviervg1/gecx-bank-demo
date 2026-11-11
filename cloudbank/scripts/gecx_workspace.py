@@ -53,12 +53,7 @@ class Workspace:
     deployed_channel_id: str = ""
     goldens_dir: Path = Path("evals/goldens")
     simulations_dir: Path = Path("evals/simulations")
-    reports_dir: Path = Path("eval-reports/simulations")
     golden_prefixes: tuple[str, ...] = ()
-    callback_sources_dir: Path | None = None
-    post_sync_command: tuple[str, ...] = ()
-    leak_patterns: tuple[str, ...] = ()
-    protected_branches: tuple[str, ...] = ("main", "master", "dev")
     default_language_code: str = "en-GB"
     raw: dict[str, Any] = field(default_factory=dict, repr=False, compare=False)
 
@@ -123,10 +118,6 @@ def load_workspace(config_path: str | os.PathLike[str] | None = None) -> Workspa
         value = str(data.get(key) or default)
         return (root / value).resolve()
 
-    def resolved_optional(key: str) -> Path | None:
-        value = data.get(key)
-        return (root / str(value)).resolve() if value else None
-
     project_id = (
         os.environ.get(PROJECT_ID_ENV_VAR, "").strip()
         or str(data["gcp_project_id"]).strip()
@@ -153,14 +144,7 @@ def load_workspace(config_path: str | os.PathLike[str] | None = None) -> Workspa
         deployed_channel_id=str(data.get("deployed_channel_id") or ""),
         goldens_dir=resolved_required("goldens_dir", "evals/goldens"),
         simulations_dir=resolved_required("simulations_dir", "evals/simulations"),
-        reports_dir=resolved_required("reports_dir", "eval-reports/simulations"),
         golden_prefixes=tuple(data.get("golden_prefixes", ())),
-        callback_sources_dir=resolved_optional("callback_sources_dir"),
-        post_sync_command=tuple(data.get("post_sync_command", ())),
-        leak_patterns=tuple(data.get("leak_patterns", ())),
-        protected_branches=tuple(
-            data.get("protected_branches", ("main", "master", "dev"))
-        ),
         default_language_code=str(data.get("default_language_code") or "en-GB"),
         raw=data,
     )

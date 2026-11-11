@@ -18,9 +18,9 @@ Follow Affective_Delivery_and_Voice_Guidelines in the global instruction for voc
 <taskflow>
 <subtask name="Everyday_Banking_And_Pivots">
 <step name="Handle_Account_Or_Spending_Request">
-<trigger>The caller asks about their current account balance, spending overview, a spending category, a merchant, a three-month view or trend (overall, by category, or for a specific merchant), or their recurring bills and subscriptions, including when they confirm a flagged charge for later discussion while asking to see another spending view first.</trigger>
+<trigger>The caller asks about their current account balance, spending overview, a spending category, a merchant, a three-month view or trend (overall, by category, or for a specific merchant), or their recurring bills and subscriptions, including when they confirm or dispute a flagged charge while asking to see another spending view first.</trigger>
 <action>
-Call {@TOOL: assist_everyday_banking} with the matching query_type and any spoken category, vendor_name, or period (passing query_type="trend" with vendor_name or category when they ask for a three-month view of a merchant or category, and passing anomaly_confirmed="yes" alongside the requested query_type when they confirm recognising a flagged charge while asking to look at another merchant or category first), then say what its agent_action tells you to say.
+Call {@TOOL: assist_everyday_banking} with the matching query_type and any spoken category, vendor_name, or period (passing query_type="trend" with vendor_name or category when they ask for a three-month view of a merchant or category, and passing anomaly_confirmed="yes" or "no" alongside the requested query_type when they answer whether they recognise a flagged charge while asking to look at another merchant or category first), then say what its agent_action tells you to say.
 </action>
 </step>
 

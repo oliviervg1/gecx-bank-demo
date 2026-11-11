@@ -45,6 +45,7 @@ fi
 CFG_PROJECT=$(jq -r '.gcp_project_id // empty' "$CONFIG_FILE")
 CFG_LOCATION=$(jq -r '.location // empty' "$CONFIG_FILE")
 CFG_APP_ID=$(jq -r '.deployed_app_id // empty' "$CONFIG_FILE")
+CFG_APP_NAME=$(jq -r '.app_name // "Cloudbank"' "$CONFIG_FILE")
 
 PROJECT="${CLOUDBANK_GCP_PROJECT_ID:-$CFG_PROJECT}"
 LOCATION="${CLOUDBANK_LOCATION:-$CFG_LOCATION}"
@@ -106,13 +107,21 @@ while [ $# -gt 0 ]; do
   esac
 done
 
-if [ "$TARGET" = "prod" ] || [ "$TARGET" = "production" ]; then
+IS_PROD_TARGET="false"
+if [ "$TARGET" = "prod" ] || [ "$TARGET" = "production" ] || \
+   [ "$TARGET" = "$CFG_APP_NAME" ] || [ "$TARGET" = "$APP_ID" ] || \
+   [[ "$TARGET" == */apps/"$APP_ID" ]]; then
+  IS_PROD_TARGET="true"
+fi
+
+if [ "$IS_PROD_TARGET" = "true" ]; then
   if [ "$ASSUME_YES" != "true" ]; then
     if [ -t 0 ]; then
       printf "Confirm OVERWRITE import to prod app '%s' in project '%s'? [y/N]: " "$APP_ID" "$PROJECT" >&2
       read -r REPLY
       case "$REPLY" in
         y|Y|yes|YES)
+          ASSUME_YES="true"
           ;;
         *)
           echo "Aborted prod OVERWRITE deployment." >&2
@@ -124,6 +133,11 @@ if [ "$TARGET" = "prod" ] || [ "$TARGET" = "production" ]; then
       exit 1
     fi
   fi
+fi
+
+PUSH_EXTRA_ARGS=()
+if [ "$ASSUME_YES" = "true" ]; then
+  PUSH_EXTRA_ARGS+=(--yes)
 fi
 
 echo "==> [1/6] Verifying canonical callbacks and persona evaluation sync..."
@@ -139,7 +153,7 @@ echo "==> [4/6] Running offline Python agent test suite..."
 uv run --locked pytest -v
 
 echo "==> [5/6] Performing OVERWRITE import & tool declaration check (projects/${PROJECT}/locations/${LOCATION})..."
-uv run --locked python scripts/manage_app.py --config "${CONFIG_FILE}" push "${TARGET}"
+uv run --locked python scripts/manage_app.py --config "${CONFIG_FILE}" push "${TARGET}" ${PUSH_EXTRA_ARGS[@]+"${PUSH_EXTRA_ARGS[@]}"}
 
 echo "==> [6/6] Syncing multi-segment NAIVE golden evaluations to target '${TARGET}'..."
 uv run --locked python scripts/run_golden_evals.py --config "${CONFIG_FILE}" sync "${TARGET}"

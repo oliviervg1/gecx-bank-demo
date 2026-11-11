@@ -1,12 +1,10 @@
 import logging
+import math
 from datetime import date
 from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
-_PLATFORM_CURRENT_DATE_KEY = "current_date"
-_DEFAULT_DEMO_DATE = "2026-11-24"
-_DEFAULT_DEMO_YMD = (2026, 11, 24)
 _DOMAIN_TARGETS = {
     "EVERYDAY_BANKING": ("everyday_banking_agent", "everyday banking and spending"),
     "SAVINGS": ("savings_agent", "savings pots and goal projections"),
@@ -47,7 +45,6 @@ def route_banking_intent(
         routing context.
     """
     try:
-        # Delegate normalised slot values to the top-level routing dispatcher.
         clean_intent = (intent or "").strip()
         clean_hint = (topic_hint or "").strip()[:160]
         return _dispatch_route(clean_intent, clean_hint)
@@ -58,36 +55,24 @@ def route_banking_intent(
         }
 
 
-def _dispatch_route(intent: str, hint: str) -> dict:
-    """Route a normalised top-level intent to its handler."""
-    if intent == "FAREWELL":
-        return _handle_farewell()
-    if intent in _DOMAIN_TARGETS:
-        return _stage_domain_route(intent, hint)
-    if intent in ("GREETING", "NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES"):
-        context.state["unclear_count"] = "0"
-        return _handle_local_intent(intent)
-    return _handle_unclear()
-
-
-def _handle_local_intent(intent: str) -> dict:
-    """Handle greeting, Home/Profile screen navigation, or capability summary."""
-    if intent == "GREETING":
-        _emit_ui_view({"page": "home"})
-        return {"agent_action": _build_greeting()}
-    if intent == "NAVIGATE_HOME":
-        context.state["router_state"] = {}
-        _emit_ui_view({"page": "home"})
-        return {
-            "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
-        }
-    if intent == "NAVIGATE_PROFILE":
-        context.state["router_state"] = {}
-        _emit_ui_view({"page": "profile"})
-        return {
-            "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
-        }
-    return {"agent_action": _capabilities_message()}
+# BEGIN SYNCED_CONTROLLER_COMMON
+_PLATFORM_CURRENT_DATE_KEY = "current_date"
+_DEFAULT_DEMO_DATE = "2026-11-24"
+_DEFAULT_DEMO_YMD = (2026, 11, 24)
+_MONTH_NAMES = (
+    "January",
+    "February",
+    "March",
+    "April",
+    "May",
+    "June",
+    "July",
+    "August",
+    "September",
+    "October",
+    "November",
+    "December",
+)
 
 
 def _parse_demo_date() -> tuple[int, int, int]:
@@ -118,19 +103,135 @@ def _parse_demo_date() -> tuple[int, int, int]:
 
 
 def _emit_ui_view(payload: dict[str, Any]) -> None:
-    """Increment ui_view_state.seq monotonically and store payload."""
+    """Increment ui_view_state.seq monotonically and attach per-vendor anomaly state on spending views."""
     current = dict(context.state.get("ui_view_state") or {})
     next_seq = int(current.get("seq") or 0) + 1
     updated = dict(payload)
+    if updated.get("page") == "spending" and "anomaly_by_vendor" not in updated:
+        raw_everyday = context.state.get("everyday_state")
+        by_vendor = (
+            raw_everyday.get("anomaly_by_vendor")
+            if isinstance(raw_everyday, dict)
+            else None
+        )
+        if isinstance(by_vendor, dict) and by_vendor:
+            updated["anomaly_by_vendor"] = {
+                str(k): str(v)
+                for k, v in by_vendor.items()
+                if v in ("confirmed", "unrecognised")
+            }
     updated["seq"] = next_seq
     context.state["ui_view_state"] = updated
 
 
+def _format_gbp(amount_pence: int) -> str:
+    """Format integer pence as £X,XXX when whole pounds else £X,XXX.XX."""
+    sign = "-" if amount_pence < 0 else ""
+    pounds, pence = divmod(abs(amount_pence), 100)
+    if pence == 0:
+        return f"{sign}£{pounds:,}"
+    return f"{sign}£{pounds:,}.{pence:02d}"
+
+
+def _format_bps(rate_bps: int) -> str:
+    """Format integer basis points as X.XX%."""
+    whole, frac = divmod(abs(rate_bps), 100)
+    return f"{whole}.{frac:02d}%"
+
+
+def _half_up(n: int, d: int) -> int:
+    """Exact integer half-up division for n >= 0 and d > 0."""
+    return (n * 2 + d) // (2 * d)
+
+
+def _to_pence(raw: float | int) -> int:
+    """Clamp model-supplied pound float to [0, £10M] and convert to integer pence."""
+    fx = float(raw or 0.0)
+    if not math.isfinite(fx):
+        return 0
+    clamped = max(0.0, min(fx, 10_000_000.0))
+    return int(math.floor(clamped * 100.0 + 0.5))
+
+
+def _capabilities_message() -> str:
+    """Return the shared three-product capabilities summary."""
+    return (
+        "I can help with everyday banking and spending, your savings pot and goal "
+        "projections, or your mortgage payments, overpayments, and fixed-rate renewal "
+        "options. Which area would you like to explore?"
+    )
+
+
+def _farewell_response() -> dict[str, str]:
+    """Latch session completion, clear handoff state, and return the closing line."""
+    first_name = str(context.state.get("first_name") or "").strip()
+    context.state["unclear_count"] = "0"
+    context.state["handoff_context"] = {}
+    context.state["escalation_reason"] = "CALL_COMPLETED"
+    context.state["call_complete"] = "true"
+    suffix = f", {first_name}" if first_name else ""
+    return {
+        "agent_action": f"You are very welcome{suffix}. Have a great rest of your day, and goodbye."
+    }
+
+
+def _shared_navigation_response(intent: str) -> dict[str, str]:
+    """Handle NAVIGATE_HOME, NAVIGATE_PROFILE, or CAPABILITIES consistently across hub and spokes."""
+    context.state["unclear_count"] = "0"
+    if intent == "NAVIGATE_HOME":
+        context.state["handoff_context"] = {}
+        _emit_ui_view({"page": "home"})
+        return {
+            "agent_action": "I have opened your Home summary on screen. What would you like to check next?"
+        }
+    if intent == "NAVIGATE_PROFILE":
+        context.state["handoff_context"] = {}
+        _emit_ui_view({"page": "profile"})
+        return {
+            "agent_action": "I have opened your Profile page, where your personal details and card controls live. Let me know what else you would like to look at."
+        }
+    return {"agent_action": _capabilities_message()}
+
+
+def _increment_unclear(strike_one_prompt: str) -> dict[str, str] | None:
+    """Advance two-strike unclear counter; return Strike 1 prompt or None on Strike 2."""
+    strikes = int(context.state.get("unclear_count") or "0")
+    if strikes == 0:
+        context.state["unclear_count"] = "1"
+        return {"agent_action": strike_one_prompt}
+    context.state["unclear_count"] = "0"
+    context.state["handoff_context"] = {}
+    return None
+
+
+def _unclear_reset_home_response() -> dict[str, str]:
+    """Navigate to Home and restate capabilities on Strike 2 without ending the session."""
+    _emit_ui_view({"page": "home"})
+    return {
+        "agent_action": f"I have opened your Home summary on screen. {_capabilities_message()}"
+    }
+# END SYNCED_CONTROLLER_COMMON
+
+
+def _dispatch_route(intent: str, hint: str) -> dict:
+    """Route a normalised top-level intent to its handler."""
+    if intent == "FAREWELL":
+        return _farewell_response()
+    if intent in _DOMAIN_TARGETS:
+        return _stage_domain_route(intent, hint)
+    if intent == "GREETING":
+        context.state["unclear_count"] = "0"
+        _emit_ui_view({"page": "home"})
+        return {"agent_action": _build_greeting()}
+    if intent in ("NAVIGATE_HOME", "NAVIGATE_PROFILE", "CAPABILITIES"):
+        return _shared_navigation_response(intent)
+    return _handle_unclear()
+
+
 def _stage_domain_route(intent: str, hint: str) -> dict:
-    """Stage silent specialist routing in target_agent and record router_state."""
+    """Stage silent specialist routing in target_agent."""
     target_agent, label = _DOMAIN_TARGETS[intent]
     context.state["unclear_count"] = "0"
-    context.state["router_state"] = {"last_intent": intent, "topic_hint": hint}
     context.state["target_agent"] = target_agent
     suffix = f": {hint}" if hint else "."
     return {"agent_action": f"Customer asked about {label}{suffix}"}
@@ -153,42 +254,11 @@ def _build_greeting() -> str:
     )
 
 
-def _capabilities_message() -> str:
-    """Return the shared three-product capabilities summary."""
-    return (
-        "I can help with everyday banking and spending, your savings pot and goal "
-        "projections, or your mortgage payments, overpayments, and fixed-rate renewal "
-        "options. Which area would you like to explore?"
-    )
-
-
 def _handle_unclear() -> dict:
     """Two-strike non-terminating unclear input ladder."""
-    strikes = int(context.state.get("unclear_count") or "0")
-    if strikes == 0:
-        context.state["unclear_count"] = "1"
-        return {
-            "agent_action": "Sorry, I did not quite catch that. Would you like help with everyday banking, savings, or mortgages?"
-        }
-    context.state["unclear_count"] = "0"
-    context.state["router_state"] = {}
-    _emit_ui_view({"page": "home"})
-    return {
-        "agent_action": (
-            "I have opened your Home summary on screen. " + _capabilities_message()
-        )
-    }
-
-
-def _handle_farewell() -> dict:
-    """Latch session completion and return a warm closing line."""
-    first_name = str(context.state.get("first_name") or "").strip()
-    context.state["unclear_count"] = "0"
-    context.state["router_state"] = {}
-    context.state["handoff_context"] = {}
-    context.state["escalation_reason"] = "CALL_COMPLETED"
-    context.state["call_complete"] = "true"
-    suffix = f", {first_name}" if first_name else ""
-    return {
-        "agent_action": f"You are very welcome{suffix}. Have a great rest of your day, and goodbye."
-    }
+    strike_one = _increment_unclear(
+        "Sorry, I did not quite catch that. Would you like help with everyday banking, savings, or mortgages?"
+    )
+    if strike_one is not None:
+        return strike_one
+    return _unclear_reset_home_response()

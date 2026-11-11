@@ -1,4 +1,4 @@
-"""Static bundle, AST, schema, helper-parity, sync, and golden-contract integrity tests."""
+"""Static bundle, AST, schema, shared-sync, Composite v2 tag, and golden-contract tests."""
 
 from __future__ import annotations
 
@@ -21,13 +21,17 @@ from conftest import (
     GOLDENS_DIR,
     PERSONA_IDS,
     SHARED_CALLBACKS_DIR,
+    SHARED_DIR,
     SIMULATIONS_DIR,
     load_controller_namespace,
     make_seeded_state,
 )
 from cxas_scrapi.utils.eval_utils import EvalUtils
+from referencing import Registry, Resource
+from referencing.jsonschema import DRAFT7
 
 sys.path.insert(0, str(CLOUDBANK_DIR / "scripts"))
+import audit_agent  # noqa: E402
 import run_golden_evals  # noqa: E402
 import sync_shared  # noqa: E402
 
@@ -46,23 +50,156 @@ SHARED_STATE_KEYS = frozenset(
         "unclear_count",
         "pass_turn_id",
         "pass_count",
-        "last_user_utterance",
         "call_complete",
         "escalation_reason",
     }
 )
-CONTROLLER_PRIVATE_STATE = {
-    "route_banking_intent": "router_state",
-    "assist_everyday_banking": "everyday_state",
-    "assist_savings": "savings_state",
-    "assist_mortgages": "mortgage_state",
+CONTROLLER_PRIVATE_STATE: dict[str, set[str]] = {
+    "route_banking_intent": set(),
+    "assist_everyday_banking": {"everyday_state"},
+    "assist_savings": set(),
+    "assist_mortgages": {"mortgage_state"},
 }
 
 
 def test_sync_shared_check_passes_with_zero_drift() -> None:
-    """Verify canonical callbacks and persona YAML snapshots match checked-in files."""
+    """Verify canonical callbacks, controller blocks, and persona YAMLs match checked-in files."""
     assert sync_shared.sync_all(write=False) == []
     assert sync_shared.main(["--check"]) == 0
+
+
+def test_composite_v2_auditor_and_shared_tag_vocabulary_cover_all_prompts() -> None:
+    """Verify composite_v2_tags.json is sorted/complete and audit_agent passes with 0 findings."""
+    vocab_data = json.loads(
+        (SHARED_DIR / "composite_v2_tags.json").read_text(encoding="utf-8")
+    )
+    words = vocab_data["words"]
+    assert isinstance(words, list) and len(words) >= 120
+    assert words == sorted(set(words)), "composite_v2_tags.json words must be sorted and unique"
+    word_set = set(words)
+    for required_word in (
+        "positive",
+        "negative",
+        "throat-clearing",
+        "matter-of-fact",
+        "warm",
+        "calm",
+        "empathetic",
+        "sympathetic",
+        "clear",
+        "breath",
+        "exhales",
+        "sigh",
+        "chuckles",
+        "short",
+        "long",
+        "pause",
+        "gasp",
+        "faster",
+        "determination",
+        "interest",
+        "enthusiasm",
+        "relief",
+    ):
+        assert required_word in word_set, f"Missing Composite v2 word {required_word!r}"
+
+    audit_result = audit_agent.audit_workspace(BUNDLE_DIR)
+    assert audit_result["overall_status"] == "PASSED", audit_result
+    assert audit_result["total_issues"] == 0
+
+
+def test_official_help_hosts_and_search_help_fake_mode_contracts() -> None:
+    """Verify exact HTTPS help host allowlist and search_help enableFakeMode platform contract."""
+    hosts_cfg = json.loads(
+        (SHARED_DIR / "official_help_hosts.json").read_text(encoding="utf-8")
+    )
+    vendors = hosts_cfg["vendors"]
+    expected_vendors = {
+        "netflix",
+        "spotify",
+        "puregym",
+        "puregym family",
+        "adobe",
+        "adobe creative cloud",
+        "icloud",
+        "apple",
+        "national trust",
+        "aviva",
+        "aviva home insurance",
+        "sky",
+        "british gas",
+        "ee",
+        "octopus energy",
+        "giffgaff",
+        "ovo energy",
+        "bt",
+        "disney",
+        "disney plus",
+        "amazon",
+        "amazon prime",
+        "peloton",
+        "new york times",
+        "nytimes",
+        "audible",
+    }
+    assert set(vendors.keys()) == expected_vendors
+    for vkey, host_list in vendors.items():
+        assert host_list, f"Empty host list for {vkey}"
+        for host in host_list:
+            assert host == host.lower().strip(".")
+            assert not host.startswith(("community.", "discussions.", "forum.", "*."))
+    assert hosts_cfg["path_prefixes"]["www.amazon.co.uk"] == [
+        "/gp/help",
+        "/hz/contact-us",
+    ]
+
+    # Verified CXAS platform contract: ToolFakeConfig.enable_fake_mode = true is the
+    # per-tool opt-in required for RunEvaluationRequest.config.tool_call_behaviour = FAKE
+    # to intercept tools.search_help(...) during NAIVE golden runs, while live
+    # BidiRunSession traffic executes real Google Search.
+    search_manifest = json.loads(
+        (BUNDLE_DIR / "tools" / "search_help" / "search_help.json").read_text(
+            encoding="utf-8"
+        )
+    )
+    assert search_manifest["toolFakeConfig"]["enableFakeMode"] is True
+
+
+def test_ws_protocol_schema_deduplicates_ui_view_state_and_caps_audio_frames(
+    ui_view_state_schema: dict[str, Any],
+) -> None:
+    """Verify ws_protocol.schema.json $refs ui_view_state.schema.json and caps audio at 87384 chars."""
+    ws_schema = json.loads(
+        (SHARED_DIR / "ws_protocol.schema.json").read_text(encoding="utf-8")
+    )
+    assert ws_schema["definitions"]["ui_view_state"] == {
+        "$ref": "ui_view_state.schema.json"
+    }
+    assert (
+        ws_schema["definitions"]["ClientAudio"]["properties"]["data"]["maxLength"]
+        == 87384
+    )
+    assert "anomaly_by_vendor" in ui_view_state_schema["properties"]
+
+    registry = [
+        Resource.from_contents(ui_view_state_schema, default_specification=DRAFT7),
+        Resource.from_contents(ws_schema, default_specification=DRAFT7),
+    ] @ Registry()
+    validator = jsonschema.Draft7Validator(ws_schema, registry=registry)
+    validator.validate(
+        {
+            "type": "ui_state",
+            "tier": 1,
+            "state": {
+                "seq": 2,
+                "page": "spending",
+                "view": "overview",
+                "highlight_vendor": "Netflix",
+                "anomaly_status": "unrecognised",
+                "anomaly_by_vendor": {"Netflix": "unrecognised"},
+            },
+        }
+    )
 
 
 def test_acyclic_single_parent_agent_topology() -> None:
@@ -100,7 +237,7 @@ def test_acyclic_single_parent_agent_topology() -> None:
 
 
 def test_app_json_schema_and_variable_invariants() -> None:
-    """Verify app.json settings, V001 OBJECT schemas, and proxy-seeded snapshot description."""
+    """Verify app.json settings, V001 OBJECT schemas, and removal of write-only variables."""
     app_cfg = json.loads((BUNDLE_DIR / "app.json").read_text(encoding="utf-8"))
     assert "tools" not in app_cfg
     assert "inactivityTimeout" not in app_cfg
@@ -128,6 +265,11 @@ def test_app_json_schema_and_variable_invariants() -> None:
         declared_names.add(vname)
         by_name[vname] = var
         assert vname != "current_date", "Never declare platform reserved current_date"
+        assert vname not in (
+            "last_user_utterance",
+            "router_state",
+            "savings_state",
+        ), f"Write-only variable {vname} must not remain declared in app.json"
         schema = var["schema"]
         assert schema.get("required") == [], f"{vname} must declare required: [] (V001)"
         if schema["type"] == "OBJECT":
@@ -214,54 +356,45 @@ def test_zero_prompt_leaks_and_banned_routing_words() -> None:
 
 
 def test_callbacks_byte_for_byte_identical_across_four_agents() -> None:
-    """Enforce byte-for-byte parity across canonical cxas_shared and all 4 agents."""
+    """Enforce unified 2-callback chain (8 synced files) and confirm agent_transfer is removed."""
+    assert not (SHARED_CALLBACKS_DIR / "agent_transfer.py").exists()
     rel_paths = (
         ("capture_utterance.py", "before_model_callbacks/capture_utterance/python_code.py"),
-        ("agent_transfer.py", "after_model_callbacks/agent_transfer/python_code.py"),
         ("release_line.py", "after_model_callbacks/release_line/python_code.py"),
     )
     for canonical_name, rel in rel_paths:
         canonical_bytes = (SHARED_CALLBACKS_DIR / canonical_name).read_bytes()
         for agent in AGENT_NAMES:
+            assert not (
+                BUNDLE_DIR / "agents" / agent / "after_model_callbacks" / "agent_transfer"
+            ).exists()
             agent_bytes = (BUNDLE_DIR / "agents" / agent / rel).read_bytes()
             assert agent_bytes == canonical_bytes, (
                 f"Callback drift detected between {canonical_name} and {agent}/{rel}"
             )
 
 
-def test_shared_controller_helpers_ast_and_source_identical() -> None:
-    """Ensure duplicated helpers stay both AST-identical and source-identical across controllers."""
-    helper_expectations = {
-        "_half_up": {"assist_savings", "assist_mortgages"},
-        "_to_pence": {"assist_savings", "assist_mortgages"},
-        "_emit_ui_view": set(CONTROLLER_NAMES),
-        "_format_gbp": {"assist_everyday_banking", "assist_savings", "assist_mortgages"},
-        "_format_bps": {"assist_everyday_banking", "assist_savings", "assist_mortgages"},
-        "_parse_demo_date": set(CONTROLLER_NAMES),
-    }
-    for helper, expected_controllers in helper_expectations.items():
-        source_segments: dict[str, str] = {}
-        ast_dumps: dict[str, str] = {}
-        for ctrl in CONTROLLER_NAMES:
-            src = (
-                BUNDLE_DIR / "tools" / ctrl / "python_function" / "python_code.py"
-            ).read_text(encoding="utf-8")
-            tree = ast.parse(src)
-            for node in tree.body:
-                if isinstance(node, ast.FunctionDef) and node.name == helper:
-                    seg = ast.get_source_segment(src, node)
-                    assert seg is not None
-                    source_segments[ctrl] = seg
-                    ast_dumps[ctrl] = ast.dump(node, include_attributes=False)
-        assert set(source_segments) == expected_controllers, (
-            f"Helper {helper} expected in {expected_controllers}, found in {set(source_segments)}"
+def test_shared_controller_common_block_synced_across_all_controllers() -> None:
+    """Verify cxas_shared/controller_common.py marked region matches all 4 controllers byte-for-byte."""
+    canonical_common = sync_shared._extract_marked_block(
+        (CLOUDBANK_DIR / "cxas_shared" / "controller_common.py").read_text(
+            encoding="utf-8"
+        ),
+        sync_shared.COMMON_BEGIN,
+        sync_shared.COMMON_END,
+        "controller_common.py",
+    )
+    for ctrl in CONTROLLER_NAMES:
+        src = (
+            BUNDLE_DIR / "tools" / ctrl / "python_function" / "python_code.py"
+        ).read_text(encoding="utf-8")
+        ctrl_block = sync_shared._extract_marked_block(
+            src,
+            sync_shared.COMMON_BEGIN,
+            sync_shared.COMMON_END,
+            ctrl,
         )
-        assert len(set(ast_dumps.values())) == 1, (
-            f"Helper {helper} AST drifted across controllers: {list(ast_dumps)}"
-        )
-        assert len(set(source_segments.values())) == 1, (
-            f"Helper {helper} source drifted across controllers: {list(source_segments)}"
-        )
+        assert ctrl_block == canonical_common, f"controller_common drift in {ctrl}"
 
 
 def test_ast_safety_thin_entrypoints_math_and_private_state_isolation() -> None:
@@ -309,7 +442,7 @@ def test_ast_safety_thin_entrypoints_math_and_private_state_isolation() -> None:
     py_files = (
         sorted((BUNDLE_DIR / "tools").rglob("*.py"))
         + sorted((BUNDLE_DIR / "agents").rglob("*.py"))
-        + sorted(SHARED_CALLBACKS_DIR.rglob("*.py"))
+        + sorted((CLOUDBANK_DIR / "cxas_shared").rglob("*.py"))
     )
     assert py_files, "Expected bundle and shared callback Python files"
 
@@ -359,9 +492,7 @@ def test_ast_safety_thin_entrypoints_math_and_private_state_isolation() -> None:
                             and isinstance(target.slice.value, str)
                         ):
                             key = target.slice.value
-                            allowed = SHARED_STATE_KEYS | {
-                                CONTROLLER_PRIVATE_STATE[tool_name]
-                            }
+                            allowed = SHARED_STATE_KEYS | CONTROLLER_PRIVATE_STATE[tool_name]
                             assert key in declared_vars, (
                                 f"Undeclared state key {key} in {tool_name}"
                             )
@@ -574,6 +705,7 @@ def test_goldens_and_simulations_integrity(
 
     assert seen_personas == set(PERSONA_IDS)
 
+    seen_sim_personas: set[str] = set()
     sim_files = sorted(SIMULATIONS_DIR.glob("*.yaml"))
     assert sim_files, "Expected SimulationEvals YAML under evals/simulations/"
     for sf in sim_files:
@@ -590,8 +722,10 @@ def test_goldens_and_simulations_integrity(
             )
             sim_pid = sim_sp.get("persona_id")
             assert sim_pid in PERSONA_IDS, f"Missing/unknown persona_id in {sf.name}:{name}"
+            seen_sim_personas.add(sim_pid)
             assert sim_sp.get("demo_date") == "2026-11-24"
             assert sim_sp.get("first_name") == raw_fixtures[sim_pid]["user"]["first_name"]
             assert sim_sp.get("customer_snapshot") == raw_fixtures[sim_pid], (
                 f"Simulation customer_snapshot in {sf.name}:{name} drifted from {sim_pid}.json"
             )
+    assert seen_sim_personas == set(PERSONA_IDS)
