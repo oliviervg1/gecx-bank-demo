@@ -6,6 +6,7 @@ import base64
 import copy
 import http
 import json
+import logging
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,6 +18,7 @@ import websockets.datastructures
 import websockets.exceptions
 import websockets.http11
 from fastapi.testclient import TestClient
+from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import WebSocketRoute
 from starlette.types import Message
 from starlette.websockets import WebSocketDisconnect
@@ -44,6 +46,7 @@ def _set_valid_gcp_env(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_health_route_registered_and_openapi_docs_disabled() -> None:
+    assert not issubclass(main._ProxyTrustedHostMiddleware, TrustedHostMiddleware)
     resp = client.get("/health")
     assert resp.status_code == 200
     assert resp.json() == {"status": "ok"}
@@ -90,6 +93,17 @@ def test_trusted_host_middleware_accepts_local_ipv6_and_rejects_untrusted_hosts(
             ):
                 pass
 
+    # Outside pytest / explicit test-host mode, "testserver" and "testclient" are rejected
+    monkeypatch.delenv("PYTEST_CURRENT_TEST", raising=False)
+    monkeypatch.delenv("PROXY_ALLOW_TEST_HOSTS", raising=False)
+    assert "testserver" not in main._allowed_hosts()
+    assert main._is_loopback_host("testclient") is False
+    assert client.get("/health", headers={"host": "testserver"}).status_code == 400
+
+    monkeypatch.setenv("PROXY_ALLOW_TEST_HOSTS", "1")
+    assert "testserver" in main._allowed_hosts()
+    assert main._is_loopback_host("testclient") is True
+
     # Explicit PROXY_ALLOWED_HOSTS override replaces defaults cleanly
     monkeypatch.setenv("PROXY_ALLOWED_HOSTS", "custom.internal.example")
     assert (
@@ -100,7 +114,62 @@ def test_trusted_host_middleware_accepts_local_ipv6_and_rejects_untrusted_hosts(
 
 
 @pytest.mark.asyncio
-async def test_loopback_peer_enforcement_and_proxy_allow_remote(
+async def test_asgi_websocket_invalid_host_never_emits_http_response_start(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PROXY_ALLOWED_HOSTS", raising=False)
+
+    async def _invoke_ws_scope(
+        extensions: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        sent: list[dict[str, Any]] = []
+        inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        await inbox.put({"type": "websocket.connect"})
+
+        scope: dict[str, Any] = {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "scheme": "ws",
+            "path": "/ws/agent",
+            "raw_path": b"/ws/agent",
+            "query_string": b"",
+            "headers": [
+                (b"host", b"evil.rebind.example:8765"),
+                (b"origin", DEFAULT_ORIGIN.encode("ascii")),
+            ],
+            "client": ("127.0.0.1", 51000),
+            "subprotocols": [],
+        }
+        if extensions is not None:
+            scope["extensions"] = extensions
+
+        async def receive() -> Message:
+            return await inbox.get()
+
+        async def send(msg: Message) -> None:
+            sent.append(dict(msg))
+
+        await app(scope, receive, send)
+        return sent
+
+    # 1. With Uvicorn's websocket.http.response extension: emits 400 WS HTTP response
+    ext_events = await _invoke_ws_scope({"websocket.http.response": {}})
+    assert not any(e["type"].startswith("http.") for e in ext_events)
+    assert [e["type"] for e in ext_events] == [
+        "websocket.http.response.start",
+        "websocket.http.response.body",
+    ]
+    assert ext_events[0]["status"] == 400
+    assert ext_events[1]["body"] == b"Invalid host header"
+
+    # 2. Without extension: emits clean websocket.close (1008), never http.response.start
+    no_ext_events = await _invoke_ws_scope(None)
+    assert not any(e["type"].startswith("http.") for e in no_ext_events)
+    assert no_ext_events == [{"type": "websocket.close", "code": 1008}]
+
+
+@pytest.mark.asyncio
+async def test_loopback_peer_enforcement_and_fail_closed_remote_auth(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     for loopback in (
@@ -114,17 +183,23 @@ async def test_loopback_peer_enforcement_and_proxy_allow_remote(
     ):
         assert main._is_loopback_host(loopback) is True
 
-    for remote in ("192.168.1.25", "10.0.0.8", "203.0.113.5", "", "not-an-ip"):
+    for remote in ("192.168.1.25", "10.0.0.8", "203.0.113.5", "0.0.0.0", "", "not-an-ip"):  # noqa: S104
         assert main._is_loopback_host(remote) is False
 
     async def _run_raw_ws_handshake(
         peer: tuple[str, int] | None,
+        extra_headers: list[tuple[bytes, bytes]] | None = None,
     ) -> list[dict[str, Any]]:
         sent_events: list[dict[str, Any]] = []
         inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
         await inbox.put({"type": "websocket.connect"})
         await inbox.put({"type": "websocket.disconnect", "code": 1000})
 
+        headers = [
+            (b"host", b"localhost:8765"),
+            (b"origin", DEFAULT_ORIGIN.encode("ascii")),
+            *(extra_headers or []),
+        ]
         scope: dict[str, Any] = {
             "type": "websocket",
             "asgi": {"version": "3.0"},
@@ -132,10 +207,7 @@ async def test_loopback_peer_enforcement_and_proxy_allow_remote(
             "path": "/ws/agent",
             "raw_path": b"/ws/agent",
             "query_string": b"",
-            "headers": [
-                (b"host", b"localhost:8765"),
-                (b"origin", DEFAULT_ORIGIN.encode("ascii")),
-            ],
+            "headers": headers,
             "client": peer,
             "subprotocols": [],
         }
@@ -151,15 +223,33 @@ async def test_loopback_peer_enforcement_and_proxy_allow_remote(
 
     # 1. Default: remote peer rejected BEFORE websocket.accept
     monkeypatch.delenv("PROXY_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("PROXY_AUTH_TOKEN", raising=False)
     events_rejected = await _run_raw_ws_handshake(("203.0.113.10", 51234))
     assert events_rejected == [{"type": "websocket.close", "code": 1008, "reason": ""}]
 
     events_none = await _run_raw_ws_handshake(None)
     assert events_none == [{"type": "websocket.close", "code": 1008, "reason": ""}]
 
-    # 2. PROXY_ALLOW_REMOTE=1 permits remote peer past peer gate
+    # 2. Fail closed: PROXY_ALLOW_REMOTE=1 WITHOUT PROXY_AUTH_TOKEN is refused at startup and runtime
     monkeypatch.setenv("PROXY_ALLOW_REMOTE", "1")
-    events_allowed = await _run_raw_ws_handshake(("203.0.113.10", 51234))
+    with pytest.raises(RuntimeError, match="PROXY_AUTH_TOKEN"):
+        main.validate_runtime_security_config()
+    with pytest.raises(RuntimeError, match="PROXY_AUTH_TOKEN"):
+        with TestClient(app):
+            pass
+    events_unauthed_remote = await _run_raw_ws_handshake(("203.0.113.10", 51234))
+    assert events_unauthed_remote == [{"type": "websocket.close", "code": 1008, "reason": ""}]
+
+    # 3. PROXY_ALLOW_REMOTE=1 WITH non-empty PROXY_AUTH_TOKEN + x-proxy-token succeeds
+    monkeypatch.setenv("PROXY_AUTH_TOKEN", "s3cr3t-remote-token")
+    main.validate_runtime_security_config()
+    events_missing_hdr = await _run_raw_ws_handshake(("203.0.113.10", 51234))
+    assert events_missing_hdr == [{"type": "websocket.close", "code": 1008, "reason": ""}]
+
+    events_allowed = await _run_raw_ws_handshake(
+        ("203.0.113.10", 51234),
+        extra_headers=[(b"x-proxy-token", b"s3cr3t-remote-token")],
+    )
     assert events_allowed[0]["type"] == "websocket.accept"
 
 
@@ -408,6 +498,7 @@ def test_validate_persona_snapshot_rejects_adversarial_mutations(
 
 def test_session_binding_resume_and_persona_swap_rejection(
     monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     _set_valid_gcp_env(monkeypatch)
     captured_upstream_frames: list[dict[str, Any]] = []
@@ -461,10 +552,12 @@ def test_session_binding_resume_and_persona_swap_rejection(
         }
     assert captured_upstream_frames == []
 
-    # 2. Fresh session seeds server-owned variables and binds sessionId -> chloe
-    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
-        ws.send_text(json.dumps({"type": "start", "persona": "chloe"}))
-        ready = json.loads(ws.receive_text())
+    # 2. Fresh session seeds server-owned variables, binds sessionId -> chloe, and omits project ID in INFO logs
+    with caplog.at_level(logging.INFO, logger="proxy"):
+        with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+            ws.send_text(json.dumps({"type": "start", "persona": "chloe"}))
+            ready = json.loads(ws.receive_text())
+    assert "cloudbank-demo-01" not in caplog.text
     sid = ready["sessionId"]
     assert uuid.UUID(sid)
     assert len(captured_upstream_frames) == 2
@@ -546,28 +639,105 @@ def test_session_binding_resume_and_persona_swap_rejection(
         "state": {"seq": 4, "page": "mortgage"},
     }
 
+    # 5. Post-restart / unknown sessionId mints a fresh server UUID, sets is_resume=False,
+    #    seeds customer_snapshot, and resets lastUiSeq so seq=1 is emitted!
+    main._session_personas.clear()
+    main._session_persona_timestamps.clear()
+    captured_upstream_frames.clear()
+    injected_upstream_frames.append(
+        json.dumps({"sessionOutput": {"payload": {"seq": 1, "page": "savings"}}})
+    )
+    stale_browser_sid = sid
+    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+        ws.send_text(
+            json.dumps(
+                {
+                    "type": "start",
+                    "persona": "chloe",
+                    "sessionId": stale_browser_sid,
+                    "lastUiSeq": 9,
+                }
+            )
+        )
+        restarted_ready = json.loads(ws.receive_text())
+        restarted_ui = json.loads(ws.receive_text())
 
-def test_session_binding_map_enforces_lru_cap_and_ttl() -> None:
+    fresh_sid = restarted_ready["sessionId"]
+    assert uuid.UUID(fresh_sid)
+    assert fresh_sid != stale_browser_sid
+    assert len(captured_upstream_frames) == 2
+    assert captured_upstream_frames[0]["config"]["session"].endswith(f"/sessions/{fresh_sid}")
+    seeded_vars = captured_upstream_frames[1]["realtimeInput"]["variables"]
+    assert seeded_vars["first_name"] == "Chloe"
+    assert "customer_snapshot" in seeded_vars
+    assert restarted_ui == {
+        "type": "ui_state",
+        "tier": 1,
+        "state": {"seq": 1, "page": "savings"},
+    }
+
+
+def test_session_persona_lru_cap_bounds_memory_and_protects_active_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     base_time = 1000.0
-    first_sid = str(uuid.uuid4())
-    main._record_session_binding(first_sid, "chloe", now=base_time)
+    active_victim_sid = str(uuid.uuid4())
+    inactive_sid = str(uuid.uuid4())
+
+    main._record_session_binding(active_victim_sid, "chloe", now=base_time)
+    main._mark_session_active(active_victim_sid)
+    main._record_session_binding(inactive_sid, "chloe", now=base_time + 0.5)
 
     for _ in range(main.MAX_TRACKED_SESSIONS):
         main._record_session_binding(str(uuid.uuid4()), "david", now=base_time + 1.0)
 
+    # Inactive oldest entry is evicted to cap memory, while active session stays protected
     assert len(main._session_personas) == main.MAX_TRACKED_SESSIONS
-    assert first_sid not in main._session_personas
+    assert inactive_sid not in main._session_personas
+    assert active_victim_sid in main._session_personas
 
-    # Expired TTL bindings are pruned automatically
+    # Attacker attempting to hijack active Chloe session as Tom is rejected even after TTL
+    with pytest.raises(main.VariableValidationError) as hijack_exc:
+        main._validate_session_id_and_persona(
+            active_victim_sid,
+            "tom",
+            now=base_time + main.SESSION_BINDING_TTL_SECONDS + 50.0,
+        )
+    assert hijack_exc.value.client_message == "sessionId bound to a different persona"
+
+    # Evicted or expired inactive UUID never resumes or rebinds: mints fresh UUID with is_resume=False
+    main._mark_session_inactive(active_victim_sid)
+    resolved_evicted, is_resume_evicted = main._validate_session_id_and_persona(
+        inactive_sid,
+        "tom",
+        now=base_time + 2.0,
+    )
+    assert resolved_evicted != inactive_sid
+    assert is_resume_evicted is False
+
     expiring_sid = str(uuid.uuid4())
     main._record_session_binding(expiring_sid, "chloe", now=2000.0)
-    resolved, is_resume = main._validate_session_id_and_persona(
+    resolved_expired, is_resume_expired = main._validate_session_id_and_persona(
         expiring_sid,
         "tom",
         now=2000.0 + main.SESSION_BINDING_TTL_SECONDS + 1.0,
     )
-    assert resolved == expiring_sid
-    assert is_resume is True
+    assert resolved_expired != expiring_sid
+    assert is_resume_expired is False
+
+    # Failed upstream connect must NOT record a binding into _session_personas
+    _set_valid_gcp_env(monkeypatch)
+    monkeypatch.setattr(main._tokens, "get_token", _async_return("tok-1"))
+    monkeypatch.setattr(
+        main.websockets,
+        "connect",
+        lambda *_a, **_kw: (_ for _ in ()).throw(OSError("upstream unreachable")),
+    )
+    main._session_personas.clear()
+    with client.websocket_connect("/ws/agent", headers={"origin": DEFAULT_ORIGIN}) as ws:
+        ws.send_text(json.dumps({"type": "start", "persona": "chloe"}))
+        assert _recv_error_payload(ws)["message"] == "could not reach upstream"
+    assert len(main._session_personas) == 0
 
 
 # -- Binary Frames (1003), UTF-8 Byte Cap & Concurrent Semaphore Cap ----------
@@ -726,10 +896,14 @@ def test_start_frame_timeout_releases_session_slot(
     monkeypatch.delenv("PROXY_START_TIMEOUT_SECONDS", raising=False)
     assert main.DEFAULT_START_TIMEOUT_SECONDS == 10.0
     assert main._start_timeout_seconds() == 10.0
+    assert main.DEFAULT_MAX_SESSION_SECONDS == 3600.0
+    assert main._max_session_seconds() == 3600.0
 
     for bad_float in ("not-a-float", "nan", "inf", "-2.5", "0"):
         monkeypatch.setenv("PROXY_MAX_IDLE_SECONDS", bad_float)
         assert main._max_idle_seconds() == main.DEFAULT_MAX_IDLE_SECONDS
+        monkeypatch.setenv("PROXY_MAX_SESSION_SECONDS", bad_float)
+        assert main._max_session_seconds() == main.DEFAULT_MAX_SESSION_SECONDS
         monkeypatch.setenv("PROXY_KEEPALIVE_SECONDS", bad_float)
         assert main._keepalive_seconds() == main.DEFAULT_KEEPALIVE_SECONDS
 
@@ -751,15 +925,15 @@ def test_gcp_resource_env_overrides_and_regex_validation(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    # 1. Env overrides succeed without needing gecx-config.json on disk
+    # 1. Env overrides succeed without needing gecx-config.json on disk (including domain-scoped IDs)
     missing_cfg = tmp_path / "absent.json"
     monkeypatch.setenv("GECX_CONFIG", str(missing_cfg))
-    monkeypatch.setenv("CLOUDBANK_GCP_PROJECT_ID", "my-bank-proj-01")
+    monkeypatch.setenv("CLOUDBANK_GCP_PROJECT_ID", "example.com:my-bank-proj-01")
     monkeypatch.delenv("CLOUDBANK_LOCATION", raising=False)
     monkeypatch.setenv("CLOUDBANK_APP_ID", "app_abc-123")
     resource, loc = main._load_app_resource()
     assert loc == "eu"
-    assert resource == "projects/my-bank-proj-01/locations/eu/apps/app_abc-123"
+    assert resource == "projects/example.com:my-bank-proj-01/locations/eu/apps/app_abc-123"
 
     # 2. Config file loading + env partial override
     cfg_file = tmp_path / "gecx-config.json"
@@ -781,10 +955,11 @@ def test_gcp_resource_env_overrides_and_regex_validation(
         "us-central1",
     )
 
-    # 3. Placeholders and traversal strings rejected by regex validation
+    # 3. Placeholders, trailing hyphens, and traversal strings rejected by regex validation
     bad_configs = [
         {"gcp_project_id": "<your-gcp-project-id>", "location": "eu", "deployed_app_id": "app-1"},
         {"gcp_project_id": "UpperCaseProj", "location": "eu", "deployed_app_id": "app-1"},
+        {"gcp_project_id": "trailing-hyphen-", "location": "eu", "deployed_app_id": "app-1"},
         {"gcp_project_id": "ab", "location": "eu", "deployed_app_id": "app-1"},
         {"gcp_project_id": "valid-proj-1", "location": "eu/../../evil", "deployed_app_id": "app-1"},
         {"gcp_project_id": "valid-proj-1", "location": "eu", "deployed_app_id": "<your-deployed-app-uuid>"},
@@ -1058,11 +1233,13 @@ def test_config_auth_network_and_farewell_drop_errors_reported_safely(
     assert received == ["ready", "audio", "end"]
 
 
-def test_cli_entrypoint_binds_loopback_8765_with_1mib_ws_max_size(
+def test_cli_entrypoint_binds_loopback_8765_and_refuses_unauthenticated_remote_bind(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("PROXY_HOST", raising=False)
     monkeypatch.delenv("PROXY_PORT", raising=False)
+    monkeypatch.delenv("PROXY_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("PROXY_AUTH_TOKEN", raising=False)
 
     with patch("proxy.__main__.uvicorn.run") as mock_run:
         cli_entry.main()
@@ -1072,6 +1249,26 @@ def test_cli_entrypoint_binds_loopback_8765_with_1mib_ws_max_size(
         host="127.0.0.1",
         port=8765,
         ws_max_size=1_048_576,
+        proxy_headers=False,
+    )
+
+    # Non-loopback bind without PROXY_AUTH_TOKEN fails closed before uvicorn.run
+    monkeypatch.setenv("PROXY_HOST", "0.0.0.0")  # noqa: S104
+    with patch("proxy.__main__.uvicorn.run") as blocked_run:
+        with pytest.raises(RuntimeError, match="PROXY_AUTH_TOKEN"):
+            cli_entry.main()
+    blocked_run.assert_not_called()
+
+    # Non-loopback bind WITH non-empty PROXY_AUTH_TOKEN succeeds with proxy_headers=False
+    monkeypatch.setenv("PROXY_AUTH_TOKEN", "s3cr3t-bind-token")
+    with patch("proxy.__main__.uvicorn.run") as authed_run:
+        cli_entry.main()
+    authed_run.assert_called_once_with(
+        "proxy.main:app",
+        host="0.0.0.0",  # noqa: S104
+        port=8765,
+        ws_max_size=1_048_576,
+        proxy_headers=False,
     )
 
     assert cli_entry._parse_port("8080") == 8080

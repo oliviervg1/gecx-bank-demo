@@ -7,15 +7,17 @@ to 0.0.0.0 or exposed remotely without authentication.
 
 Defense-in-depth controls enforced here:
 - Disabled OpenAPI/Swagger/ReDoc documentation endpoints.
-- TrustedHostMiddleware Host-header validation and loopback client peer checks
-  (unless explicitly overridden via PROXY_ALLOW_REMOTE=1), plus optional bearer
-  secret authentication via PROXY_AUTH_TOKEN.
+- Standalone ASGI Host-header validation (emitting spec-compliant WebSocket
+  rejection frames rather than HTTP response messages) and loopback client peer
+  checks, failing closed when PROXY_ALLOW_REMOTE=1 or a non-loopback PROXY_HOST
+  is set without a non-empty PROXY_AUTH_TOKEN.
 - Exact-match Origin validation (missing Origin rejected, zero wildcard/suffix
   fallthrough, exact PROXY_ALLOWED_ORIGINS override).
 - Non-racy asyncio.Semaphore concurrent session cap acquired before ws.accept().
 - Server-owned persona snapshots loaded from cloudbank/shared/personas/*.json,
   validated against cloudbank/shared/customer_snapshot.schema.json, with
-  sessionId-to-persona binding and variable-free session resume.
+  post-connect sessionId-to-persona binding, active-session eviction protection,
+  and fresh server-minted UUIDs whenever an unrecognized sessionId is presented.
 """
 from __future__ import annotations
 
@@ -38,11 +40,10 @@ from collections.abc import AsyncIterator, Mapping
 from pathlib import Path
 from typing import Any, cast
 
-import jsonschema
 import websockets
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from jsonschema.validators import validator_for
 from starlette.datastructures import Headers
-from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -61,9 +62,10 @@ from .protocol import (
 from .relay import Relay
 
 log = logging.getLogger("proxy")
-logging.basicConfig(level=logging.INFO)
 
 _tokens = GoogleTokenProvider()
+
+DEFAULT_BIND_HOST = "127.0.0.1"
 
 _CLOUDBANK_DIR = Path(__file__).resolve().parents[3]
 _DEFAULT_CONFIG_PATH = _CLOUDBANK_DIR / "gecx-config.json"
@@ -81,7 +83,6 @@ _DEFAULT_LOCAL_HOSTS = frozenset(
         "127.0.0.1",
         "[::1]",
         "::1",
-        "testserver",
     }
 )
 
@@ -94,7 +95,9 @@ _DEMO_DATE_RE = re.compile(r"\A[0-9]{4}-[0-9]{2}-[0-9]{2}\Z")
 _SESSION_ID_RE = re.compile(
     r"\A[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\Z"
 )
-_GCP_PROJECT_RE = re.compile(r"\A[a-z][a-z0-9-]{4,29}\Z")
+_GCP_PROJECT_RE = re.compile(
+    r"\A(?:[a-z0-9.-]+:)?[a-z][a-z0-9-]{4,28}[a-z0-9]\Z"
+)
 _GCP_LOCATION_RE = re.compile(r"\A[a-z0-9-]+\Z")
 _GCP_APP_ID_RE = re.compile(r"\A[A-Za-z0-9][A-Za-z0-9_-]{0,127}\Z")
 
@@ -109,6 +112,7 @@ _MAX_UPSTREAM_FRAME_BYTES = 4 * 1024 * 1024
 DEFAULT_MAX_SESSIONS = 4
 DEFAULT_START_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_IDLE_SECONDS = 900.0
+DEFAULT_MAX_SESSION_SECONDS = 3600.0
 DEFAULT_KEEPALIVE_SECONDS = 10.0
 MAX_TRACKED_SESSIONS = 256
 SESSION_BINDING_TTL_SECONDS = 3600.0
@@ -150,6 +154,12 @@ def _max_idle_seconds() -> float:
     return _env_positive_float("PROXY_MAX_IDLE_SECONDS", DEFAULT_MAX_IDLE_SECONDS)
 
 
+def _max_session_seconds() -> float:
+    return _env_positive_float(
+        "PROXY_MAX_SESSION_SECONDS", DEFAULT_MAX_SESSION_SECONDS
+    )
+
+
 def _keepalive_seconds() -> float:
     return _env_positive_float("PROXY_KEEPALIVE_SECONDS", DEFAULT_KEEPALIVE_SECONDS)
 
@@ -160,6 +170,7 @@ _active_session_count = 0
 
 _session_personas: collections.OrderedDict[str, Persona] = collections.OrderedDict()
 _session_persona_timestamps: dict[str, float] = {}
+_active_session_ids: dict[str, int] = {}
 
 
 def _get_session_semaphore() -> asyncio.Semaphore:
@@ -188,11 +199,12 @@ class VariableValidationError(ValueError):
 
 
 @functools.lru_cache(maxsize=1)
-def _snapshot_validator() -> jsonschema.Draft7Validator:
+def _snapshot_validator() -> Any:
     """Load and compile cloudbank/shared/customer_snapshot.schema.json once."""
     schema = json.loads(_SNAPSHOT_SCHEMA_PATH.read_text(encoding="utf-8"))
-    jsonschema.Draft7Validator.check_schema(schema)
-    return jsonschema.Draft7Validator(schema)
+    validator_cls = validator_for(schema)
+    validator_cls.check_schema(schema)
+    return validator_cls(schema)
 
 
 def _parse_strict_iso_date(value: str, field_name: str) -> datetime.date:
@@ -227,7 +239,9 @@ def validate_persona_snapshot(snapshot: Any, *, persona: str) -> dict[str, Any]:
             "customer_snapshot", f"exceeds {MAX_SNAPSHOT_BYTES} byte limit"
         )
 
-    errors = sorted(_snapshot_validator().iter_errors(snapshot), key=lambda e: list(e.path))
+    errors = sorted(
+        _snapshot_validator().iter_errors(snapshot), key=lambda e: list(e.path)
+    )
     if errors:
         err = errors[0]
         loc = ".".join(str(p) for p in err.path) or "root"
@@ -296,12 +310,19 @@ def build_session_variables(start: ClientStart) -> dict[str, Any]:
     }
 
 
+def _mint_fresh_session_id() -> str:
+    candidate = str(uuid.uuid4())
+    while candidate in _session_personas or candidate in _active_session_ids:
+        candidate = str(uuid.uuid4())
+    return candidate
+
+
 def _prune_expired_session_bindings(now: float) -> None:
     cutoff = now - SESSION_BINDING_TTL_SECONDS
     expired = [
         sid
         for sid, ts in _session_persona_timestamps.items()
-        if ts < cutoff
+        if ts < cutoff and sid not in _active_session_ids
     ]
     for sid in expired:
         _session_personas.pop(sid, None)
@@ -314,12 +335,12 @@ def _validate_session_id_and_persona(
     *,
     now: float | None = None,
 ) -> tuple[str, bool]:
-    """Validate optional resumed sessionId and enforce persona binding."""
+    """Validate optional resumed sessionId and enforce server-bound persona ownership."""
     ts = time.monotonic() if now is None else now
     _prune_expired_session_bindings(ts)
 
     if requested_session_id is None:
-        return str(uuid.uuid4()), False
+        return _mint_fresh_session_id(), False
 
     if not _SESSION_ID_RE.fullmatch(requested_session_id):
         raise VariableValidationError(
@@ -330,7 +351,12 @@ def _validate_session_id_and_persona(
 
     canonical = requested_session_id.lower()
     bound_persona = _session_personas.get(canonical)
-    if bound_persona is not None and bound_persona != persona:
+    if bound_persona is None:
+        # Unrecognized, post-restart, or TTL/LRU-expired UUIDs NEVER resume unseeded
+        # or rebind an existing upstream session ID: mint a fresh server-owned UUID.
+        return _mint_fresh_session_id(), False
+
+    if bound_persona != persona:
         raise VariableValidationError(
             "sessionId",
             f"already bound to {bound_persona}",
@@ -351,9 +377,40 @@ def _record_session_binding(
         _session_personas.move_to_end(session_id)
     _session_personas[session_id] = persona
     _session_persona_timestamps[session_id] = ts
+
     while len(_session_personas) > MAX_TRACKED_SESSIONS:
-        oldest_sid, _ = _session_personas.popitem(last=False)
-        _session_persona_timestamps.pop(oldest_sid, None)
+        evict_sid = next(
+            (sid for sid in _session_personas if sid not in _active_session_ids),
+            None,
+        )
+        if evict_sid is None:
+            break
+        _session_personas.pop(evict_sid, None)
+        _session_persona_timestamps.pop(evict_sid, None)
+
+
+def _mark_session_active(session_id: str) -> None:
+    _active_session_ids[session_id] = _active_session_ids.get(session_id, 0) + 1
+
+
+def _mark_session_inactive(session_id: str) -> None:
+    remaining = _active_session_ids.get(session_id, 0) - 1
+    if remaining <= 0:
+        _active_session_ids.pop(session_id, None)
+    else:
+        _active_session_ids[session_id] = remaining
+    if session_id in _session_personas:
+        _session_persona_timestamps[session_id] = time.monotonic()
+
+
+def _in_test_mode() -> bool:
+    if "PYTEST_CURRENT_TEST" in os.environ:
+        return True
+    return os.environ.get("PROXY_ALLOW_TEST_HOSTS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def _allowed_origins() -> frozenset[str]:
@@ -403,6 +460,9 @@ def _allowed_hosts() -> frozenset[str]:
         )
 
     hosts: set[str] = set(_DEFAULT_LOCAL_HOSTS)
+    if _in_test_mode():
+        hosts.add("testserver")
+
     web_host = os.environ.get("WEB_HOST", "")
     if web_host and _SAFE_HOST_RE.fullmatch(web_host):
         hosts.add(web_host.lower())
@@ -431,7 +491,9 @@ def _extract_host_header_name(raw_host: str) -> str | None:
         if end == -1:
             return None
         rest = raw_host[end + 1 :]
-        if rest and not (rest.startswith(":") and rest[1:].isascii() and rest[1:].isdigit()):
+        if rest and not (
+            rest.startswith(":") and rest[1:].isascii() and rest[1:].isdigit()
+        ):
             return None
         return raw_host[: end + 1].lower()
     if ":" in raw_host:
@@ -442,18 +504,15 @@ def _extract_host_header_name(raw_host: str) -> str | None:
     return raw_host.lower()
 
 
-class _ProxyTrustedHostMiddleware(TrustedHostMiddleware):
-    """Starlette TrustedHostMiddleware with IPv6 literal and env-override support."""
+class _ProxyTrustedHostMiddleware:
+    """Standalone ASGI Host-header validator for HTTP and WebSocket scopes."""
 
     def __init__(self, app: ASGIApp) -> None:
-        super().__init__(
-            app,
-            allowed_hosts=["localhost", "127.0.0.1", "[::1]", "testserver"],
-            www_redirect=False,
-        )
+        self.app = app
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
-        if scope["type"] not in ("http", "websocket"):
+        scope_type = scope["type"]
+        if scope_type not in ("http", "websocket"):
             await self.app(scope, receive, send)
             return
 
@@ -464,6 +523,31 @@ class _ProxyTrustedHostMiddleware(TrustedHostMiddleware):
             await self.app(scope, receive, send)
             return
 
+        if scope_type == "websocket":
+            extensions = scope.get("extensions") or {}
+            if "websocket.http.response" in extensions:
+                body = b"Invalid host header"
+                await send(
+                    {
+                        "type": "websocket.http.response.start",
+                        "status": 400,
+                        "headers": [
+                            (b"content-type", b"text/plain; charset=utf-8"),
+                            (b"content-length", str(len(body)).encode("ascii")),
+                        ],
+                    }
+                )
+                await send(
+                    {
+                        "type": "websocket.http.response.body",
+                        "body": body,
+                        "more_body": False,
+                    }
+                )
+            else:
+                await send({"type": "websocket.close", "code": 1008})
+            return
+
         response = PlainTextResponse("Invalid host header", status_code=400)
         await response(scope, receive, send)
 
@@ -472,9 +556,13 @@ def _remote_peers_allowed() -> bool:
     return os.environ.get("PROXY_ALLOW_REMOTE", "").strip().lower() in ("1", "true")
 
 
-def _is_loopback_host(host: str) -> bool:
+def _configured_auth_token() -> str:
+    return os.environ.get("PROXY_AUTH_TOKEN", "").strip()
+
+
+def _is_ip_loopback(host: str) -> bool:
     normalized = host.strip().lower()
-    if normalized in ("localhost", "testclient"):
+    if normalized == "localhost":
         return True
     if normalized.startswith("[") and normalized.endswith("]"):
         normalized = normalized[1:-1]
@@ -489,8 +577,40 @@ def _is_loopback_host(host: str) -> bool:
     return False
 
 
+def _is_loopback_host(host: str) -> bool:
+    normalized = host.strip().lower()
+    if normalized == "testclient":
+        return _in_test_mode()
+    return _is_ip_loopback(normalized)
+
+
+def validate_runtime_security_config(*, bind_host: str | None = None) -> None:
+    """Fail closed if non-loopback binding or PROXY_ALLOW_REMOTE lacks PROXY_AUTH_TOKEN."""
+    has_token = bool(_configured_auth_token())
+    effective_host = (
+        bind_host
+        if bind_host is not None
+        else (os.environ.get("PROXY_HOST", DEFAULT_BIND_HOST).strip() or DEFAULT_BIND_HOST)
+    )
+    if not _is_ip_loopback(effective_host) and not has_token:
+        raise RuntimeError(
+            "Refusing to bind non-loopback PROXY_HOST without a non-empty PROXY_AUTH_TOKEN"
+        )
+    if _remote_peers_allowed() and not has_token:
+        raise RuntimeError(
+            "PROXY_ALLOW_REMOTE=1 requires a non-empty PROXY_AUTH_TOKEN"
+        )
+
+
 def _peer_allowed(ws: WebSocket) -> bool:
+    effective_bind = (
+        os.environ.get("PROXY_HOST", DEFAULT_BIND_HOST).strip() or DEFAULT_BIND_HOST
+    )
+    if not _is_ip_loopback(effective_bind) and not _configured_auth_token():
+        return False
     if _remote_peers_allowed():
+        if not _configured_auth_token():
+            return False
         return True
     if ws.client is None or not ws.client.host:
         return False
@@ -498,7 +618,7 @@ def _peer_allowed(ws: WebSocket) -> bool:
 
 
 def _auth_token_valid(headers: Mapping[str, str]) -> bool:
-    expected = os.environ.get("PROXY_AUTH_TOKEN", "")
+    expected = _configured_auth_token()
     if not expected:
         return True
     auth_header = headers.get("authorization", "")
@@ -564,6 +684,7 @@ def _should_warm_credentials() -> bool:
 
 @contextlib.asynccontextmanager
 async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    validate_runtime_security_config()
     for persona in _VALID_PERSONAS:
         _load_persona_snapshot(persona)
     if _should_warm_credentials():
@@ -628,7 +749,7 @@ async def ws_agent(ws: WebSocket) -> None:
 
     if not _peer_allowed(ws):
         peer_host = ws.client.host if ws.client is not None else None
-        log.warning("rejecting non-loopback websocket peer %r", peer_host)
+        log.warning("rejecting disallowed or unauthenticated websocket peer %r", peer_host)
         await ws.close(code=1008)
         return
 
@@ -705,7 +826,6 @@ async def _run_session(ws: WebSocket) -> None:
         return
 
     persona_variables: dict[str, Any] | None = None if is_resume else built_variables
-    _record_session_binding(resolved_session_id, start.persona)
 
     try:
         app_resource, location = _load_app_resource()
@@ -736,8 +856,8 @@ async def _run_session(ws: WebSocket) -> None:
 
     relay: Relay | None = None
     log.info(
-        "opening upstream WS for app=%s session=%s resume=%s",
-        app_resource,
+        "opening upstream WS for location=%s session=%s resume=%s",
+        location,
         resolved_session_id,
         is_resume,
     )
@@ -747,16 +867,23 @@ async def _run_session(ws: WebSocket) -> None:
             additional_headers=upstream_headers,
             max_size=_MAX_UPSTREAM_FRAME_BYTES,
         ) as upstream:
-            relay = Relay(
-                browser=_FastApiBrowserAdapter(ws),
-                upstream=cast(Any, upstream),
-                app_resource=app_resource,
-                session_id=resolved_session_id,
-                persona_variables=persona_variables,
-                keepalive_interval_seconds=_keepalive_seconds(),
-                max_idle_seconds=_max_idle_seconds(),
-            )
-            await relay.run(start=start)
+            _record_session_binding(resolved_session_id, start.persona)
+            _mark_session_active(resolved_session_id)
+            try:
+                relay = Relay(
+                    browser=_FastApiBrowserAdapter(ws),
+                    upstream=cast(Any, upstream),
+                    app_resource=app_resource,
+                    session_id=resolved_session_id,
+                    persona_variables=persona_variables,
+                    is_resume=is_resume,
+                    keepalive_interval_seconds=_keepalive_seconds(),
+                    max_idle_seconds=_max_idle_seconds(),
+                    max_session_seconds=_max_session_seconds(),
+                )
+                await relay.run(start=start)
+            finally:
+                _mark_session_inactive(resolved_session_id)
     except BinaryFrameError:
         log.warning("closing session after unsupported binary client frame")
         await _fail(ws, "binary frames are not supported", code=1003)
@@ -797,6 +924,6 @@ class _FastApiBrowserAdapter:
     async def send_text(self, raw: str) -> None:
         await self._ws.send_text(raw)
 
-    async def close(self) -> None:
+    async def close(self, code: int = 1000) -> None:
         with contextlib.suppress(RuntimeError):
-            await self._ws.close()
+            await self._ws.close(code=code)

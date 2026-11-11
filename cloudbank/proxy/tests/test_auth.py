@@ -18,9 +18,11 @@ class _FakeCreds:
         self.token = token
         self.expired = expired
         self.refresh_calls = 0
+        self.last_request: Any = None
 
-    def refresh(self, _request: object) -> None:
+    def refresh(self, request: Any) -> None:
         self.refresh_calls += 1
+        self.last_request = request
         self.expired = False
 
 
@@ -47,15 +49,33 @@ async def test_returns_token_on_first_call_off_event_loop() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refreshes_when_expired_off_event_loop() -> None:
+async def test_refreshes_when_expired_with_explicit_10s_timeout() -> None:
     creds = _FakeCreds(token="t-1", expired=True)
+    mock_transport = MagicMock(return_value="ok-resp")
+
+    class _CallingCreds(_FakeCreds):
+        def refresh(self, request: Any) -> None:
+            super().refresh(request)
+            request("https://oauth2.googleapis.com/token", method="POST")
+
+    calling_creds = _CallingCreds(token="t-refreshed", expired=True)
     with (
-        patch("proxy.auth.google.auth.default", return_value=(creds, "proj-x")),
-        patch("proxy.auth.Request", return_value=MagicMock()),
+        patch("proxy.auth.google.auth.default", return_value=(calling_creds, "proj-x")),
+        patch("proxy.auth.Request", return_value=mock_transport),
     ):
         provider = GoogleTokenProvider()
-        await provider.get_token()
-    assert creds.refresh_calls == 1
+        tok = await provider.get_token()
+
+    assert tok == "t-refreshed"
+    assert calling_creds.refresh_calls == 1
+    mock_transport.assert_called_once_with(
+        "https://oauth2.googleapis.com/token",
+        method="POST",
+        body=None,
+        headers=None,
+        timeout=10,
+    )
+    assert creds.refresh_calls == 0
 
 
 @pytest.mark.asyncio
