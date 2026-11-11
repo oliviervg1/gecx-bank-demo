@@ -21,12 +21,12 @@ The goldens directory and the journey prefixes come from the workspace's
 """
 
 import argparse
-from dataclasses import dataclass
 import logging
-from pathlib import Path
 import sys
 import time
 import uuid
+from dataclasses import dataclass
+from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from gecx_workspace import (  # noqa: E402
@@ -34,7 +34,7 @@ from gecx_workspace import (  # noqa: E402
     add_config_argument,
     load_workspace,
 )
-from manage_ces_app import resolve_app_resource  # noqa: E402
+from manage_app import resolve_app_resource  # noqa: E402
 
 # The golden gate asks the platform to answer tool calls with server-side
 # fakes, so a red gate means the app changed rather than a backend the CI
@@ -214,6 +214,7 @@ def sync_evals(app_resource: str, goldens_dir: Path) -> None:
     preserved across syncs.
     """
     import types
+
     from cxas_scrapi.core.evaluations import Evaluations
     from cxas_scrapi.utils.eval_utils import EvalUtils
 

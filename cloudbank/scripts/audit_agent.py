@@ -15,8 +15,8 @@
 
 """CXAS Voice Agent Auditor and Auto-Remediator for Gemini Composite v2.
 
-Audits and remediates Google Cloud CX Agent Studio (CXAS) and Customer
-Engagement Suite (CES) applications for the Gemini Composite v2 voice stack:
+Audits and remediates Google Cloud CX Agent Studio (GECX) / CXAS
+applications for the Gemini Composite v2 voice stack:
 
 - ``modelSettings.model`` is ``gemini-composite-v2`` (temperature and
   ``speakingRate`` are not Composite v2 requirements and are never modified).
@@ -1479,7 +1479,7 @@ def _invalid_style_detail(
     if word_count > SPEAKING_STYLE_WORD_LIMIT:
         return (
             f"has {word_count} words (keep empty or concise, up to"
-            f" {SPEAKING_STYLE_WORD_LIMIT} words — ideally a ~12-word speaker"
+            f" {SPEAKING_STYLE_WORD_LIMIT} words, ideally a ~12-word speaker"
             " profile)",
             Severity.WARNING,
             True,
@@ -2617,7 +2617,7 @@ class VoiceAgentAuditor:
                             "file": rel,
                             "line": lineno,
                             "message": (
-                                f"References external CES app '{resource}'."
+                                f"References external CXAS app '{resource}'."
                                 " Check whether that destination app needs its"
                                 " own Composite v2 migration."
                             ),
@@ -3191,7 +3191,7 @@ def main() -> None:
     parser.add_argument(
         "--app-name",
         default=None,
-        help="Optional CXAS / CES application full resource name.",
+        help="Optional CXAS application full resource name.",
     )
     parser.add_argument(
         "--report",

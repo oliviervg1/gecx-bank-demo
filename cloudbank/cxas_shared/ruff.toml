@@ -1,0 +1,11 @@
+extend = "../pyproject.toml"
+builtins = [
+  "context",
+  "LlmResponse",
+  "LlmRequest",
+  "Part",
+  "CallbackContext",
+  "ToolContext",
+  "Tool",
+  "tools",
+]

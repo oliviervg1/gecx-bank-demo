@@ -1,11 +1,18 @@
 import json
 import logging
 import re
-from typing import Any, Optional
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_DIAGNOSIS_NOTE_RE = re.compile(r"\s*\[Diagnosis context:.*?\]\s*", re.DOTALL)
+_DIAGNOSIS_PREFIX = "[Diagnosis context:"
+_UNTRUSTED_SNIPPET_RE = re.compile(
+    r"<untrusted_web_snippet>.*?</untrusted_web_snippet>",
+    re.DOTALL | re.IGNORECASE,
+)
+_SAFE_FALLBACK_TEXT = (
+    "Sorry, something went wrong on my side. Could you try asking that again?"
+)
 
 
 def _is_call_ended(state: Any) -> bool:
@@ -13,11 +20,39 @@ def _is_call_ended(state: Any) -> bool:
     return state.get("call_complete") in ("true", "released")
 
 
+def _strip_diagnosis_notes(text: str) -> str:
+    """Strip bracket-balanced [Diagnosis context: ...] blocks and untrusted snippet tags."""
+    cleaned = _UNTRUSTED_SNIPPET_RE.sub(" ", text)
+    while _DIAGNOSIS_PREFIX in cleaned:
+        start = cleaned.find(_DIAGNOSIS_PREFIX)
+        depth = 0
+        end = len(cleaned)
+        for idx in range(start, len(cleaned)):
+            ch = cleaned[idx]
+            if ch == "[":
+                depth += 1
+            elif ch == "]":
+                depth -= 1
+                if depth == 0:
+                    end = idx + 1
+                    break
+        cleaned = f"{cleaned[:start]} {cleaned[end:]}"
+    return " ".join(cleaned.split())
+
+
+def _safe_fallback_response() -> LlmResponse:
+    """Return a fail-closed spoken apology response when callback execution fails."""
+    return LlmResponse.from_parts(parts=[Part.from_text(text=_SAFE_FALLBACK_TEXT)])
+
+
 def after_model_callback(
     callback_context: CallbackContext, llm_response: LlmResponse
-) -> Optional[LlmResponse]:
+) -> LlmResponse | None:
     """Strip diagnosis notes, stamp Tier 2 UI state, and append end_session when complete."""
     try:
+        if llm_response.partial:
+            return None
+
         state = callback_context.state
         if state.get("call_complete") == "released":
             return None
@@ -39,8 +74,10 @@ def after_model_callback(
             if p.function_call is not None and p.function_call.name == "end_session":
                 changed = True
                 continue
-            if p.text is not None and "[Diagnosis context:" in p.text:
-                stripped = _DIAGNOSIS_NOTE_RE.sub(" ", p.text).strip()
+            if p.text is not None and (
+                _DIAGNOSIS_PREFIX in p.text or "<untrusted_web_snippet>" in p.text.lower()
+            ):
+                stripped = _strip_diagnosis_notes(p.text)
                 changed = True
                 if stripped:
                     cleaned.append(Part.from_text(text=stripped))
@@ -59,7 +96,7 @@ def after_model_callback(
                     changed = True
 
         if _is_call_ended(state):
-            reason = (state.get("escalation_reason") or "").strip() or "CALL_COMPLETED"
+            reason = str(state.get("escalation_reason") or "").strip() or "CALL_COMPLETED"
             state["call_complete"] = "released"
             state["escalation_reason"] = reason
             cleaned.append(
@@ -70,7 +107,11 @@ def after_model_callback(
             )
             changed = True
 
-        return LlmResponse.from_parts(parts=cleaned) if changed else None
+        if not changed:
+            return None
+        if not cleaned:
+            return _safe_fallback_response()
+        return LlmResponse.from_parts(parts=cleaned)
     except Exception:
         logger.exception("release_line failed")
-        return None
+        return _safe_fallback_response()

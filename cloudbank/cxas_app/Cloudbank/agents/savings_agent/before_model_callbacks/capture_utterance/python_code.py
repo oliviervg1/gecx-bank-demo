@@ -1,16 +1,44 @@
 import json
 import logging
 import re
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
 _MAX_PASSES = 8
 _ENABLE_TIER1_PARTIAL_UI = True
+_RESTRICTED_TOOLS = ("end_session", "transfer_to_agent", "search_help")
+_ALLOWED_AGENTS = frozenset(
+    {
+        "root_agent",
+        "everyday_banking_agent",
+        "savings_agent",
+        "mortgage_agent",
+    }
+)
+_SAFE_FALLBACK_TEXT = (
+    "Sorry, something went wrong on my side. Could you try asking that again?"
+)
 _PLATFORM_TAG_RE = re.compile(
     r"<(?:state_update|context|event)\b[^>]*>.*?</(?:state_update|context|event)>",
     re.DOTALL | re.IGNORECASE,
 )
+
+
+def _safe_fallback_response() -> LlmResponse:
+    """Return a fail-closed spoken apology response when callback state is invalid."""
+    return LlmResponse.from_parts(parts=[Part.from_text(text=_SAFE_FALLBACK_TEXT)])
+
+
+def _hide_restricted_tools(llm_request: LlmRequest) -> bool:
+    """Hide restricted tools in an isolated guard so later errors never expose them."""
+    all_hidden = True
+    for tool_name in _RESTRICTED_TOOLS:
+        try:
+            llm_request.config.hide_tool(tool_name)
+        except Exception:
+            logger.exception("capture_utterance failed to hide tool %s", tool_name)
+            all_hidden = False
+    return all_hidden
 
 
 def _is_tool_response(llm_request: LlmRequest) -> bool:
@@ -55,19 +83,17 @@ def _clean_user_utterance(llm_request: LlmRequest) -> str:
 
 def before_model_callback(
     callback_context: CallbackContext, llm_request: LlmRequest
-) -> Optional[LlmResponse]:
+) -> LlmResponse | None:
     """Guard pass limits, hide internal tools, route silently, and emit Tier 1 UI state."""
+    if not _hide_restricted_tools(llm_request):
+        return _safe_fallback_response()
+
     try:
         state = callback_context.state
         if state.get("call_complete") == "released":
             return LlmResponse.from_parts(parts=[Part.from_text(text="")])
 
-        # 1. Hide restricted tools on every pass so only the active controller is exposed.
-        llm_request.config.hide_tool("end_session")
-        llm_request.config.hide_tool("transfer_to_agent")
-        llm_request.config.hide_tool("search_help")
-
-        # 2. Track per-invocation pass count as a declared string variable (V101).
+        # Track per-invocation pass count as a declared string variable (V101).
         inv_id = callback_context.invocation_id or ""
         if state.get("pass_turn_id") != inv_id:
             state["pass_turn_id"] = inv_id
@@ -76,17 +102,19 @@ def before_model_callback(
             count = int(state.get("pass_count") or "0") + 1
         state["pass_count"] = str(count)
 
-        # 3. Post-tool pass: hide returned controller FIRST, then route or emit Tier 1 UI.
+        # Post-tool pass: hide returned controller first, then route or emit Tier 1 UI.
         if _is_tool_response(llm_request):
             returned_tool = _last_returned_tool_name(llm_request)
             if returned_tool:
                 llm_request.config.hide_tool(returned_tool)
 
-            target = (state.get("target_agent") or "").strip()
+            target = str(state.get("target_agent") or "").strip()
             if target:
                 state["target_agent"] = ""
                 current = (callback_context.agent_name or "").split("/")[-1]
-                if target != current:
+                if target not in _ALLOWED_AGENTS:
+                    logger.warning("Blocked transfer to unknown target_agent: %r", target)
+                elif target != current:
                     return LlmResponse.from_parts(
                         parts=[Part.from_agent_transfer(agent=target)]
                     )
@@ -112,17 +140,17 @@ def before_model_callback(
             if utterance:
                 state["last_user_utterance"] = utterance
 
-        # 4. Loop-cap guard: finish any staged route first, else close cleanly.
+        # Loop-cap guard: finish any valid staged route first, else close cleanly.
         if count > _MAX_PASSES:
-            target = (state.get("target_agent") or "").strip()
+            target = str(state.get("target_agent") or "").strip()
             if target:
                 state["target_agent"] = ""
                 current = (callback_context.agent_name or "").split("/")[-1]
-                if target != current:
+                if target in _ALLOWED_AGENTS and target != current:
                     return LlmResponse.from_parts(
                         parts=[Part.from_agent_transfer(agent=target)]
                     )
-            reason = state.get("escalation_reason") or (
+            reason = str(state.get("escalation_reason") or "").strip() or (
                 "CALL_COMPLETED"
                 if state.get("call_complete") == "true"
                 else "MAX_PASSES_EXCEEDED"
@@ -143,4 +171,4 @@ def before_model_callback(
         return None
     except Exception:
         logger.exception("capture_utterance failed")
-        return None
+        return _safe_fallback_response()
