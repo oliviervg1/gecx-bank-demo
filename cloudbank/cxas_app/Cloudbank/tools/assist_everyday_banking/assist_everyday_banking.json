@@ -1,0 +1,9 @@
+{
+  "name": "assist_everyday_banking",
+  "displayName": "assist_everyday_banking",
+  "pythonFunction": {
+    "name": "assist_everyday_banking",
+    "pythonCode": "tools/assist_everyday_banking/python_function/python_code.py",
+    "description": "Answer current account balance, multi-month spending, category/vendor drilldown, recurring subscription, anomaly confirmation, and subscription cancellation queries while synchronising the Spending and Home screens."
+  }
+}

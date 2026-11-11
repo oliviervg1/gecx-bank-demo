@@ -2,63 +2,90 @@ import { describe, it, expect } from 'vitest'
 import { composeHomeInsight } from '../pages/home/composeHomeInsight'
 
 const baseSummary = {
-  this_month_total: 845.20,
+  this_month_total_pence: 84520,
+  last_month_total_pence: 82000,
+  delta_this_vs_last_pence: 2520,
+  recurring_this_month_pence: 10000,
+  by_category_pence: {},
+  by_vendor_pence: {},
   monthly_history: [
-    { label: 'May', total: 845.20, by_category: {} },
-    { label: 'Apr', total: 820.00, by_category: {} },
-    { label: 'Mar', total: 800.00, by_category: {} },
+    { offset: 0 as const, label: 'Nov', total_pence: 84520, by_category_pence: {} },
+    { offset: 1 as const, label: 'Oct', total_pence: 82000, by_category_pence: {} },
+    { offset: 2 as const, label: 'Sep', total_pence: 80000, by_category_pence: {} },
   ],
 }
 
 const mortgage = {
-  next_payment: { amount: 1245.50, day_of_month: 1 },
+  next_payment: { amount_pence: 124550, day_of_month: 1 },
 }
 
 describe('composeHomeInsight', () => {
-  it('produces a sentence containing both money values and an ordinal date', () => {
+  it('renders resolved calendar month, exact GBP figures, and ordinal payment day', () => {
     const out = composeHomeInsight({
-      spending_summary: baseSummary as never,
+      spending_summary: baseSummary,
       mortgage,
-      currentBalance: 4250.75,
+      currentBalancePence: 425075,
+      demoDate: '2026-11-24',
     })
+    expect(out).toContain('November')
     expect(out).toContain('£845.20')
     expect(out).toContain('£1,245.50')
     expect(out).toContain('1st')
-  })
-
-  it('says "well within your typical range" when spend is within 110% of avg', () => {
-    const out = composeHomeInsight({
-      spending_summary: { ...baseSummary, this_month_total: 800 } as never,
-      mortgage,
-      currentBalance: 4250.75,
-    })
-    expect(out).toContain('well within your typical range')
-  })
-
-  it('says "running ahead of your usual" when spend > 130% of avg', () => {
-    const out = composeHomeInsight({
-      spending_summary: { ...baseSummary, this_month_total: 2000 } as never,
-      mortgage,
-      currentBalance: 4250.75,
-    })
-    expect(out).toContain('running ahead of your usual')
-  })
-
-  it('says "comfortable buffer" when balance is more than 2x the next payment', () => {
-    const out = composeHomeInsight({
-      spending_summary: baseSummary as never,
-      mortgage,
-      currentBalance: 4250.75,
-    })
     expect(out).toContain('comfortable buffer')
   })
 
-  it('says "tight against" when balance is below the next payment amount', () => {
-    const out = composeHomeInsight({
-      spending_summary: baseSummary as never,
+  it('distinguishes typical vs ahead-of-usual pace and tight balance margin', () => {
+    const ahead = composeHomeInsight({
+      spending_summary: { ...baseSummary, this_month_total_pence: 200000 },
       mortgage,
-      currentBalance: 500,
+      currentBalancePence: 50000,
+      demoDate: '2026-11-24',
     })
-    expect(out).toContain('tight against')
+    expect(ahead).toContain('running ahead')
+    expect(ahead).toContain('tight margin')
+  })
+
+  it('omits mortgage clause for renters without a mortgage', () => {
+    const renter = composeHomeInsight({
+      spending_summary: baseSummary,
+      currentBalancePence: 300000,
+      demoDate: '2026-11-24',
+    })
+    expect(renter).toContain('£845.20')
+    expect(renter).not.toContain('mortgage payment')
+  })
+
+  it('leads with specific subscription anomaly jump when current month has an anomaly', () => {
+    const withAnomaly = composeHomeInsight({
+      spending_summary: baseSummary,
+      mortgage,
+      currentBalancePence: 342050,
+      demoDate: '2026-11-24',
+      transactions: [
+        {
+          id: 'tx_1',
+          vendor: 'Netflix',
+          category: 'subscriptions',
+          amount_pence: 4500,
+          month_offset: 0,
+          day: 21,
+          is_subscription: true,
+          is_anomaly: true,
+        },
+        {
+          id: 'tx_2',
+          vendor: 'Netflix',
+          category: 'subscriptions',
+          amount_pence: 1799,
+          month_offset: 1,
+          day: 21,
+          is_subscription: true,
+        },
+      ],
+    })
+    expect(withAnomaly).toContain(
+      'Netflix charged £45.00 on 21 November, up from £17.99 last month',
+    )
+    expect(withAnomaly).toContain('ask your concierge to check or cancel it')
   })
 })

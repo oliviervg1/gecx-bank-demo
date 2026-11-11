@@ -9,6 +9,7 @@ function Probe() {
       <span data-testid="page">{page}</span>
       <span data-testid="direction">{direction}</span>
       <button onClick={() => navigateTo('spending')}>spending</button>
+      <button onClick={() => navigateTo('savings')}>savings</button>
       <button onClick={() => navigateTo('home')}>home</button>
       <button onClick={() => navigateTo('profile')}>profile</button>
     </div>
@@ -16,28 +17,29 @@ function Probe() {
 }
 
 describe('PageProvider', () => {
-  it('exposes exactly the 4 page ids in tab order', () => {
-    expect(ALL_PAGES).toEqual(['home', 'spending', 'mortgage', 'profile'])
+  it('exposes all 5 page IDs in tab order', () => {
+    expect(ALL_PAGES).toEqual(['home', 'spending', 'savings', 'mortgage', 'profile'])
   })
 
-  it('defaults to home', () => {
-    render(<PageProvider><Probe /></PageProvider>)
+  it('defaults to home and tracks forward/back tab index transitions', () => {
+    render(
+      <PageProvider>
+        <Probe />
+      </PageProvider>,
+    )
     expect(screen.getByTestId('page').textContent).toBe('home')
     expect(screen.getByTestId('direction').textContent).toBe('forward')
-  })
 
-  it('reports forward direction when navigating to a tab with a higher index', () => {
-    render(<PageProvider><Probe /></PageProvider>)
-    act(() => { fireEvent.click(screen.getByText('spending')) })
-    expect(screen.getByTestId('page').textContent).toBe('spending')
+    act(() => {
+      fireEvent.click(screen.getByText('savings'))
+    })
+    expect(screen.getByTestId('page').textContent).toBe('savings')
     expect(screen.getByTestId('direction').textContent).toBe('forward')
-  })
 
-  it('reports back direction when navigating to a tab with a lower index', () => {
-    render(<PageProvider><Probe /></PageProvider>)
-    act(() => { fireEvent.click(screen.getByText('profile')) })
-    expect(screen.getByTestId('direction').textContent).toBe('forward')
-    act(() => { fireEvent.click(screen.getByText('home')) })
+    act(() => {
+      fireEvent.click(screen.getByText('home'))
+    })
+    expect(screen.getByTestId('page').textContent).toBe('home')
     expect(screen.getByTestId('direction').textContent).toBe('back')
   })
 })

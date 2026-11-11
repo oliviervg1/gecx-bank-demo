@@ -1,21 +1,66 @@
-import { createContext, useContext, useMemo, type ReactNode } from 'react'
+import { createContext, useCallback, useContext, useMemo, useState, type ReactNode } from 'react'
 import { parsePersona, type Persona } from './personas'
+import {
+  DEFAULT_PINNED_DEMO_DATE,
+  isValidIsoCalendarDate,
+  readDemoDateFromSearch,
+} from '../util/demoClock'
 
 interface PersonaContextValue {
   persona: Persona
+  setPersona: (next: Persona) => void
+  demoDate: string
+  setDemoDate: (isoDate: string) => void
 }
 
 const PersonaContext = createContext<PersonaContextValue | null>(null)
 
-export function PersonaProvider({ children }: { children: ReactNode }) {
-  // The persona is locked in at mount time and read from the URL. Switching it
-  // in-session would need a state-teardown path through AgentProvider so the
-  // new persona's greeting round-trips, so there is no setter here.
-  const value = useMemo<PersonaContextValue>(() => {
+interface PersonaProviderProps {
+  children: ReactNode
+  initialPersona?: Persona
+  initialDemoDate?: string
+}
+
+export function PersonaProvider({
+  children,
+  initialPersona,
+  initialDemoDate,
+}: PersonaProviderProps) {
+  const [persona, setPersonaState] = useState<Persona>(() => {
+    if (initialPersona) return initialPersona
     const search = typeof window === 'undefined' ? '' : window.location.search
-    const raw = new URLSearchParams(search).get('persona')
-    return { persona: parsePersona(raw) }
+    return parsePersona(new URLSearchParams(search).get('persona'))
+  })
+
+  const [demoDate, setDemoDateState] = useState<string>(() => {
+    if (initialDemoDate && isValidIsoCalendarDate(initialDemoDate)) return initialDemoDate
+    const search = typeof window === 'undefined' ? '' : window.location.search
+    return readDemoDateFromSearch(search, DEFAULT_PINNED_DEMO_DATE)
+  })
+
+  const setPersona = useCallback((next: Persona) => {
+    setPersonaState(next)
+    if (typeof window !== 'undefined' && window.history?.replaceState) {
+      const url = new URL(window.location.href)
+      url.searchParams.set('persona', next)
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    }
   }, [])
+
+  const setDemoDate = useCallback((isoDate: string) => {
+    if (!isValidIsoCalendarDate(isoDate)) return
+    setDemoDateState(isoDate)
+    if (typeof window !== 'undefined' && window.history?.replaceState) {
+      const url = new URL(window.location.href)
+      url.searchParams.set('demo_date', isoDate)
+      window.history.replaceState({}, '', `${url.pathname}${url.search}${url.hash}`)
+    }
+  }, [])
+
+  const value = useMemo<PersonaContextValue>(
+    () => ({ persona, setPersona, demoDate, setDemoDate }),
+    [persona, setPersona, demoDate, setDemoDate],
+  )
 
   return <PersonaContext.Provider value={value}>{children}</PersonaContext.Provider>
 }

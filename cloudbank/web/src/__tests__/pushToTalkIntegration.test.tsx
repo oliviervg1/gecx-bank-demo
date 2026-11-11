@@ -67,7 +67,10 @@ beforeEach(() => {
     close() { return Promise.resolve() }
   }
   class WorkletNodeStub {
-    port: { onmessage: ((e: { data: Float32Array }) => void) | null } = { onmessage: null }
+    port: {
+      onmessage: ((e: { data: Float32Array }) => void) | null
+      postMessage: (msg: unknown) => void
+    } = { onmessage: null, postMessage: vi.fn() }
     constructor() { workletPort = this.port }
     disconnect() {}
   }
@@ -111,7 +114,7 @@ async function mount() {
     await Promise.resolve()
   })
   const ws = sockets[sockets.length - 1]
-  await act(async () => { ws.open(); ws.deliver({ type: 'ready' }); await Promise.resolve() })
+  await act(async () => { ws.open(); ws.deliver({ type: 'ready', sessionId: 'sess-ptt' }); await Promise.resolve() })
   return ws
 }
 
@@ -135,21 +138,21 @@ describe('push-to-talk over the wire', () => {
 
   it('sends silence before the presenter holds', async () => {
     const ws = await mount()
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     await act(async () => { fireEvent.click(screen.getByTestId('end')); await Promise.resolve() })
     expect(sentSilence(ws)).toBe(true)
   })
 
   it('sends real audio while held', async () => {
     const ws = await mount()
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByTestId('mic').textContent).toBe('held')
     expect(sentSilence(ws)).toBe(false)
   })
 
   it('goes silent again on release', async () => {
     const ws = await mount()
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     expect(sentSilence(ws)).toBe(false)
     await act(async () => { fireEvent.click(screen.getByTestId('end')); await Promise.resolve() })
     expect(sentSilence(ws)).toBe(true)
@@ -161,7 +164,7 @@ describe('push-to-talk over the wire', () => {
     // able to reach the endpointer, regardless of what the presenter's finger
     // is doing.
     const ws = await mount()
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     expect(sentSilence(ws)).toBe(false)
     await act(async () => { ws.deliver({ type: 'audio', data: 'AAAA' }); await Promise.resolve() })
     expect(screen.getByTestId('mic').textContent).toBe('speaking')
@@ -170,7 +173,7 @@ describe('push-to-talk over the wire', () => {
 
   it('disables the track too, not just the samples', async () => {
     await mount()
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     expect(tracks[0].enabled).toBe(true)
     await act(async () => { fireEvent.click(screen.getByTestId('end')); await Promise.resolve() })
     expect(tracks[0].enabled).toBe(false)
@@ -184,7 +187,7 @@ describe('push-to-talk over the wire', () => {
     // sending. Holding must claim the floor, not just empty the queue.
     const ws = await mount()
     await act(async () => { ws.deliver({ type: 'audio', data: 'AAAA' }); await Promise.resolve() })
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByTestId('mic').textContent).toBe('held')
 
     // Two more chunks land after the barge-in.
@@ -210,7 +213,7 @@ describe('push-to-talk over the wire', () => {
     const ws = await mount()
     await act(async () => { ws.deliver({ type: 'audio', data: 'AAAA' }); await Promise.resolve() })
     expect(screen.getByTestId('mic').textContent).toBe('speaking')
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByTestId('mic').textContent).toBe('held')
     expect(sentSilence(ws)).toBe(false)
   })
@@ -221,7 +224,7 @@ describe('?ptt=0 — always-on regression path', () => {
     window.history.replaceState({}, '', '/?ptt=0')
     const ws = await mount()
     expect(screen.getByTestId('ptt').textContent).toBe('false')
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     expect(screen.getByTestId('mic').textContent).toBe('listening')
     expect(sentSilence(ws)).toBe(false)
   })
@@ -231,7 +234,7 @@ describe('?ptt=0 — always-on regression path', () => {
     // the agent interrupting itself.
     window.history.replaceState({}, '', '/?ptt=0')
     const ws = await mount()
-    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve() })
+    await act(async () => { fireEvent.click(screen.getByTestId('begin')); await Promise.resolve(); await Promise.resolve() })
     await act(async () => { ws.deliver({ type: 'audio', data: 'AAAA' }); await Promise.resolve() })
     expect(sentSilence(ws)).toBe(true)
   })

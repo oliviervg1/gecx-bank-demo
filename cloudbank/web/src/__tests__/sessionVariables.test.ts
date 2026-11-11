@@ -1,33 +1,29 @@
 import { describe, it, expect } from 'vitest'
-import { buildSessionVariables, type HasFirstName } from '../agent/sessionVariables'
+import { buildSessionVariables } from '../agent/sessionVariables'
+import { allFixtures } from '../data/fixture'
 
-function fixture(over: Partial<HasFirstName> = {}): HasFirstName {
-  return { user: { first_name: 'Chloe' }, ...over }
-}
-
-describe('buildSessionVariables', () => {
-  it('returns only first_name', () => {
-    const v = buildSessionVariables(fixture())
-    expect(Object.keys(v)).toEqual(['first_name'])
-    expect(v.first_name).toBe('Chloe')
-  })
-
-  it('does NOT include spending_summary anymore (the agent uses get_* tools)', () => {
-    const v = buildSessionVariables(fixture())
-    expect(v).not.toHaveProperty('spending_summary')
-  })
-
-  it('does NOT include any anomaly_* fields even when an anomaly is present', () => {
-    const v = buildSessionVariables(fixture())
-    expect(v).not.toHaveProperty('anomaly_vendor')
-    expect(v).not.toHaveProperty('anomaly_amount')
-    expect(v).not.toHaveProperty('anomaly_renewal_days_ago')
-  })
-
-  it('produces all-string values (CES session-variable contract)', () => {
-    const v = buildSessionVariables(fixture())
-    for (const [k, val] of Object.entries(v)) {
-      expect(typeof val, `${k} should be string`).toBe('string')
-    }
-  })
+describe('buildSessionVariables — 5-key CLIENT_SEEDABLE_VARIABLES contract', () => {
+  it.each(allFixtures())(
+    'builds exact 5 keys for %s with customer_snapshot identical verbatim to fixture',
+    (personaId, fixture) => {
+      const vars = buildSessionVariables(personaId, fixture, {
+        demoDate: '2026-11-24',
+        timeOfDay: 'afternoon',
+      })
+      expect(Object.keys(vars).sort()).toEqual([
+        'customer_snapshot',
+        'demo_date',
+        'first_name',
+        'persona_id',
+        'time_of_day',
+      ])
+      expect(vars.persona_id).toBe(personaId)
+      expect(vars.first_name).toBe(fixture.user.first_name)
+      expect(vars.demo_date).toBe('2026-11-24')
+      expect(vars.time_of_day).toBe('afternoon')
+      // customer_snapshot must be the exact verbatim fixture object!
+      expect(vars.customer_snapshot).toBe(fixture)
+      expect(vars.customer_snapshot).toEqual(fixture)
+    },
+  )
 })

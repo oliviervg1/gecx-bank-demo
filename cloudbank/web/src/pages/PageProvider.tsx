@@ -1,6 +1,14 @@
-import { createContext, useCallback, useContext, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  createContext,
+  useCallback,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 
-export const ALL_PAGES = ['home', 'spending', 'mortgage', 'profile'] as const
+export const ALL_PAGES = ['home', 'spending', 'savings', 'mortgage', 'profile'] as const
 export type PageId = (typeof ALL_PAGES)[number]
 
 export type Direction = 'forward' | 'back'
@@ -20,6 +28,7 @@ export function PageProvider({ children }: { children: ReactNode }) {
 
   const navigateTo = useCallback((id: PageId) => {
     const next = ALL_PAGES.indexOf(id)
+    if (next < 0) return
     const prev = previousIndexRef.current
     setDirection(next >= prev ? 'forward' : 'back')
     previousIndexRef.current = next
@@ -38,4 +47,8 @@ export function usePage(): PageContextValue {
   const ctx = useContext(PageContext)
   if (!ctx) throw new Error('usePage must be used within <PageProvider>')
   return ctx
+}
+
+export function usePageOptional(): PageContextValue | null {
+  return useContext(PageContext)
 }

@@ -1,0 +1,9 @@
+{
+  "name": "assist_savings",
+  "displayName": "assist_savings",
+  "pythonFunction": {
+    "name": "assist_savings",
+    "pythonCode": "tools/assist_savings/python_function/python_code.py",
+    "description": "Answer savings pot balance, AER rate, monthly contribution, and compound goal completion projection queries while synchronising the Savings screen."
+  }
+}

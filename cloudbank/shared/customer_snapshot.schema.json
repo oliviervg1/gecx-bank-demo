@@ -1,0 +1,343 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cloudbank.example.com/schemas/customer_snapshot.schema.json",
+  "title": "CustomerSnapshot",
+  "description": "Web-owned retail banking persona snapshot pushed via BidiRunSession realtimeInput.variables. All monetary amounts are integer pence (*_pence) and all interest rates are integer basis points (*_bps).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["user", "accounts", "transactions"],
+  "definitions": {
+    "noControlOrAngle": {
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
+    },
+    "safeString120": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "pattern": "^[^<>\\u0000-\\u001f\\u007f]+$",
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
+    },
+    "safeName60": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 60,
+      "pattern": "^[A-Za-z][A-Za-z0-9 '\\-]{0,59}$",
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
+    },
+    "isoDate": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 10,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$",
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
+    }
+  },
+  "properties": {
+    "user": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "first_name",
+        "last_name",
+        "age",
+        "location",
+        "employment",
+        "annual_income_pence",
+        "goals"
+      ],
+      "properties": {
+        "first_name": { "$ref": "#/definitions/safeName60" },
+        "last_name": { "$ref": "#/definitions/safeName60" },
+        "age": { "type": "integer", "minimum": 18, "maximum": 120 },
+        "location": { "$ref": "#/definitions/safeString120" },
+        "employment": { "$ref": "#/definitions/safeString120" },
+        "email": {
+          "type": "string",
+          "minLength": 5,
+          "maxLength": 120,
+          "pattern": "^[A-Za-z0-9._%+\\-]+@example\\.com$",
+          "not": {
+            "pattern": "[<>\\u0000-\\u001f\\u007f\\s]"
+          }
+        },
+        "annual_income_pence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "monthly_rent_pence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100000000
+        },
+        "goals": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 10,
+          "items": { "$ref": "#/definitions/safeString120" }
+        }
+      }
+    },
+    "accounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["current", "savings"],
+      "properties": {
+        "current": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "sort_code",
+            "account_number_last4",
+            "balance_pence",
+            "currency"
+          ],
+          "properties": {
+            "name": { "$ref": "#/definitions/safeString120" },
+            "sort_code": {
+              "type": "string",
+              "minLength": 8,
+              "maxLength": 8,
+              "pattern": "^[0-9]{2}-[0-9]{2}-[0-9]{2}$",
+              "not": {
+                "pattern": "[<>\\u0000-\\u001f\\u007f]"
+              }
+            },
+            "account_number_last4": {
+              "type": "string",
+              "minLength": 4,
+              "maxLength": 4,
+              "pattern": "^[0-9]{4}$",
+              "not": {
+                "pattern": "[<>\\u0000-\\u001f\\u007f]"
+              }
+            },
+            "balance_pence": {
+              "type": "integer",
+              "minimum": -1000000000,
+              "maximum": 1000000000
+            },
+            "currency": {
+              "type": "string",
+              "enum": ["GBP"]
+            }
+          }
+        },
+        "savings": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "name",
+            "balance_pence",
+            "gross_rate_bps",
+            "aer_bps",
+            "monthly_contribution_pence",
+            "goal_name",
+            "goal_target_pence"
+          ],
+          "properties": {
+            "name": { "$ref": "#/definitions/safeString120" },
+            "balance_pence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000
+            },
+            "gross_rate_bps": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5000
+            },
+            "aer_bps": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 5000
+            },
+            "monthly_contribution_pence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 100000000
+            },
+            "goal_name": { "$ref": "#/definitions/safeString120" },
+            "goal_target_pence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000
+            }
+          }
+        },
+        "mortgage": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "balance_pence",
+            "address",
+            "interest_rate_bps",
+            "rate_type",
+            "fixed_until",
+            "term_remaining_months",
+            "next_payment",
+            "annual_overpayment_allowance_pence",
+            "overpaid_this_year_pence",
+            "renewal_options"
+          ],
+          "properties": {
+            "balance_pence": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000000000
+            },
+            "address": { "$ref": "#/definitions/safeString120" },
+            "interest_rate_bps": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 5000
+            },
+            "rate_type": { "$ref": "#/definitions/safeName60" },
+            "fixed_until": { "$ref": "#/definitions/isoDate" },
+            "term_remaining_months": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 480
+            },
+            "next_payment": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["amount_pence", "day_of_month"],
+              "properties": {
+                "amount_pence": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 100000000
+                },
+                "day_of_month": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 28
+                }
+              }
+            },
+            "annual_overpayment_allowance_pence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000
+            },
+            "overpaid_this_year_pence": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 1000000000
+            },
+            "renewal_options": {
+              "type": "array",
+              "minItems": 1,
+              "maxItems": 5,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["id", "label", "term_years", "rate_bps"],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 2,
+                    "maxLength": 40,
+                    "pattern": "^[a-z0-9\\-]{2,40}$",
+                    "not": {
+                      "pattern": "[<>\\u0000-\\u001f\\u007f]"
+                    }
+                  },
+                  "label": { "$ref": "#/definitions/safeString120" },
+                  "term_years": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 15
+                  },
+                  "rate_bps": {
+                    "type": "integer",
+                    "minimum": 1,
+                    "maximum": 5000
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "transactions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 250,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "month_offset", "day", "vendor", "category", "amount_pence"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 5,
+            "maxLength": 64,
+            "pattern": "^txn-[A-Za-z0-9_\\-]{1,60}$",
+            "not": {
+              "pattern": "[<>\\u0000-\\u001f\\u007f]"
+            }
+          },
+          "month_offset": {
+            "type": "integer",
+            "minimum": 0,
+            "maximum": 2
+          },
+          "day": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 28
+          },
+          "vendor": { "$ref": "#/definitions/safeString120" },
+          "category": {
+            "type": "string",
+            "enum": [
+              "groceries",
+              "coffee_shops",
+              "eating_out",
+              "subscriptions",
+              "transport",
+              "shopping",
+              "bills",
+              "entertainment",
+              "income"
+            ]
+          },
+          "amount_pence": {
+            "type": "integer",
+            "minimum": -100000000,
+            "maximum": 100000000
+          },
+          "is_subscription": { "type": "boolean" },
+          "is_anomaly": { "type": "boolean" }
+        },
+        "if": {
+          "properties": {
+            "category": { "const": "income" }
+          }
+        },
+        "then": {
+          "properties": {
+            "amount_pence": { "maximum": -1 }
+          }
+        },
+        "else": {
+          "properties": {
+            "amount_pence": { "minimum": 1 }
+          }
+        }
+      }
+    }
+  }
+}

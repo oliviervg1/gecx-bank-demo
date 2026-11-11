@@ -1,8 +1,3 @@
-// Flat ESLint config. There was no linter here at all before — `tsc -b` was
-// the only static gate, which is part of why several agent/UI divergences went
-// unnoticed. Deliberately a pragmatic set that passes clean today so it can
-// gate CI, rather than a maximal one that gets disabled on first contact.
-
 import js from '@eslint/js'
 import globals from 'globals'
 import tseslint from 'typescript-eslint'
@@ -24,18 +19,9 @@ export default tseslint.config(
     },
     rules: {
       ...reactHooks.configs.recommended.rules,
-      'react-refresh/only-export-components': ['warn', { allowConstantExport: true }],
-      // eslint-plugin-react-hooks v7 ships the React Compiler ruleset. These
-      // three fire on longstanding, deliberate patterns in AgentProvider —
-      // the lazy `useRef(null)` registry init, passing that registry into a
-      // context value, and setConnState('connecting') at the top of the
-      // connection effect. Reworking the provider around them is a real
-      // refactor with live-session risk, so they are warnings (visible, not
-      // enforced) rather than off.
-      'react-hooks/refs': 'warn',
-      'react-hooks/set-state-in-effect': 'warn',
-      // Unused vars are a real signal in this codebase; allow the conventional
-      // _-prefix escape hatch.
+      'react-refresh/only-export-components': 'off',
+      'react-hooks/refs': 'error',
+      'react-hooks/set-state-in-effect': 'error',
       '@typescript-eslint/no-unused-vars': [
         'error',
         { argsIgnorePattern: '^_', varsIgnorePattern: '^_', caughtErrorsIgnorePattern: '^_' },
@@ -43,13 +29,38 @@ export default tseslint.config(
     },
   },
   {
-    // Tests reach into fixture JSON and fake globals; `any` there is noise.
+    files: ['src/util/{savingsMath,mortgageMath,demoClock}.ts'],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector: "BinaryExpression[operator='**']",
+          message: 'Exponentiation (**) is banned in exact integer math kernels.',
+        },
+        {
+          selector: "CallExpression[callee.object.name='Math'][callee.property.name='round']",
+          message: 'Math.round is banned in exact integer math kernels; use halfUp.',
+        },
+        {
+          selector: "CallExpression[callee.object.name='Math'][callee.property.name='pow']",
+          message: 'Math.pow is banned in exact integer math kernels.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='toFixed']",
+          message: 'toFixed is banned in exact integer math kernels; format integer pence.',
+        },
+        {
+          selector: "CallExpression[callee.property.name='toISOString']",
+          message: 'toISOString() shifts calendar dates in UTC; format local integer components.',
+        },
+      ],
+    },
+  },
+  {
     files: ['src/__tests__/**/*.{ts,tsx}'],
     rules: {
       '@typescript-eslint/no-explicit-any': 'off',
       '@typescript-eslint/no-unused-expressions': 'off',
-      // Test harnesses legitimately capture provider state into module-level
-      // variables so assertions can read it after render.
       'react-hooks/globals': 'off',
     },
   },

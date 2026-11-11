@@ -1,0 +1,564 @@
+{
+  "version": 1,
+  "demo_date": "2026-11-24",
+  "kernels": {
+    "half_up": "For non-negative integers n >= 0 and d > 0: Python (n * 2 + d) // (2 * d); TypeScript const num = n * 2 + d, den = 2 * d; return (num - (num % den)) / den.",
+    "to_pence": "Python-only model-float conversion: fx = float(x); if not math.isfinite(fx) return 0; else int(math.floor(max(0.0, min(fx, 10_000_000.0)) * 100.0 + 0.5)).",
+    "monthly_interest_step": "interest_pence = half_up(balance_pence * rate_bps, 120_000).",
+    "savings_projection": "target_pence = custom_target_pence if custom_target_pence > 0 else goal_target_pence. If balance_pence >= target_pence: months_to_goal = 0, unreachable = false, projected_balance_pence = balance_pence, total_interest_earned_pence = 0. Else iterate m = 1..600: interest = half_up(pot * gross_rate_bps, 120_000); pot += interest + monthly_contribution_pence + extra_monthly_pence; total_interest += interest; if pot >= target_pence return months_to_goal = m. If loop finishes 600 months without reaching target_pence: months_to_goal = null, unreachable = true.",
+    "annual_interest_on_balance_pence": "12-step monthly compounding of gross_rate_bps starting from balance_pence with zero monthly contributions (summing the 12 monthly half_up(pot * gross_rate_bps, 120_000) steps).",
+    "target_year_month": "From demo_date (year, month in 1..12) and months_to_goal m: total_m = year * 12 + (month - 1) + m; target_year = total_m // 12; target_month = (total_m % 12) + 1.",
+    "simulate_mortgage": "If opening_balance_pence <= 0: months = 0, total_interest_pence = 0, ending_balance_pence = 0, paid_off = true. Else iterate m = 1..max_months (default 600): interest = half_up(bal * interest_rate_bps, 120_000); if bal + interest <= monthly_payment_pence return {months: m, total_interest_pence: total_interest + interest, ending_balance_pence: 0, paid_off: true}; else bal = bal + interest - monthly_payment_pence; total_interest += interest. After max_months return {months: max_months, total_interest_pence: total_interest, ending_balance_pence: bal, paid_off: false}.",
+    "mortgage_overpayment": "effective_lump_pence = min(max(0, lump_sum_overpayment_pence), balance_pence). Baseline runs simulate_mortgage(balance_pence, interest_rate_bps, next_payment.amount_pence, 600). Projected runs simulate_mortgage(balance_pence - effective_lump_pence, interest_rate_bps, next_payment.amount_pence + monthly_overpayment_pence, 600). first_year_overpayment_pence = min(balance_pence, effective_lump_pence + min(12, projected.months) * monthly_overpayment_pence). remaining_allowance_pence = max(0, annual_overpayment_allowance_pence - overpaid_this_year_pence). exceeds_allowance = first_year_overpayment_pence > remaining_allowance_pence (strict >, so equality is ERC-free). excess_over_allowance_pence = max(0, first_year_overpayment_pence - remaining_allowance_pence).",
+    "renewal_payment_bisection": "Integer bisection over simulate_mortgage(balance_pence, rate_bps, mid, max_months=term_remaining_months).paid_off with low = half_up(balance_pence * rate_bps, 120_000) + 1 and high = balance_pence + low, returning smallest payment_pence that pays off within term_remaining_months.",
+    "renter_readiness": "max_borrowing_pence = half_up(annual_income_pence * 45, 10); indicative_budget_with_goal_pence = max_borrowing_pence + goal_target_pence; remaining_to_goal_pence = max(0, goal_target_pence - balance_pence); deposit_progress_bps = min(10000, half_up(balance_pence * 10000, goal_target_pence))."
+  },
+  "half_up_cases": [
+    { "id": "zero_numerator", "n": 0, "d": 120000, "expected": 0 },
+    { "id": "exact_half_rounds_up_small", "n": 5, "d": 2, "expected": 3 },
+    { "id": "exact_half_1115_by_10", "n": 1115, "d": 10, "expected": 112 },
+    { "id": "just_below_half", "n": 59999, "d": 120000, "expected": 0 },
+    { "id": "exact_half_60000_of_120000", "n": 60000, "d": 120000, "expected": 1 },
+    { "id": "chloe_month1_savings_interest", "n": 213885000, "d": 120000, "expected": 1782 },
+    { "id": "chloe_month1_mortgage_interest", "n": 9009000000, "d": 120000, "expected": 75075 }
+  ],
+  "persona_spending": {
+    "chloe": {
+      "monthly_totals_pence": [201864, 194149, 190334],
+      "delta_this_vs_last_pence": 7715,
+      "recurring_totals_pence": [173190, 170489, 170489],
+      "anomaly": {
+        "id": "txn-netflix",
+        "vendor": "Netflix",
+        "day": 21,
+        "amount_pence": 4500,
+        "prior_month_amount_pence": 1799
+      },
+      "by_category_this_month_pence": {
+        "bills": 167491,
+        "groceries": 14420,
+        "subscriptions": 5699,
+        "shopping": 4249,
+        "eating_out": 4005,
+        "transport": 2880,
+        "coffee_shops": 1870,
+        "entertainment": 1250
+      }
+    },
+    "david": {
+      "monthly_totals_pence": [298496, 306810, 281861],
+      "delta_this_vs_last_pence": -8314,
+      "recurring_totals_pence": [202701, 200301, 200301],
+      "anomaly": {
+        "id": "txn-gym",
+        "vendor": "PureGym Family",
+        "day": 22,
+        "amount_pence": 6200,
+        "prior_month_amount_pence": 3800
+      },
+      "by_category_this_month_pence": {
+        "bills": 194702,
+        "groceries": 39035,
+        "shopping": 21000,
+        "transport": 16320,
+        "eating_out": 14290,
+        "subscriptions": 7999,
+        "entertainment": 4400,
+        "coffee_shops": 750
+      }
+    },
+    "tom": {
+      "monthly_totals_pence": [201338, 187632, 174542],
+      "delta_this_vs_last_pence": 13706,
+      "recurring_totals_pence": [176838, 162437, 162437],
+      "anomaly": {
+        "id": "txn-adobe",
+        "vendor": "Adobe Creative Cloud",
+        "day": 22,
+        "amount_pence": 19900,
+        "prior_month_amount_pence": 5499
+      },
+      "by_category_this_month_pence": {
+        "bills": 154840,
+        "subscriptions": 21998,
+        "groceries": 6310,
+        "eating_out": 5495,
+        "shopping": 4600,
+        "transport": 4230,
+        "entertainment": 2800,
+        "coffee_shops": 1065
+      }
+    },
+    "sarah": {
+      "monthly_totals_pence": [240695, 228545, 244950],
+      "delta_this_vs_last_pence": 12150,
+      "recurring_totals_pence": [173580, 168780, 168780],
+      "anomaly": {
+        "id": "txn-insurance",
+        "vendor": "Aviva Home Insurance",
+        "day": 23,
+        "amount_pence": 9600,
+        "prior_month_amount_pence": 4800
+      },
+      "by_category_this_month_pence": {
+        "bills": 163230,
+        "groceries": 22465,
+        "shopping": 14500,
+        "transport": 12030,
+        "subscriptions": 10350,
+        "eating_out": 9600,
+        "entertainment": 7200,
+        "coffee_shops": 1320
+      }
+    }
+  },
+  "savings_projections": [
+    {
+      "id": "chloe_baseline_zero_extra",
+      "persona": "chloe",
+      "extra_monthly_pence": 0,
+      "custom_target_pence": 0,
+      "expected": {
+        "baseline_months": 23,
+        "projected_months": 23,
+        "months_saved": 0,
+        "unreachable": false,
+        "projected_balance_pence": 1006778,
+        "total_interest_earned_pence": 61778,
+        "annual_interest_on_balance_pence": 21825,
+        "target_year": 2028,
+        "target_month": 10
+      }
+    },
+    {
+      "id": "chloe_hero_netflix_redirect_45",
+      "persona": "chloe",
+      "extra_monthly_pence": 4500,
+      "custom_target_pence": 0,
+      "expected": {
+        "baseline_months": 23,
+        "projected_months": 19,
+        "months_saved": 4,
+        "unreachable": false,
+        "projected_balance_pence": 1001230,
+        "total_interest_earned_pence": 50730,
+        "annual_interest_on_balance_pence": 21825,
+        "target_year": 2028,
+        "target_month": 6
+      }
+    },
+    {
+      "id": "chloe_extra_100",
+      "persona": "chloe",
+      "extra_monthly_pence": 10000,
+      "custom_target_pence": 0,
+      "expected": {
+        "baseline_months": 23,
+        "projected_months": 16,
+        "months_saved": 7,
+        "unreachable": false,
+        "projected_balance_pence": 1007777,
+        "total_interest_earned_pence": 42777,
+        "annual_interest_on_balance_pence": 21825,
+        "target_year": 2028,
+        "target_month": 3
+      }
+    },
+    {
+      "id": "chloe_custom_target_15000_extra_100",
+      "persona": "chloe",
+      "extra_monthly_pence": 10000,
+      "custom_target_pence": 1500000,
+      "expected": {
+        "baseline_months": 44,
+        "projected_months": 31,
+        "months_saved": 13,
+        "unreachable": false,
+        "projected_balance_pence": 1526546,
+        "total_interest_earned_pence": 111546,
+        "annual_interest_on_balance_pence": 21825,
+        "target_year": 2029,
+        "target_month": 6
+      }
+    },
+    {
+      "id": "david_baseline",
+      "persona": "david",
+      "extra_monthly_pence": 0,
+      "custom_target_pence": 0,
+      "expected": {
+        "baseline_months": 16,
+        "projected_months": 16,
+        "months_saved": 0,
+        "unreachable": false,
+        "projected_balance_pence": 1803484,
+        "total_interest_earned_pence": 83484,
+        "annual_interest_on_balance_pence": 52708,
+        "target_year": 2028,
+        "target_month": 3
+      }
+    },
+    {
+      "id": "tom_baseline_first_home",
+      "persona": "tom",
+      "extra_monthly_pence": 0,
+      "custom_target_pence": 0,
+      "expected": {
+        "baseline_months": 47,
+        "projected_months": 47,
+        "months_saved": 0,
+        "unreachable": false,
+        "projected_balance_pence": 3503575,
+        "total_interest_earned_pence": 438575,
+        "annual_interest_on_balance_pence": 67456,
+        "target_year": 2030,
+        "target_month": 10
+      }
+    },
+    {
+      "id": "tom_adobe_redirect_199",
+      "persona": "tom",
+      "extra_monthly_pence": 19900,
+      "custom_target_pence": 0,
+      "expected": {
+        "baseline_months": 47,
+        "projected_months": 33,
+        "months_saved": 14,
+        "unreachable": false,
+        "projected_balance_pence": 3541962,
+        "total_interest_earned_pence": 310262,
+        "annual_interest_on_balance_pence": 67456,
+        "target_year": 2029,
+        "target_month": 8
+      }
+    },
+    {
+      "id": "sarah_baseline",
+      "persona": "sarah",
+      "extra_monthly_pence": 0,
+      "custom_target_pence": 0,
+      "expected": {
+        "baseline_months": 8,
+        "projected_months": 8,
+        "months_saved": 0,
+        "unreachable": false,
+        "projected_balance_pence": 2538174,
+        "total_interest_earned_pence": 68174,
+        "annual_interest_on_balance_pence": 96755,
+        "target_year": 2027,
+        "target_month": 7
+      }
+    },
+    {
+      "id": "edge_goal_already_met_exact",
+      "synthetic": {
+        "balance_pence": 1000000,
+        "gross_rate_bps": 441,
+        "monthly_contribution_pence": 20000,
+        "extra_monthly_pence": 0,
+        "goal_target_pence": 1000000
+      },
+      "expected": {
+        "months_to_goal": 0,
+        "unreachable": false,
+        "projected_balance_pence": 1000000,
+        "total_interest_earned_pence": 0
+      }
+    },
+    {
+      "id": "edge_goal_already_exceeded",
+      "synthetic": {
+        "balance_pence": 1200000,
+        "gross_rate_bps": 441,
+        "monthly_contribution_pence": 20000,
+        "extra_monthly_pence": 5000,
+        "goal_target_pence": 1000000
+      },
+      "expected": {
+        "months_to_goal": 0,
+        "unreachable": false,
+        "projected_balance_pence": 1200000,
+        "total_interest_earned_pence": 0
+      }
+    },
+    {
+      "id": "edge_zero_contrib_zero_rate_unreachable",
+      "synthetic": {
+        "balance_pence": 500000,
+        "gross_rate_bps": 0,
+        "monthly_contribution_pence": 0,
+        "extra_monthly_pence": 0,
+        "goal_target_pence": 1000000
+      },
+      "expected": {
+        "months_to_goal": null,
+        "unreachable": true,
+        "projected_balance_pence": 500000,
+        "total_interest_earned_pence": 0
+      }
+    },
+    {
+      "id": "edge_exact_600_months_reachable",
+      "synthetic": {
+        "balance_pence": 0,
+        "gross_rate_bps": 0,
+        "monthly_contribution_pence": 1000,
+        "extra_monthly_pence": 0,
+        "goal_target_pence": 600000
+      },
+      "expected": {
+        "months_to_goal": 600,
+        "unreachable": false,
+        "projected_balance_pence": 600000,
+        "total_interest_earned_pence": 0
+      }
+    },
+    {
+      "id": "edge_601_months_unreachable",
+      "synthetic": {
+        "balance_pence": 0,
+        "gross_rate_bps": 0,
+        "monthly_contribution_pence": 1000,
+        "extra_monthly_pence": 0,
+        "goal_target_pence": 600001
+      },
+      "expected": {
+        "months_to_goal": null,
+        "unreachable": true,
+        "projected_balance_pence": 600000,
+        "total_interest_earned_pence": 0
+      }
+    },
+    {
+      "id": "edge_exceeds_600_months_cap",
+      "synthetic": {
+        "balance_pence": 10000,
+        "gross_rate_bps": 10,
+        "monthly_contribution_pence": 0,
+        "extra_monthly_pence": 0,
+        "goal_target_pence": 1000000
+      },
+      "expected": {
+        "months_to_goal": null,
+        "unreachable": true,
+        "projected_balance_pence": 10600,
+        "total_interest_earned_pence": 600
+      }
+    }
+  ],
+  "mortgage_overpayments": [
+    {
+      "id": "chloe_hero_monthly_200",
+      "persona": "chloe",
+      "monthly_overpayment_pence": 20000,
+      "lump_sum_overpayment_pence": 0,
+      "expected": {
+        "baseline_months": 220,
+        "projected_months": 182,
+        "months_saved": 38,
+        "baseline_interest_pence": 9343367,
+        "projected_interest_pence": 7558449,
+        "interest_saved_pence": 1784918,
+        "remaining_allowance_pence": 2145000,
+        "first_year_overpayment_pence": 240000,
+        "exceeds_allowance": false,
+        "excess_over_allowance_pence": 0
+      }
+    },
+    {
+      "id": "chloe_combined_lump_5000_monthly_100",
+      "persona": "chloe",
+      "monthly_overpayment_pence": 10000,
+      "lump_sum_overpayment_pence": 500000,
+      "expected": {
+        "baseline_months": 220,
+        "projected_months": 193,
+        "months_saved": 27,
+        "baseline_interest_pence": 9343367,
+        "projected_interest_pence": 7862396,
+        "interest_saved_pence": 1480971,
+        "remaining_allowance_pence": 2145000,
+        "first_year_overpayment_pence": 620000,
+        "exceeds_allowance": false,
+        "excess_over_allowance_pence": 0
+      }
+    },
+    {
+      "id": "david_monthly_200",
+      "persona": "david",
+      "monthly_overpayment_pence": 20000,
+      "lump_sum_overpayment_pence": 0,
+      "expected": {
+        "baseline_months": 120,
+        "projected_months": 104,
+        "months_saved": 16,
+        "baseline_interest_pence": 3101038,
+        "projected_interest_pence": 2646311,
+        "interest_saved_pence": 454727,
+        "remaining_allowance_pence": 1362000,
+        "first_year_overpayment_pence": 240000,
+        "exceeds_allowance": false,
+        "excess_over_allowance_pence": 0
+      }
+    },
+    {
+      "id": "sarah_exact_allowance_boundary",
+      "persona": "sarah",
+      "monthly_overpayment_pence": 25000,
+      "lump_sum_overpayment_pence": 65000,
+      "expected": {
+        "baseline_months": 90,
+        "projected_months": 73,
+        "months_saved": 17,
+        "baseline_interest_pence": 1555817,
+        "projected_interest_pence": 1234205,
+        "interest_saved_pence": 321612,
+        "remaining_allowance_pence": 365000,
+        "first_year_overpayment_pence": 365000,
+        "exceeds_allowance": false,
+        "excess_over_allowance_pence": 0
+      }
+    },
+    {
+      "id": "sarah_monthly_400_exceeds_erc_cap",
+      "persona": "sarah",
+      "monthly_overpayment_pence": 40000,
+      "lump_sum_overpayment_pence": 0,
+      "expected": {
+        "baseline_months": 90,
+        "projected_months": 66,
+        "months_saved": 24,
+        "baseline_interest_pence": 1555817,
+        "projected_interest_pence": 1121779,
+        "interest_saved_pence": 434038,
+        "remaining_allowance_pence": 365000,
+        "first_year_overpayment_pence": 480000,
+        "exceeds_allowance": true,
+        "excess_over_allowance_pence": 115000
+      }
+    },
+    {
+      "id": "edge_payoff_within_year_one_pins_min12",
+      "persona": "sarah",
+      "monthly_overpayment_pence": 50000,
+      "lump_sum_overpayment_pence": 9000000,
+      "expected": {
+        "baseline_months": 90,
+        "projected_months": 4,
+        "months_saved": 86,
+        "baseline_interest_pence": 1555817,
+        "projected_interest_pence": 5278,
+        "interest_saved_pence": 1550539,
+        "remaining_allowance_pence": 365000,
+        "first_year_overpayment_pence": 9200000,
+        "exceeds_allowance": true,
+        "excess_over_allowance_pence": 8835000
+      }
+    },
+    {
+      "id": "edge_lump_sum_clears_entire_balance",
+      "persona": "sarah",
+      "monthly_overpayment_pence": 0,
+      "lump_sum_overpayment_pence": 9650000,
+      "expected": {
+        "baseline_months": 90,
+        "projected_months": 0,
+        "months_saved": 90,
+        "baseline_interest_pence": 1555817,
+        "projected_interest_pence": 0,
+        "interest_saved_pence": 1555817,
+        "remaining_allowance_pence": 365000,
+        "first_year_overpayment_pence": 9650000,
+        "exceeds_allowance": true,
+        "excess_over_allowance_pence": 9285000
+      }
+    },
+    {
+      "id": "edge_lump_sum_exceeds_balance",
+      "persona": "sarah",
+      "monthly_overpayment_pence": 10000,
+      "lump_sum_overpayment_pence": 12000000,
+      "expected": {
+        "baseline_months": 90,
+        "projected_months": 0,
+        "months_saved": 90,
+        "baseline_interest_pence": 1555817,
+        "projected_interest_pence": 0,
+        "interest_saved_pence": 1555817,
+        "remaining_allowance_pence": 365000,
+        "first_year_overpayment_pence": 9650000,
+        "exceeds_allowance": true,
+        "excess_over_allowance_pence": 9285000
+      }
+    }
+  ],
+  "mortgage_simulation_edges": [
+    {
+      "id": "edge_non_amortizing_capped_at_600",
+      "balance_pence": 10000000,
+      "interest_rate_bps": 400,
+      "monthly_payment_pence": 1,
+      "max_months": 600,
+      "expected": {
+        "months": 600,
+        "total_interest_pence": 63643942,
+        "ending_balance_pence": 73643342,
+        "paid_off": false
+      }
+    },
+    {
+      "id": "edge_exact_payment_equality_payoff",
+      "balance_pence": 120000,
+      "interest_rate_bps": 0,
+      "monthly_payment_pence": 60000,
+      "max_months": 600,
+      "expected": {
+        "months": 2,
+        "total_interest_pence": 0,
+        "ending_balance_pence": 0,
+        "paid_off": true
+      }
+    }
+  ],
+  "mortgage_renewals": {
+    "chloe": {
+      "current_payment_pence": 139971,
+      "options": [
+        { "id": "fix-2yr", "rate_bps": 389, "payment_pence": 136517, "delta_pence": -3454 },
+        { "id": "fix-5yr", "rate_bps": 374, "payment_pence": 134863, "delta_pence": -5108 }
+      ]
+    },
+    "david": {
+      "current_payment_pence": 149342,
+      "options": [
+        { "id": "fix-2yr", "rate_bps": 415, "payment_pence": 151105, "delta_pence": 1763 },
+        { "id": "fix-5yr", "rate_bps": 375, "payment_pence": 148291, "delta_pence": -1051 }
+      ]
+    },
+    "sarah": {
+      "current_payment_pence": 124510,
+      "options": [
+        { "id": "fix-2yr", "rate_bps": 389, "payment_pence": 123796, "delta_pence": -714 },
+        { "id": "fix-5yr", "rate_bps": 374, "payment_pence": 123129, "delta_pence": -1381 }
+      ]
+    }
+  },
+  "renter_readiness": {
+    "tom": {
+      "annual_income_pence": 4200000,
+      "max_borrowing_pence": 18900000,
+      "current_deposit_pence": 1420000,
+      "goal_deposit_pence": 3500000,
+      "remaining_to_goal_pence": 2080000,
+      "deposit_progress_bps": 4057,
+      "indicative_budget_with_goal_pence": 22400000
+    }
+  },
+  "input_clamping_to_pence": [
+    { "id": "zero", "raw": 0.0, "expected_pence": 0 },
+    { "id": "negative_clamped_to_zero", "raw": -250.0, "expected_pence": 0 },
+    { "id": "standard_45_pounds", "raw": 45.0, "expected_pence": 4500 },
+    { "id": "half_penny_rounds_up", "raw": 19.995, "expected_pence": 2000 },
+    { "id": "absurd_upper_clamped_to_10m", "raw": 999999999.0, "expected_pence": 1000000000 }
+  ]
+}

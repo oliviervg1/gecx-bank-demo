@@ -13,9 +13,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-# Sets up the local development environment for GECX agent development.
-# Creates a Python virtualenv, installs cxas-scrapi from the local codebase,
-# and runs the interactive configuration wizard to create gecx-config.json.
+# Sets up the local development environment for CX Agent Studio (GECX) agent development.
+# Creates a Python virtualenv, installs cxas-scrapi (from PyPI by default, or from an
+# adjacent local checkout when present), syncs project-local Python/Node environments,
+# and optionally runs the interactive configuration wizard for gecx-config.json.
 #
 # Usage:
 #   .agents/skills/cxas-agent-foundry/scripts/setup.sh                  # Full setup (install + configure)
@@ -24,36 +25,28 @@
 
 set -euo pipefail
 
-# Resolve paths relative to the script location.
-# Supports two layouts:
-#   1. cxas-scrapi/skills/cxas-agent-foundry/scripts/setup.sh  (skill inside scrapi)
-#   2. .agents/skills/cxas-agent-foundry/scripts/setup.sh       (skill alongside scrapi)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SKILL_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+PYPI_INDEX="https://pypi.org/simple"
 
-# Find cxas-scrapi: walk up from SKILL_ROOT looking for pyproject.toml with cxas-scrapi
+# Optional local cxas-scrapi checkout discovery for SDK contributors
 SCRAPI_DIR=""
 candidate="$SKILL_ROOT"
 for _ in 1 2 3 4 5; do
   candidate="$(cd "$candidate/.." && pwd)"
-  if [ -f "$candidate/pyproject.toml" ] && grep -q "cxas-scrapi" "$candidate/pyproject.toml" 2>/dev/null; then
+  if [ -f "$candidate/pyproject.toml" ] && grep -q 'name *= *"cxas-scrapi"' "$candidate/pyproject.toml" 2>/dev/null; then
     SCRAPI_DIR="$candidate"
     break
   fi
-  # Also check for cxas-scrapi/ as a sibling directory
   if [ -d "$candidate/cxas-scrapi" ] && [ -f "$candidate/cxas-scrapi/pyproject.toml" ]; then
     SCRAPI_DIR="$candidate/cxas-scrapi"
     break
   fi
 done
 
-# Workspace root is where .venv and project folders live
-# If skill is inside scrapi, workspace is scrapi's parent; otherwise walk up
-# from the skill root looking for .agents/, .claude/, or .gemini/ to find the workspace.
 if [ -n "$SCRAPI_DIR" ] && [[ "$SKILL_ROOT" == "$SCRAPI_DIR"* ]]; then
   WORKSPACE_ROOT="$(cd "$SCRAPI_DIR/.." && pwd)"
 else
-  # Walk up from SKILL_ROOT looking for the directory that contains .agents/
   _candidate="$SKILL_ROOT"
   WORKSPACE_ROOT=""
   for _ in 1 2 3 4 5; do
@@ -64,7 +57,6 @@ else
     fi
   done
   if [ -z "$WORKSPACE_ROOT" ]; then
-    # Fallback: 3 levels up from skill root (.agents/skills/cxas-agent-foundry -> workspace)
     WORKSPACE_ROOT="$(cd "$SKILL_ROOT/../../.." && pwd)"
   fi
 fi
@@ -74,7 +66,6 @@ SKIP_CONFIG=false
 CONFIGURE_ONLY=false
 VENV_DIR=".venv"
 
-# Parse arguments
 for arg in "$@"; do
   case $arg in
     --skip-config)
@@ -91,27 +82,28 @@ echo " GECX Development Environment Setup"
 echo "========================================="
 echo ""
 
-# --- Check if we can skip install ---
 if [ "$CONFIGURE_ONLY" = false ]; then
   NEEDS_INSTALL=true
 
-  # If venv exists, check if cxas-scrapi is already installed
-  if [ -d "$VENV_DIR" ]; then
+  if [ -d "$VENV_DIR" ] && [ -f "${VENV_DIR}/bin/activate" ]; then
+    # shellcheck disable=SC1090
     source "${VENV_DIR}/bin/activate"
     if python -c "import cxas_scrapi" 2>/dev/null; then
       installed_ver=$(python -c "import importlib.metadata; print(importlib.metadata.version('cxas-scrapi'))" 2>/dev/null || echo "unknown")
       echo "  cxas-scrapi v${installed_ver} is already installed."
       echo ""
-
-      reinstall=$(bash -c 'read -p "  Reinstall from local source? [y/N] " ans; echo "$ans"')
-      if [[ ! "$reinstall" =~ ^[Yy] ]]; then
+      if [ -t 0 ]; then
+        read -r -p "  Reinstall cxas-scrapi? [y/N] " reinstall
+        if [[ ! "$reinstall" =~ ^[Yy] ]]; then
+          NEEDS_INSTALL=false
+        fi
+      else
         NEEDS_INSTALL=false
       fi
     fi
   fi
 
   if [ "$NEEDS_INSTALL" = true ]; then
-    # --- Step 1: Create virtualenv ---
     if [ ! -d "$VENV_DIR" ]; then
       echo "[1/3] Creating virtualenv in ${VENV_DIR}..."
       if command -v uv >/dev/null 2>&1; then
@@ -124,22 +116,23 @@ if [ "$CONFIGURE_ONLY" = false ]; then
       echo "[1/3] Virtualenv already exists at ${VENV_DIR}"
     fi
 
+    # shellcheck disable=SC1090
     source "${VENV_DIR}/bin/activate"
 
-    # --- Step 2: Install cxas-scrapi from local source ---
-    if [ -z "$SCRAPI_DIR" ] || [ ! -f "$SCRAPI_DIR/pyproject.toml" ]; then
-      echo "[2/3] Error: Could not find cxas-scrapi source."
-      echo "      Looked relative to skill at: $SKILL_ROOT"
-      exit 1
-    fi
-
-    echo "[2/3] Installing cxas-scrapi from $SCRAPI_DIR..."
-    if command -v uv >/dev/null 2>&1; then
-      uv pip install -e "$SCRAPI_DIR" --quiet
-      uv pip install rich InquirerPy --quiet
+    if [ -n "$SCRAPI_DIR" ] && [ -f "$SCRAPI_DIR/pyproject.toml" ]; then
+      echo "[2/3] Installing cxas-scrapi (editable) from $SCRAPI_DIR..."
+      if command -v uv >/dev/null 2>&1; then
+        uv pip install --default-index "$PYPI_INDEX" -e "$SCRAPI_DIR" rich InquirerPy --quiet
+      else
+        pip install --index-url "$PYPI_INDEX" -e "$SCRAPI_DIR" rich InquirerPy --quiet
+      fi
     else
-      pip install -e "$SCRAPI_DIR" --quiet
-      pip install rich InquirerPy --quiet
+      echo "[2/3] Installing cxas-scrapi from PyPI..."
+      if command -v uv >/dev/null 2>&1; then
+        uv pip install --default-index "$PYPI_INDEX" cxas-scrapi rich InquirerPy --quiet
+      else
+        pip install --index-url "$PYPI_INDEX" cxas-scrapi rich InquirerPy --quiet
+      fi
     fi
 
     echo ""
@@ -147,37 +140,33 @@ if [ "$CONFIGURE_ONLY" = false ]; then
     echo "      cxas-scrapi v${installed_ver} installed."
     echo ""
   else
-    # Ensure rich + InquirerPy are installed even if scrapi was already there
     if command -v uv >/dev/null 2>&1; then
-      uv pip install rich InquirerPy --quiet 2>/dev/null
+      uv pip install --default-index "$PYPI_INDEX" rich InquirerPy --quiet 2>/dev/null
     else
-      pip install rich InquirerPy --quiet 2>/dev/null
+      pip install --index-url "$PYPI_INDEX" rich InquirerPy --quiet 2>/dev/null
     fi
     echo ""
   fi
 else
-  # --configure only: just activate the venv
   if [ ! -d "$VENV_DIR" ]; then
     echo "Error: No virtualenv found at ${VENV_DIR}. Run setup.sh first (without --configure)."
     exit 1
   fi
+  # shellcheck disable=SC1090
   source "${VENV_DIR}/bin/activate"
   if command -v uv >/dev/null 2>&1; then
-    uv pip install rich InquirerPy --quiet 2>/dev/null
+    uv pip install --default-index "$PYPI_INDEX" rich InquirerPy --quiet 2>/dev/null
   else
-    pip install rich InquirerPy --quiet 2>/dev/null
+    pip install --index-url "$PYPI_INDEX" rich InquirerPy --quiet 2>/dev/null
   fi
 fi
 
 # --- Step 2.5: Ensure gemini-cli can discover the skill's sub-agents ---
-# gemini-cli scans .gemini/agents/ for sub-agent definitions. Our canonical
-# location is .agents/skills/cxas-agent-foundry/agents/. Symlink so gemini sees them.
 GEMINI_AGENTS_DIR="$WORKSPACE_ROOT/.gemini/agents"
 SKILL_AGENTS_DIR="$SKILL_ROOT/agents"
 if [ -d "$SKILL_AGENTS_DIR" ]; then
   mkdir -p "$WORKSPACE_ROOT/.gemini"
   if [ -L "$GEMINI_AGENTS_DIR" ]; then
-    # Already a symlink; check target
     current_target="$(readlink "$GEMINI_AGENTS_DIR")"
     if [ "$(python3 -c "import os; print(os.path.abspath(os.path.join(os.path.dirname('$GEMINI_AGENTS_DIR'), '$current_target')))")" != "$SKILL_AGENTS_DIR" ]; then
       echo "  Updating $GEMINI_AGENTS_DIR symlink"
@@ -186,8 +175,7 @@ if [ -d "$SKILL_AGENTS_DIR" ]; then
       ln -s "$rel_target" "$GEMINI_AGENTS_DIR"
     fi
   elif [ -e "$GEMINI_AGENTS_DIR" ]; then
-    echo "  WARN: $GEMINI_AGENTS_DIR exists but is not a symlink. Sub-agent discovery may fail."
-    echo "        Move/remove it and re-run, or symlink manually."
+    echo "  WARN: $GEMINI_AGENTS_DIR exists and is not a symlink. Sub-agent discovery may fail."
   else
     echo "  Linking $GEMINI_AGENTS_DIR (relative symlink)"
     rel_target=$(python3 -c "import os.path; print(os.path.relpath('$SKILL_AGENTS_DIR', os.path.dirname('$GEMINI_AGENTS_DIR')))")
@@ -195,31 +183,51 @@ if [ -d "$SKILL_AGENTS_DIR" ]; then
   fi
 fi
 
-# --- Step 2.7: Install project-local proxy + web dependencies ---
-# Walks WORKSPACE_ROOT for any project directory that contains gecx-config.json
-# and runs `pip install -e proxy/` if there's a proxy/pyproject.toml, and
-# `npm install` if there's a web/package.json. Generic — handles any project
-# laid out as <name>/{proxy,web} (the Cloudbank demo is the current consumer).
+# --- Step 2.7: Install project-local agent, proxy, and web dependencies ---
+NPM_CMD=""
+if command -v npm >/dev/null 2>&1; then
+  NPM_CMD="npm"
+elif command -v corepack >/dev/null 2>&1; then
+  NPM_CMD="corepack npm"
+fi
+
 for project_dir in "$WORKSPACE_ROOT"/*/; do
   if [ ! -f "${project_dir}gecx-config.json" ]; then
     continue
   fi
   project_name="$(basename "$project_dir")"
 
-  if [ -f "${project_dir}proxy/pyproject.toml" ]; then
-    echo "  Installing ${project_name}/proxy (editable)..."
-    if command -v uv >/dev/null 2>&1; then
-      uv pip install -e "${project_dir}proxy" --quiet
+  if [ -f "${project_dir}pyproject.toml" ] && command -v uv >/dev/null 2>&1; then
+    echo "  Syncing ${project_name} Python test environment..."
+    if [ -f "${project_dir}uv.lock" ]; then
+      ( cd "${project_dir}" && uv sync --locked --all-extras --quiet )
     else
-      pip install -e "${project_dir}proxy" --quiet
+      ( cd "${project_dir}" && uv sync --all-extras --quiet )
+    fi
+  fi
+
+  if [ -f "${project_dir}proxy/pyproject.toml" ]; then
+    echo "  Syncing ${project_name}/proxy..."
+    if command -v uv >/dev/null 2>&1; then
+      if [ -f "${project_dir}proxy/uv.lock" ]; then
+        ( cd "${project_dir}proxy" && uv sync --locked --all-extras --quiet )
+      else
+        uv pip install --default-index "$PYPI_INDEX" -e "${project_dir}proxy" --quiet
+      fi
+    else
+      pip install --index-url "$PYPI_INDEX" -e "${project_dir}proxy" --quiet
     fi
   fi
 
   if [ -f "${project_dir}web/package.json" ]; then
-    if command -v npm >/dev/null 2>&1; then
+    if [ -n "$NPM_CMD" ]; then
       if [ ! -d "${project_dir}web/node_modules" ]; then
-        echo "  Installing ${project_name}/web (npm install)..."
-        ( cd "${project_dir}web" && npm install --silent )
+        echo "  Installing ${project_name}/web dependencies..."
+        if [ -f "${project_dir}web/package-lock.json" ]; then
+          ( cd "${project_dir}web" && $NPM_CMD ci --silent )
+        else
+          ( cd "${project_dir}web" && $NPM_CMD install --silent )
+        fi
       fi
     else
       echo "  Skipping ${project_name}/web (npm not on PATH)."
@@ -227,7 +235,6 @@ for project_dir in "$WORKSPACE_ROOT"/*/; do
   fi
 done
 
-# --- Step 3: Run configuration wizard ---
 if [ "$SKIP_CONFIG" = false ]; then
   echo "[3/3] Running configuration wizard..."
   echo ""

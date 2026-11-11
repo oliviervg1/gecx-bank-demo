@@ -13,6 +13,19 @@ import { useCallback, useEffect, useRef, type PointerEvent as ReactPointerEvent 
 // long sentence. Generous — a rambling demo question is well under this.
 export const MAX_HOLD_MS = 30_000
 
+const INTERACTIVE_SELECTOR =
+  'button, a[href], summary, [role="button"], [role="tab"], [role="link"], [role="menuitem"]'
+
+const KEYBOARD_NAV_KEYS = new Set([
+  'Tab',
+  'ArrowUp',
+  'ArrowDown',
+  'ArrowLeft',
+  'ArrowRight',
+  'Home',
+  'End',
+])
+
 interface Options {
   enabled: boolean
   onBegin: () => void | Promise<void>
@@ -36,15 +49,41 @@ function isTypingTarget(target: EventTarget | null): boolean {
   )
 }
 
+function isFocusVisible(el: Element): boolean {
+  try {
+    return el.matches(':focus-visible')
+  } catch {
+    return false
+  }
+}
+
+function shouldIgnoreSpacebarTarget(
+  target: EventTarget | null,
+  pointerFocused: Element | null,
+): boolean {
+  if (!(target instanceof HTMLElement)) return false
+  if (isTypingTarget(target)) return true
+  const interactive = target.closest(INTERACTIVE_SELECTOR)
+  if (!interactive) return false
+  if (interactive.getAttribute('data-concierge-pill') === 'true') return false
+  // Mouse-clicked buttons retain DOM focus in Chrome without :focus-visible;
+  // only yield Space when the interactive control has keyboard focus.
+  if (interactive === pointerFocused) return false
+  return isFocusVisible(interactive)
+}
+
 export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandlers {
   const holdingRef = useRef(false)
   const watchdogRef = useRef<number | null>(null)
+  const pointerFocusedRef = useRef<Element | null>(null)
   // Keep the latest callbacks in refs so the global listeners below can be
   // installed once instead of being torn down and re-added on every render.
   const onBeginRef = useRef(onBegin)
   const onEndRef = useRef(onEnd)
-  onBeginRef.current = onBegin
-  onEndRef.current = onEnd
+  useEffect(() => {
+    onBeginRef.current = onBegin
+    onEndRef.current = onEnd
+  }, [onBegin, onEnd])
 
   const clearWatchdog = useCallback(() => {
     if (watchdogRef.current !== null) {
@@ -80,28 +119,48 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
   useEffect(() => {
     if (!enabled) return
 
+    const onWindowPointerDown = (e: PointerEvent | MouseEvent) => {
+      if (e.target instanceof HTMLElement) {
+        pointerFocusedRef.current = e.target.closest(INTERACTIVE_SELECTOR)
+      } else {
+        pointerFocusedRef.current = null
+      }
+    }
+
     const onKeyDown = (e: KeyboardEvent) => {
+      if (KEYBOARD_NAV_KEYS.has(e.key)) {
+        pointerFocusedRef.current = null
+        return
+      }
       if (e.code !== 'Space' && e.key !== ' ') return
-      if (e.repeat) return                 // auto-repeat, not a new press
-      if (isTypingTarget(e.target)) return // someone is typing a space
-      e.preventDefault()                   // otherwise the page scrolls
+      if (e.repeat) return // auto-repeat, not a new press
+      if (shouldIgnoreSpacebarTarget(e.target, pointerFocusedRef.current)) return
+      e.preventDefault() // otherwise the page scrolls
       press()
     }
     const onKeyUp = (e: KeyboardEvent) => {
       if (e.code !== 'Space' && e.key !== ' ') return
-      if (isTypingTarget(e.target)) return
+      if (!holdingRef.current && shouldIgnoreSpacebarTarget(e.target, pointerFocusedRef.current)) {
+        return
+      }
       e.preventDefault()
       release()
     }
     // Alt-tabbing away mid-hold must not leave the mic live.
     const onBlur = () => release()
-    const onVisibility = () => { if (document.hidden) release() }
+    const onVisibility = () => {
+      if (document.hidden) release()
+    }
 
+    window.addEventListener('pointerdown', onWindowPointerDown, true)
+    window.addEventListener('mousedown', onWindowPointerDown, true)
     window.addEventListener('keydown', onKeyDown)
     window.addEventListener('keyup', onKeyUp)
     window.addEventListener('blur', onBlur)
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
+      window.removeEventListener('pointerdown', onWindowPointerDown, true)
+      window.removeEventListener('mousedown', onWindowPointerDown, true)
       window.removeEventListener('keydown', onKeyDown)
       window.removeEventListener('keyup', onKeyUp)
       window.removeEventListener('blur', onBlur)
@@ -118,17 +177,29 @@ export function useHoldToTalk({ enabled, onBegin, onEnd }: Options): HoldHandler
       if (!enabled) return
       // Capture so a pointer dragged off the pill still delivers its up event
       // here rather than to whatever is underneath.
-      try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* unsupported */ }
+      try {
+        e.currentTarget.setPointerCapture(e.pointerId)
+      } catch {
+        /* unsupported */
+      }
       press()
     },
     onPointerUp: (e) => {
       if (!enabled) return
-      try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* already gone */ }
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        /* already gone */
+      }
       release()
     },
     onPointerCancel: (e) => {
       if (!enabled) return
-      try { e.currentTarget.releasePointerCapture(e.pointerId) } catch { /* already gone */ }
+      try {
+        e.currentTarget.releasePointerCapture(e.pointerId)
+      } catch {
+        /* already gone */
+      }
       release()
     },
   }

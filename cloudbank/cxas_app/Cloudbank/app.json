@@ -1,48 +1,153 @@
 {
-    "name": "cloudbank",
-    "displayName": "Cloudbank",
-    "description": "Cloudbank conversational banking assistant — voice-first spend analysis, greeting the customer by name.",
-    "rootAgent": "root_agent",
-    "modelSettings": {
-        "model": "gemini-3.1-flash-live"
+  "name": "cloudbank",
+  "displayName": "Cloudbank",
+  "description": "Cloudbank multi-product retail banking assistant across everyday banking, savings goals, and mortgages.",
+  "rootAgent": "root_agent",
+  "globalInstruction": "global_instruction.txt",
+  "modelSettings": {
+    "model": "gemini-composite-v2",
+    "temperature": 1.0
+  },
+  "languageSettings": {
+    "defaultLanguageCode": "en-GB"
+  },
+  "timeZoneSettings": {
+    "timeZone": "Europe/London"
+  },
+  "audioProcessingConfig": {
+    "bargeInConfig": {
+      "bargeInAwareness": true
     },
-    "languageSettings": {
-        "defaultLanguageCode": "en-GB"
+    "synthesizeSpeechConfigs": {
+      "en-GB": {
+        "voice": "en-GB-Chirp3-HD-Aoede",
+        "speakingRate": 1.0,
+        "instruction": "Friendly British woman in her early 30s, warm mid-pitch voice, calm clear pace"
+      }
+    }
+  },
+  "loggingSettings": {
+    "redactionConfig": {
+      "enableRedaction": true
     },
-    "timeZoneSettings": {
-        "timeZone": "Europe/London"
+    "cloudLoggingSettings": {
+      "enableCloudLogging": true
     },
-    "audioProcessingConfig": {
-        "synthesizeSpeechConfigs": {
-            "en-GB": {
-                "speakingRate": 1.0
-            }
-        }
+    "conversationLoggingSettings": {}
+  },
+  "toolExecutionMode": "SEQUENTIAL",
+  "evaluationMetricsThresholds": {
+    "goldenEvaluationMetricsThresholds": {
+      "turnLevelMetricsThresholds": {
+        "semanticSimilaritySuccessThreshold": 3,
+        "overallToolInvocationCorrectnessThreshold": 1.0
+      },
+      "toolMatchingSettings": {
+        "extraToolCallBehavior": "FAIL"
+      }
     },
-    "loggingSettings": {
-        "conversationLoggingSettings": {},
-        "evaluationAudioRecordingConfig": {
-            "gcsBucket": "gs://cloudbank-gecx-audio-evals"
-        }
+    "goldenHallucinationMetricBehavior": "ENABLED"
+  },
+  "guardrails": [
+    "prompt_security_guardrail",
+    "model_safety_guardrail",
+    "fca_vulnerability_guardrail"
+  ],
+  "variableDeclarations": [
+    {
+      "name": "persona_id",
+      "description": "Active demo persona identifier seeded by the web client.",
+      "schema": { "type": "STRING", "required": [], "default": "" }
     },
-    "toolExecutionMode": "SEQUENTIAL",
-    "evaluationMetricsThresholds": {
-        "goldenEvaluationMetricsThresholds": {
-            "turnLevelMetricsThresholds": {
-                "semanticSimilaritySuccessThreshold": 3,
-                "overallToolInvocationCorrectnessThreshold": 1
-            },
-            "toolMatchingSettings": {
-                "extraToolCallBehavior": "ALLOW"
-            }
-        },
-        "goldenHallucinationMetricBehavior": "DISABLED"
+    {
+      "name": "first_name",
+      "description": "Customer first name seeded from the active persona fixture.",
+      "schema": { "type": "STRING", "required": [], "default": "" }
     },
-    "variableDeclarations": [
-        {
-            "name": "first_name",
-            "description": "Customer's first name from persona fixture; rendered into the greeting and closing via {first_name} templating.",
-            "schema": {"type": "STRING", "required": [], "default": ""}
-        }
-    ]
+    {
+      "name": "demo_date",
+      "description": "Anchored statement date (YYYY-MM-DD) treated as today for all customer transactions and projections.",
+      "schema": { "type": "STRING", "required": [], "default": "" }
+    },
+    {
+      "name": "time_of_day",
+      "description": "Greeting period seeded by the client (morning, afternoon, or evening).",
+      "schema": { "type": "STRING", "required": [], "default": "" }
+    },
+    {
+      "name": "customer_snapshot",
+      "description": "Web-owned customer accounts and 3-month integer-pence transaction snapshot read strictly by Python controllers.",
+      "schema": { "type": "OBJECT", "required": [] }
+    },
+    {
+      "name": "target_agent",
+      "description": "Next agent staged by Python controllers for silent callback routing.",
+      "schema": { "type": "STRING", "required": [], "default": "" }
+    },
+    {
+      "name": "handoff_context",
+      "description": "One-shot cross-spoke pivot context carrying freed_monthly_pence.",
+      "schema": { "type": "OBJECT", "required": [] }
+    },
+    {
+      "name": "ui_view_state",
+      "description": "Monotonic screen state payload emitted to the browser over BidiRunSession.",
+      "schema": { "type": "OBJECT", "required": [] }
+    },
+    {
+      "name": "ui_emitted_seq",
+      "description": "Last ui_view_state sequence number emitted to the live session.",
+      "schema": { "type": "STRING", "required": [], "default": "0" }
+    },
+    {
+      "name": "unclear_count",
+      "description": "Shared two-strike unclear-input counter across hub and spokes.",
+      "schema": { "type": "STRING", "required": [], "default": "0" }
+    },
+    {
+      "name": "router_state",
+      "description": "Private state owned by route_banking_intent.",
+      "schema": { "type": "OBJECT", "required": [] }
+    },
+    {
+      "name": "everyday_state",
+      "description": "Private state owned by assist_everyday_banking.",
+      "schema": { "type": "OBJECT", "required": [] }
+    },
+    {
+      "name": "savings_state",
+      "description": "Private state owned by assist_savings.",
+      "schema": { "type": "OBJECT", "required": [] }
+    },
+    {
+      "name": "mortgage_state",
+      "description": "Private state owned by assist_mortgages.",
+      "schema": { "type": "OBJECT", "required": [] }
+    },
+    {
+      "name": "pass_turn_id",
+      "description": "Invocation ID tracked by capture_utterance to bound per-turn reasoning passes.",
+      "schema": { "type": "STRING", "required": [], "default": "" }
+    },
+    {
+      "name": "pass_count",
+      "description": "Model pass count within the active invocation.",
+      "schema": { "type": "STRING", "required": [], "default": "0" }
+    },
+    {
+      "name": "last_user_utterance",
+      "description": "Sanitized text or transcript of the latest caller turn.",
+      "schema": { "type": "STRING", "required": [], "default": "" }
+    },
+    {
+      "name": "call_complete",
+      "description": "Session completion latch ('true' staged by controller, 'released' once end_session is emitted).",
+      "schema": { "type": "STRING", "required": [], "default": "" }
+    },
+    {
+      "name": "escalation_reason",
+      "description": "Session close or escalation code attached to end_session.",
+      "schema": { "type": "STRING", "required": [], "default": "" }
+    }
+  ]
 }
