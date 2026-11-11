@@ -19,10 +19,12 @@ ALLOWED_EXTERNAL_IDENTIFIERS = frozenset(
         "AudioContext",
         "AudioWorklet",
         "BidiRunSession",
+        "BigInt",
         "ClientText",
         "Draft7Validator",
         "E001",
         "E011",
+        "EvaluationToolCallBehaviour",
         "HIGHER",
         "I012",
         "I014",
@@ -41,6 +43,7 @@ ALLOWED_EXTERNAL_IDENTIFIERS = frozenset(
         "T008",
         "T012",
         "T014",
+        "ToolFakeConfig",
         "TrustedHostMiddleware",
         "TurnComplete",
         "V001",
@@ -50,6 +53,7 @@ ALLOWED_EXTERNAL_IDENTIFIERS = frozenset(
         "V104",
         "agentResponse",
         "agentTransfer",
+        "ajv",
         "axe",
         "clientFunction",
         "gcloud",
@@ -442,3 +446,34 @@ def test_push_sh_prod_confirmation_env_overrides_and_target_parsing(
         for c in calls_auto
     )
     assert any("create-version v-" in c and c.endswith(" dev") for c in calls_auto)
+
+
+def test_documented_proxy_ports_match_vite_and_proxy_defaults() -> None:
+    """Verify onboarding docs match proxy DEFAULT_PORT and vite.config.ts (8765, never 8080)."""
+    proxy_main = (CLOUDBANK_ROOT / "proxy" / "src" / "proxy" / "__main__.py").read_text(
+        encoding="utf-8"
+    )
+    port_match = re.search(r"^DEFAULT_PORT\s*=\s*(\d+)\b", proxy_main, re.MULTILINE)
+    assert port_match is not None, "DEFAULT_PORT missing in proxy/__main__.py"
+    default_port = port_match.group(1)
+    assert default_port == "8765"
+
+    vite_cfg = (CLOUDBANK_ROOT / "web" / "vite.config.ts").read_text(encoding="utf-8")
+    assert f"ws://127.0.0.1:{default_port}" in vite_cfg
+    assert "VITE_PROXY_TARGET" in vite_cfg
+
+    doc_paths = (
+        REPO_ROOT / "README.md",
+        CLOUDBANK_ROOT / "proxy" / "README.md",
+        DOCS_DIR / "guides" / "developer_workflow_and_cicd_guide.md",
+    )
+    for doc_path in doc_paths:
+        text = doc_path.read_text(encoding="utf-8")
+        rel = doc_path.relative_to(REPO_ROOT)
+        assert f"--port {default_port}" in text, f"{rel} missing '--port {default_port}'"
+        assert f"127.0.0.1:{default_port}" in text, f"{rel} missing '127.0.0.1:{default_port}'"
+        assert "--port 8080" not in text, f"{rel} must not instruct '--port 8080'"
+        assert ":8080" not in text, f"{rel} must not reference stale port 8080"
+        assert "VITE_PROXY_URL" not in text, (
+            f"{rel} must not recommend bypassing Vite's loopback proxy via VITE_PROXY_URL"
+        )

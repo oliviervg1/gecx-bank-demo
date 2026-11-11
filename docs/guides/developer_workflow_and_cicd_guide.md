@@ -46,7 +46,7 @@ make check
 make e2e
 ```
 
-> Zero-Warning Policy: `cxas lint`, Ruff, Pyright, TypeScript, and ESLint (`--max-warnings 0`) treat warnings as blockers. Edit shared callbacks in `cloudbank/cxas_shared/callbacks/` and persona fixtures in `cloudbank/shared/personas/*.json`, then run `(cd cloudbank && uv run --locked python scripts/sync_shared.py --write)` so all four agents and evaluation YAML snapshots stay byte-identical.
+> Zero-Warning Policy: `cxas lint`, Ruff, Pyright, TypeScript, and ESLint (`--max-warnings 0`) treat warnings as blockers. Edit shared callbacks (`capture_utterance`, `release_line`) in `cloudbank/cxas_shared/callbacks/`, shared controller helpers in `cloudbank/cxas_shared/controller_common.py`, official help hosts in `cloudbank/shared/official_help_hosts.json`, and persona fixtures in `cloudbank/shared/personas/*.json`, then run `(cd cloudbank && uv run --locked python scripts/sync_shared.py --write)` so all four agents, controller common regions, and evaluation snapshots stay byte-identical.
 
 ---
 
@@ -74,26 +74,27 @@ cp cloudbank/gecx-config.example.json cloudbank/gecx-config.json
 }
 ```
 
-Both `make hygiene` and the `privacy-and-hygiene` job in `.github/workflows/ci.yml` verify that `cloudbank/gecx-config.json` is never tracked in Git, validate that every URL in `cloudbank/uv.lock`, `cloudbank/proxy/uv.lock`, and `cloudbank/web/package-lock.json` points to public PyPI or npmjs hosts, and scan all tracked files (`git ls-files`) with zero file exemptions for internal domains, shortlinks, or project identifiers.
+`make hygiene` (invoked directly by the `privacy-and-hygiene` job in `.github/workflows/ci.yml` with zero duplicated script logic) verifies that `cloudbank/gecx-config.json` is never tracked in Git, validates that every URL in `cloudbank/uv.lock`, `cloudbank/proxy/uv.lock`, and `cloudbank/web/package-lock.json` points to public PyPI or npmjs hosts, and scans all tracked files (`git ls-files`) for internal domains, shortlinks, legacy product names, or workstation paths.
 
 ---
 
 ## 4. Running & Hardening `cloudbank/proxy`
 
-`cloudbank/proxy` holds local Application Default Credentials (`ADC`) and opens `BidiRunSession` WebSocket streams on Google Cloud. Always bind it to loopback (`127.0.0.1`):
+`cloudbank/proxy` holds local Application Default Credentials (`ADC`) and opens `BidiRunSession` WebSocket streams on Google Cloud. Always bind it to loopback (`127.0.0.1:8765`):
 
 ```bash
-# Launch behind Vite dev server (:5173 -> ws://localhost:8080/ws/agent)
-(cd cloudbank/proxy && uv run --locked uvicorn proxy.main:app --reload --host 127.0.0.1 --port 8080 --ws-max-size 1048576)
-
-# Or run the standalone package entrypoint (binds 127.0.0.1:8765 with ws_max_size=1048576)
+# Recommended package entrypoint (binds 127.0.0.1:8765 with proxy_headers=False and ws_max_size=1048576)
 (cd cloudbank/proxy && uv run --locked python -m proxy)
+
+# Or run with Uvicorn auto-reload behind Vite dev server (:5173 -> ws://127.0.0.1:8765/ws/agent)
+(cd cloudbank/proxy && uv run --locked uvicorn proxy.main:app --reload --host 127.0.0.1 --port 8765 --ws-max-size 1048576)
 ```
 
 Key proxy controls:
-- Server-Owned Personas & Session Binding: loads `cloudbank/shared/personas/{persona}.json` on the server, derives `first_name` from `snapshot.user.first_name`, binds each `sessionId` to its `persona`, skips variable re-seeding on resume, and seeds `Relay._max_ui_seq` from `lastUiSeq`.
-- Loopback Peer, Host & Token Guards: rejects non-loopback client peer IPs unless `PROXY_ALLOW_REMOTE=1` is set, validates HTTP Host headers (`TrustedHostMiddleware`) and exact `Origin` (`PROXY_ALLOWED_ORIGINS`), disables `/docs`, `/redoc`, and `/openapi.json`, rejects binary frames with WebSocket code `1003`, caps concurrent sessions with an `asyncio.Semaphore` (`PROXY_MAX_SESSIONS`), and supports optional `PROXY_AUTH_TOKEN` (`Authorization: Bearer <token>` or `x-proxy-token`).
-- Cloud Shell & GitHub Codespaces: keep the proxy port visibility set to Private. Vite's dev server connects to `cloudbank/proxy` over loopback `127.0.0.1` while forwarding the browser's `Origin` header (`WEB_HOST` or `CODESPACE_NAME`).
+- Vite Upstream Override & Server-Side Auth Injection: `cloudbank/web/vite.config.ts` proxies `/ws/agent` to `ws://127.0.0.1:8765` by default (`VITE_PROXY_TARGET` overrides Vite's server-side upstream URL) and injects `x-proxy-token` server-side whenever `PROXY_AUTH_TOKEN` is set so bearer secrets never enter browser JavaScript.
+- Server-Owned Personas & Session Binding: loads `cloudbank/shared/personas/{persona}.json` on the server, derives `first_name` from `snapshot.user.first_name`, records `sessionId` bindings only after upstream connection succeeds, skips variable re-seeding only on verified active resumes, mints a fresh server UUID (`is_resume=False`) when a `sessionId` is unrecognized or post-restart, and seeds `Relay._max_ui_seq` from `lastUiSeq`.
+- Loopback Peer, ASGI Host, Frame & Lifetime Guards: runs Uvicorn with `proxy_headers=False`, fails closed at startup if `PROXY_ALLOW_REMOTE=1` or non-loopback `PROXY_HOST` lacks `PROXY_AUTH_TOKEN`, validates HTTP/WebSocket `Host` headers cleanly in an ASGI middleware and exact `Origin` (`PROXY_ALLOWED_ORIGINS`), disables `/docs`, `/redoc`, and `/openapi.json`, rejects binary frames (`1003`), caps PCM16 audio frames at `64 KB` (`87,384` base64 chars) and disconnects after `5` malformed frames (`1008`), caps concurrent sessions via `asyncio.Semaphore` (`PROXY_MAX_SESSIONS`), resets `PROXY_MAX_IDLE_SECONDS` (`900 s`) strictly on `ClientText`, non-empty speech transcripts, or `sessionOutput` events, and enforces `PROXY_MAX_SESSION_SECONDS` (`3600 s`).
+- Cloud Shell & GitHub Codespaces: keep **both** the proxy port (`8765`) and Vite's dev-server port (`5173`) set to **Private** (authenticated to your account), because Vite proxies `/ws/agent` to `127.0.0.1:8765` over loopback while forwarding the workspace `Origin` header (`WEB_HOST` or `CODESPACE_NAME`).
 
 ---
 
@@ -113,7 +114,7 @@ Always deploy through `./cloudbank/push.sh` rather than calling `cxas push` or `
 ```
 
 What `./push.sh` enforces in chronological order:
-1. Confirms `OVERWRITE` intent up front when targeting `prod` (`--yes` or interactive terminal prompt).
+1. Confirms `OVERWRITE` intent whenever the resolved target matches `prod` (`--yes` or interactive terminal prompt, whether invoked as `prod`, app display name, UUID, or full resource path).
 2. Runs `scripts/sync_shared.py --check`, `uv run --locked cxas lint`, `scripts/audit_agent.py`, and `uv run --locked pytest -v` in sequence.
 3. Runs `scripts/manage_app.py --config "${CONFIG_FILE}" push "${TARGET}"`, which imports `cxas_app/Cloudbank` with `conflict_strategy="OVERWRITE"`, fails closed on any `ImportAppResponse.warnings`, and calls `verify_expected_tools` so neither missing tools nor orphaned legacy tools remain on the server.
 4. Runs `scripts/run_golden_evals.py --config "${CONFIG_FILE}" sync "${TARGET}"`, compiling multi-agent turns in execution order (`toolCall -> agentResponse -> agentTransfer`) to re-populate server-side evaluations cleared by `OVERWRITE`.
@@ -131,16 +132,16 @@ To inspect versions, manage channel deployments, or execute live platform NAIVE 
 
 ## 6. GitHub Actions CI & Dependabot (`.github/`)
 
-Every pull request and `main` push runs seven credential-free jobs in `.github/workflows/ci.yml`, with every third-party action pinned to a 40-character commit SHA and `persist-credentials: false`:
+Every pull request and `main` push runs seven credential-free jobs in `.github/workflows/ci.yml` (`cancel-in-progress` scoped to non-`main` refs so `main` builds never cancel mid-run), with every third-party action pinned to a 40-character commit SHA and `persist-credentials: false`:
 
 | CI Job | Working Directory | Checks Executed |
 | :--- | :--- | :--- |
-| `privacy-and-hygiene` | Repository root | Verifies `gecx-config.json` is untracked, `gecx-config.example.json` keeps placeholders, PyPI/npmjs lockfile host allowlists pass, and zero internal patterns exist across `git ls-files`. |
+| `privacy-and-hygiene` | Repository root | Runs `make hygiene` (`gecx-config.json` untracked, placeholder check, PyPI/npmjs lockfile host allowlists, and zero internal leak patterns across `git ls-files`). |
 | `agent` | `cloudbank` | `uv sync --locked`, `sync_shared.py --check`, `ruff check .`, `pyright`, `cxas lint` (`E001`-`E011`), `audit_agent.py`, `pytest -v`. |
 | `proxy` | `cloudbank/proxy` | `uv sync --locked`, `ruff check .`, `pyright`, `pytest -v`. |
 | `web` | `cloudbank/web` | `npm ci`, `npm test` (Vitest), `npm run typecheck`, `npm run lint` (`--max-warnings 0`), `npm run build`. |
 | `e2e` | `cloudbank/{proxy,web}` | Installs proxy + web + Chromium, builds `vite`, and runs Playwright + `@axe-core/playwright` (`npm run test:e2e`). |
-| `python-audit` | `cloudbank`, `cloudbank/proxy` | Exports locked requirements and runs `pip-audit` against PyPA / OSV advisories. |
+| `python-audit` | `cloudbank`, `cloudbank/proxy` | Exports locked requirements and runs locked `uv run --locked pip-audit` against PyPA / OSV advisories. |
 | `web-audit` | `cloudbank/web` | Runs `npm audit --audit-level=high` in an isolated advisory job. |
 
 `.github/dependabot.yml` monitors `/cloudbank/web` (`npm`), `/cloudbank` (`uv`), `/cloudbank/proxy` (`uv`), and `/` (`github-actions`) weekly.

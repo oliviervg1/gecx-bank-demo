@@ -17,7 +17,7 @@ on:
 
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
 permissions:
   contents: read
@@ -32,91 +32,8 @@ jobs:
         with:
           persist-credentials: false
 
-      - name: Verify config template and untracked local config
-        run: |
-          if git ls-files --error-unmatch cloudbank/gecx-config.json >/dev/null 2>&1; then
-            echo "::error::cloudbank/gecx-config.json must not be tracked in Git."
-            exit 1
-          fi
-          git ls-files --error-unmatch cloudbank/gecx-config.example.json >/dev/null
-          python3 -c '
-          import json, pathlib
-          cfg = json.loads(pathlib.Path("cloudbank/gecx-config.example.json").read_text(encoding="utf-8"))
-          assert cfg.get("gcp_project_id") == "<your-gcp-project-id>", (
-              "cloudbank/gecx-config.example.json must keep <your-gcp-project-id> placeholder"
-          )
-          '
-
-      - name: Verify PyPI-only and npmjs-only lockfile hosts
-        run: |
-          python3 -c '
-          import pathlib, re
-
-          allowed_py = ("https://pypi.org/simple", "https://files.pythonhosted.org/")
-          for lock in ("cloudbank/uv.lock", "cloudbank/proxy/uv.lock"):
-              txt = pathlib.Path(lock).read_text(encoding="utf-8")
-              vals = re.findall(r"\b(?:registry|url)\s*=\s*\"([^\"]+)\"", txt)
-              assert vals, f"{lock}: expected non-empty registry/url entries"
-              bad = [v for v in vals if not v.startswith(allowed_py)]
-              assert not bad, f"{lock}: disallowed package URLs: {bad[:5]}"
-
-          pkg_txt = pathlib.Path("cloudbank/web/package-lock.json").read_text(encoding="utf-8")
-          resolved = re.findall(r"\"resolved\"\s*:\s*\"([^\"]+)\"", pkg_txt)
-          assert resolved, "package-lock.json: expected non-empty resolved entries"
-          bad_npm = [u for u in resolved if not u.startswith("https://registry.npmjs.org/") or "/-/@" in u]
-          assert not bad_npm, f"package-lock.json: disallowed resolved URLs: {bad_npm[:5]}"
-          print("OK: all Python and npm lockfile URLs resolve to public PyPI and npmjs registries.")
-          '
-
-      - name: Scan all tracked files for internal domains, shortlinks, and identifiers
-        run: |
-          python3 -c '
-          import hashlib, pathlib, re, subprocess, sys
-
-          banned_digests = {
-              "e17ff958e1a3487c",
-              "c14d0c33b77c3007",
-              "ff052a720d8ff5fa",
-              "55351e18dee8f73f",
-              "47a6705d7c6017c3",
-              "fabeb8202bf28964",
-              "8a55e63ef0788f76",
-          }
-          banned_regexes = [
-              re.compile(r"@[g]oogle\.com\b", re.I),
-              re.compile(r"\b[g]ooglers\.com\b", re.I),
-              re.compile(r"\b[c]orp\.google\b", re.I),
-              re.compile(r"\b[c]loudshell\.dev\b", re.I),
-              re.compile(r"\b(?:b|cl|yaqs|xid)/[0-9]{5,}\b"),
-              re.compile(r"\b(?:sponge2?|fusion2)/[A-Za-z0-9_-]+\b"),
-          ]
-
-          def sha16(val: str) -> str:
-              return hashlib.sha256(val.lower().encode("utf-8")).hexdigest()[:16]
-
-          hits = []
-          for rel in subprocess.check_output(["git", "ls-files"], text=True).splitlines():
-              path = pathlib.Path(rel)
-              if not path.is_file():
-                  continue
-              lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
-              for lineno, line in enumerate(lines, 1):
-                  if any(rx.search(line) for rx in banned_regexes):
-                      hits.append(f"{rel}:{lineno}: disallowed internal domain or shortlink pattern")
-                  for match in re.finditer(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", line):
-                      tok = match.group(0)
-                      parts = tok.split("-")
-                      candidates = {tok, *parts}
-                      candidates.update(f"{parts[i]}-{parts[i+1]}" for i in range(len(parts) - 1))
-                      if any(sha16(c) in banned_digests for c in candidates):
-                          hits.append(f"{rel}:{lineno}: disallowed internal identifier")
-
-          if hits:
-              for hit in hits:
-                  print(f"::error::{hit}", file=sys.stderr)
-              sys.exit(1)
-          print("OK: zero disallowed internal patterns across all tracked files.")
-          '
+      - name: Run repository privacy and lockfile hygiene gate
+        run: make hygiene
 
   agent:
     name: agent (sync check, ruff, pyright, cxas lint, audit, pytest)
@@ -272,6 +189,7 @@ jobs:
       - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
 
       - name: Audit cloudbank Python lockfile
         working-directory: cloudbank
@@ -279,7 +197,7 @@ jobs:
           reqs="$(mktemp)"
           trap 'rm -f "$reqs"' EXIT
           uv export --frozen --no-hashes --no-emit-project > "$reqs"
-          uvx --index-url https://pypi.org/simple pip-audit --no-deps --disable-pip -r "$reqs"
+          uv run --locked pip-audit --no-deps --disable-pip -r "$reqs"
 
       - name: Audit proxy Python lockfile
         working-directory: cloudbank/proxy
@@ -287,7 +205,7 @@ jobs:
           reqs="$(mktemp)"
           trap 'rm -f "$reqs"' EXIT
           uv export --frozen --no-hashes --no-emit-project > "$reqs"
-          uvx --index-url https://pypi.org/simple pip-audit --no-deps --disable-pip -r "$reqs"
+          uv run --locked pip-audit --no-deps --disable-pip -r "$reqs"
 
   web-audit:
     # Split from `web` so an advisory published upstream reports as its own

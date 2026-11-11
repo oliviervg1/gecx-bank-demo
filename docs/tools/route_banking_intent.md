@@ -21,7 +21,7 @@ flowchart TD
     Entry["route_banking_intent(intent, topic_hint)"] --> Farewell{"intent == FAREWELL?"}
     Farewell -->|"Yes"| HFarewell["_handle_farewell(): call_complete = true, escalation_reason = CALL_COMPLETED"]
     Farewell -->|"No"| Domain{"intent in EVERYDAY_BANKING | SAVINGS | MORTGAGES?"}
-    Domain -->|"Yes"| HStage["_stage_domain_route(): unclear_count = 0, router_state, target_agent"]
+    Domain -->|"Yes"| HStage["_stage_domain_route(): unclear_count = 0, target_agent"]
     Domain -->|"No"| Greet{"intent == GREETING?"}
     Greet -->|"Yes"| HGreet["unclear_count = 0, _emit_ui_view(home), _build_greeting()"]
     Greet -->|"No"| Nav{"intent in NAVIGATE_HOME | NAVIGATE_PROFILE?"}
@@ -60,12 +60,12 @@ def route_banking_intent(
 
 ### Helper Index ([python_code.py](../../cloudbank/cxas_app/Cloudbank/tools/route_banking_intent/python_function/python_code.py))
 
-- `_dispatch_route`, `_handle_local_intent`, and `_emit_ui_view`: dispatch local hub actions, increment `ui_view_state.seq` monotonically, and write the new page payload.
-- `_stage_domain_route`: resets `unclear_count = "0"`, writes `router_state`, and sets `target_agent` (`everyday_banking_agent`, `savings_agent`, or `mortgage_agent`).
-- `_build_greeting`: composes a `time_of_day` (`morning`, `afternoon`, `evening`) and `first_name`-aware greeting introducing all three banking areas.
+- `_dispatch_route`, `_handle_local_intent()`, and `_emit_ui_view`: dispatch local hub actions, increment `ui_view_state.seq` monotonically (spliced from `controller_common.py`), and write the new page payload.
+- `_stage_domain_route()`: resets `unclear_count = "0"` and sets `target_agent` (`everyday_banking_agent`, `savings_agent`, or `mortgage_agent`).
+- `_build_greeting()`: composes a `time_of_day` (`morning`, `afternoon`, `evening`) and `first_name`-aware greeting introducing all three banking areas.
 - `_capabilities_message`: summarises support across everyday spending, savings goal projections, and mortgages.
-- `_handle_unclear`: implements the non-terminating 2-strike unclear ladder.
-- `_handle_farewell`: sets `call_complete = "true"` and `escalation_reason = "CALL_COMPLETED"` so `release_line` appends `Part.from_end_session`.
+- `_handle_unclear()`: implements the non-terminating 2-strike unclear ladder.
+- `_handle_farewell()`: sets `call_complete = "true"` and `escalation_reason = "CALL_COMPLETED"` so `release_line` appends `Part.from_end_session`.
 
 ### Session State Reads & Writes
 
@@ -73,8 +73,7 @@ def route_banking_intent(
 | :--- | :--- | :--- |
 | `first_name` | Read | Personalises greeting and farewell copy when present (derived server-side by `cloudbank/proxy`). |
 | `time_of_day` | Read | Selects `"Good morning"`, `"Good afternoon"`, or `"Good evening"`. |
-| `target_agent` | Write | Stages silent specialist handoff for `capture_utterance`. |
-| `router_state` | Write | Stores `{"last_intent": intent, "topic_hint": hint}`. |
+| `target_agent` | Write | Stages silent specialist handoff for `capture_utterance` (and defense-in-depth `release_line`). |
 | `ui_view_state` | Read / Write | Increments `seq` when opening `home` or `profile` (and on Strike 2 reset). |
 | `unclear_count` | Read / Write | Tracks `"0"` / `"1"` across hub and spokes without terminating on Strike 2. |
 | `call_complete` | Write | Set to `"true"` on `FAREWELL`. |
