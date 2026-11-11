@@ -1,12 +1,13 @@
-# Enforces the exact four local verification gates listed in AGENTS.md plus
-# repository hygiene checks (PyPI-only lockfiles and no hardcoded GCP project IDs).
+# Enforces local verification gates from AGENTS.md and Makefile plus repository
+# privacy, lockfile host allowlisting, dependency audits, and live-browser
+# Playwright + axe-core WCAG 2.1 AA end-to-end checks.
 #
 # Every gate runs offline with zero GCP credentials so it is safe to run on
 # untrusted pull requests.
 #
 # Security note: no `github.event.*` value is interpolated into any `run:`
-# block. The single expression below is `github.ref` in a concurrency group
-# key, which is not evaluated by a shell.
+# block, all third-party actions are pinned to full 40-character commit SHAs,
+# and every checkout disables credential persistence.
 name: CI
 
 on:
@@ -22,28 +23,132 @@ permissions:
   contents: read
 
 jobs:
+  privacy-and-hygiene:
+    name: privacy and lockfile hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Verify config template and untracked local config
+        run: |
+          if git ls-files --error-unmatch cloudbank/gecx-config.json >/dev/null 2>&1; then
+            echo "::error::cloudbank/gecx-config.json must not be tracked in Git."
+            exit 1
+          fi
+          git ls-files --error-unmatch cloudbank/gecx-config.example.json >/dev/null
+          python3 -c '
+          import json, pathlib
+          cfg = json.loads(pathlib.Path("cloudbank/gecx-config.example.json").read_text(encoding="utf-8"))
+          assert cfg.get("gcp_project_id") == "<your-gcp-project-id>", (
+              "cloudbank/gecx-config.example.json must keep <your-gcp-project-id> placeholder"
+          )
+          '
+
+      - name: Verify PyPI-only and npmjs-only lockfile hosts
+        run: |
+          python3 -c '
+          import pathlib, re
+
+          allowed_py = ("https://pypi.org/simple", "https://files.pythonhosted.org/")
+          for lock in ("cloudbank/uv.lock", "cloudbank/proxy/uv.lock"):
+              txt = pathlib.Path(lock).read_text(encoding="utf-8")
+              vals = re.findall(r"\b(?:registry|url)\s*=\s*\"([^\"]+)\"", txt)
+              assert vals, f"{lock}: expected non-empty registry/url entries"
+              bad = [v for v in vals if not v.startswith(allowed_py)]
+              assert not bad, f"{lock}: disallowed package URLs: {bad[:5]}"
+
+          pkg_txt = pathlib.Path("cloudbank/web/package-lock.json").read_text(encoding="utf-8")
+          resolved = re.findall(r"\"resolved\"\s*:\s*\"([^\"]+)\"", pkg_txt)
+          assert resolved, "package-lock.json: expected non-empty resolved entries"
+          bad_npm = [u for u in resolved if not u.startswith("https://registry.npmjs.org/")]
+          assert not bad_npm, f"package-lock.json: disallowed resolved URLs: {bad_npm[:5]}"
+          print("OK: all Python and npm lockfile URLs resolve to public PyPI and npmjs registries.")
+          '
+
+      - name: Scan all tracked files for internal domains, shortlinks, and identifiers
+        run: |
+          python3 -c '
+          import hashlib, pathlib, re, subprocess, sys
+
+          banned_digests = {
+              "e17ff958e1a3487c",
+              "c14d0c33b77c3007",
+              "ff052a720d8ff5fa",
+              "55351e18dee8f73f",
+              "47a6705d7c6017c3",
+              "fabeb8202bf28964",
+              "8a55e63ef0788f76",
+          }
+          banned_regexes = [
+              re.compile(r"@[g]oogle\.com\b", re.I),
+              re.compile(r"\b[g]ooglers\.com\b", re.I),
+              re.compile(r"\b[c]orp\.google\b", re.I),
+              re.compile(r"\b[c]loudshell\.dev\b", re.I),
+              re.compile(r"\b(?:b|cl|yaqs|xid)/[0-9]{5,}\b"),
+              re.compile(r"\b(?:sponge2?|fusion2)/[A-Za-z0-9_-]+\b"),
+          ]
+
+          def sha16(val: str) -> str:
+              return hashlib.sha256(val.lower().encode("utf-8")).hexdigest()[:16]
+
+          hits = []
+          for rel in subprocess.check_output(["git", "ls-files"], text=True).splitlines():
+              path = pathlib.Path(rel)
+              if not path.is_file():
+                  continue
+              lines = path.read_text(encoding="utf-8", errors="ignore").splitlines()
+              for lineno, line in enumerate(lines, 1):
+                  if any(rx.search(line) for rx in banned_regexes):
+                      hits.append(f"{rel}:{lineno}: disallowed internal domain or shortlink pattern")
+                  for match in re.finditer(r"[A-Za-z0-9]+(?:-[A-Za-z0-9]+)*", line):
+                      tok = match.group(0)
+                      parts = tok.split("-")
+                      candidates = {tok, *parts}
+                      candidates.update(f"{parts[i]}-{parts[i+1]}" for i in range(len(parts) - 1))
+                      if any(sha16(c) in banned_digests for c in candidates):
+                          hits.append(f"{rel}:{lineno}: disallowed internal identifier")
+
+          if hits:
+              for hit in hits:
+                  print(f"::error::{hit}", file=sys.stderr)
+              sys.exit(1)
+          print("OK: zero disallowed internal patterns across all tracked files.")
+          '
+
   agent:
-    name: agent (cxas lint, Composite v2 audit, pytest)
+    name: agent (sync check, ruff, pyright, cxas lint, audit, pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
       run:
         working-directory: cloudbank
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          cache-dependency-glob: "cloudbank/uv.lock"
 
       - name: Install (locked)
         run: uv sync --locked
 
-      - name: Verify PyPI-only lockfile
-        run: "! grep -i airlock uv.lock"
+      - name: Verify shared callbacks and evaluation snapshots are in sync
+        run: uv run --locked python scripts/sync_shared.py --check
+
+      - name: Ruff lint
+        run: uv run --locked ruff check .
+
+      - name: Pyright typecheck
+        run: uv run --locked pyright
 
       # Run from cloudbank/ WITHOUT --app-dir so evaluation rules E001-E011 execute.
-      - name: CXAS structural & evaluation lint
+      - name: CXAS structural and evaluation lint
         run: uv run --locked cxas lint
 
       - name: Composite v2 readiness audit
@@ -53,35 +158,33 @@ jobs:
         run: uv run --locked pytest -v
 
   proxy:
-    name: proxy (pytest, ruff)
+    name: proxy (ruff, pyright, pytest)
     runs-on: ubuntu-latest
     timeout-minutes: 10
     defaults:
       run:
         working-directory: cloudbank/proxy
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: astral-sh/setup-uv@v7
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
         with:
           enable-cache: true
+          cache-dependency-glob: "cloudbank/proxy/uv.lock"
 
-      # --locked fails if uv.lock is out of step with pyproject.toml, so a
-      # dependency bump cannot land without the lockfile being regenerated.
       - name: Install (locked)
-        run: uv sync --locked --all-extras
+        run: uv sync --locked
 
-      - name: Verify PyPI-only lockfile
-        run: "! grep -i airlock uv.lock"
+      - name: Ruff lint
+        run: uv run --locked ruff check .
 
-      # --all-extras on every `uv run` too, not just the sync: a bare `uv run`
-      # re-syncs to the DEFAULT dependency group and silently drops the dev
-      # extras, which removes pytest-asyncio.
-      - name: Test
-        run: uv run --locked --all-extras pytest -v
+      - name: Pyright typecheck
+        run: uv run --locked pyright
 
-      - name: Lint
-        run: uv run --locked --all-extras ruff check .
+      - name: Proxy test suite
+        run: uv run --locked pytest -v
 
   web:
     name: web (vitest, tsc, eslint, build)
@@ -91,19 +194,21 @@ jobs:
       run:
         working-directory: cloudbank/web
     steps:
-      - uses: actions/checkout@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
 
-      - uses: actions/setup-node@v7
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: cloudbank/web/.nvmrc
           cache: npm
           cache-dependency-path: cloudbank/web/package-lock.json
 
-      # `npm ci` rather than `npm install` — fails if package.json and the
-      # lockfile disagree, which is the point of committing the lockfile.
-      - run: npm ci
+      # `npm ci` fails if package.json and package-lock.json disagree.
+      - name: Install (locked)
+        run: npm ci
 
-      - name: Test
+      - name: Unit and parity tests
         run: npm test
 
       - name: Typecheck
@@ -115,10 +220,78 @@ jobs:
       - name: Production build
         run: npm run build
 
+  e2e:
+    name: e2e (Playwright + axe-core WCAG 2.1 AA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "cloudbank/proxy/uv.lock"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: cloudbank/web/.nvmrc
+          cache: npm
+          cache-dependency-path: cloudbank/web/package-lock.json
+
+      - name: Install proxy dependencies (locked)
+        working-directory: cloudbank/proxy
+        run: uv sync --locked
+
+      - name: Install web dependencies (locked)
+        working-directory: cloudbank/web
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: cloudbank/web
+        run: npx playwright install --with-deps chromium
+
+      - name: Build production web bundle
+        working-directory: cloudbank/web
+        run: npm run build
+
+      - name: Run Playwright E2E and axe-core accessibility suite
+        working-directory: cloudbank/web
+        run: npm run test:e2e
+
+  python-audit:
+    name: python (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+
+      - name: Audit cloudbank Python lockfile
+        working-directory: cloudbank
+        run: |
+          reqs="$(mktemp)"
+          trap 'rm -f "$reqs"' EXIT
+          uv export --frozen --no-hashes --no-emit-project > "$reqs"
+          uvx --index-url https://pypi.org/simple pip-audit --no-deps --disable-pip -r "$reqs"
+
+      - name: Audit proxy Python lockfile
+        working-directory: cloudbank/proxy
+        run: |
+          reqs="$(mktemp)"
+          trap 'rm -f "$reqs"' EXIT
+          uv export --frozen --no-hashes --no-emit-project > "$reqs"
+          uvx --index-url https://pypi.org/simple pip-audit --no-deps --disable-pip -r "$reqs"
+
   web-audit:
     # Split from `web` so an advisory published upstream reports as its own
-    # failure rather than masquerading as a broken build. Gates on high and
-    # critical; moderate and low are surfaced in the log without failing.
+    # failure rather than masquerading as a broken build.
     name: web (npm audit)
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -126,34 +299,21 @@ jobs:
       run:
         working-directory: cloudbank/web
     steps:
-      - uses: actions/checkout@v7
-      - uses: actions/setup-node@v7
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version-file: cloudbank/web/.nvmrc
           cache: npm
           cache-dependency-path: cloudbank/web/package-lock.json
-      - run: npm ci
+
+      - name: Install (locked)
+        run: npm ci
+
       - name: Audit (report everything)
         run: npm audit || true
+
       - name: Audit (fail on high or critical)
         run: npm audit --audit-level=high
-
-  no-hardcoded-project:
-    # A hardcoded project id survives the project it names. Everything must
-    # derive the resource dynamically from cloudbank/gecx-config.json.
-    name: no hardcoded GCP project id
-    runs-on: ubuntu-latest
-    timeout-minutes: 5
-    steps:
-      - uses: actions/checkout@v7
-      - name: Check for hardcoded project ids
-        run: |
-          PROJECT=$(jq -r .gcp_project_id cloudbank/gecx-config.json)
-          if grep -rn --exclude-dir=.git --exclude-dir=node_modules \
-                      --exclude-dir=.venv --exclude-dir=.github \
-                      --exclude=gecx-config.json \
-                      -F "${PROJECT}" . ; then
-            echo "::error::Hardcoded GCP project id found. Derive it from cloudbank/gecx-config.json instead."
-            exit 1
-          fi
-          echo "OK — no hardcoded project ids."
