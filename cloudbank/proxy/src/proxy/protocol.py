@@ -21,15 +21,19 @@ from pydantic import (
     StrictStr,
     TypeAdapter,
     ValidationError,
+    ValidationInfo,
     field_validator,
 )
+from pydantic_core import PydanticCustomError
 
 Persona = Literal["chloe", "david", "tom", "sarah"]
 TimeOfDay = Literal["morning", "afternoon", "evening"]
 
-# Cap on a single inbound browser frame (1 MiB; 100ms 16 kHz PCM16 is ~4.3 KB base64).
+# Cap on a single inbound browser frame (1 MiB outer envelope; 64 KiB PCM16 = 87,384 base64 chars).
 MAX_CLIENT_FRAME_BYTES = 1024 * 1024
-_MAX_AUDIO_B64_LEN = MAX_CLIENT_FRAME_BYTES
+MAX_AUDIO_B64_LEN = 87_384
+_MAX_AUDIO_B64_LEN = MAX_AUDIO_B64_LEN
+_MAX_SERVER_AUDIO_B64_LEN = 4 * 1024 * 1024
 _MAX_TEXT_LEN = 8192
 
 
@@ -39,6 +43,21 @@ class BinaryFrameError(ValueError):
 
 class BrowserDisconnectError(Exception):
     """Raised when the browser WebSocket closes cleanly."""
+
+
+class ClientProtocolError(ValueError):
+    """Raised when an inbound client JSON message fails schema/protocol validation."""
+
+    def __init__(
+        self,
+        detail: str,
+        *,
+        client_message: str = "malformed client message",
+        field: str | None = None,
+    ) -> None:
+        self.client_message = client_message
+        self.field = field
+        super().__init__(detail)
 
 
 # -- Client -> Proxy ----------------------------------------------------------
@@ -61,11 +80,18 @@ class AudioFrame(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     type: Literal["audio"] = "audio"
-    data: StrictStr = Field(min_length=1, max_length=_MAX_AUDIO_B64_LEN)
+    data: StrictStr = Field(min_length=1, max_length=_MAX_SERVER_AUDIO_B64_LEN)
 
     @field_validator("data")
     @classmethod
-    def _validate_base64(cls, value: str) -> str:
+    def _validate_base64(cls, value: str, info: ValidationInfo) -> str:
+        is_server = isinstance(info.context, dict) and info.context.get("direction") == "server"
+        if not is_server and len(value) > _MAX_AUDIO_B64_LEN:
+            raise PydanticCustomError(
+                "string_too_long",
+                "String should have at most {max_length} characters",
+                {"max_length": _MAX_AUDIO_B64_LEN},
+            )
         try:
             decoded = base64.b64decode(value, validate=True)
         except (binascii.Error, ValueError) as exc:
@@ -97,16 +123,55 @@ ClientMsg = Annotated[
 
 _client_adapter: TypeAdapter[ClientMsg] = TypeAdapter(ClientMsg)
 _UNKNOWN_TYPE_CODES = {"union_tag_invalid", "union_tag_not_found"}
+_SAFE_CLIENT_FIELDS = frozenset(
+    {"type", "persona", "timeOfDay", "demoDate", "sessionId", "lastUiSeq", "data", "text"}
+)
+
+
+def _classify_validation_error(exc: ValidationError) -> tuple[str, str | None]:
+    """Derive a safe client-facing message and field name from a ValidationError."""
+    errors = exc.errors()
+    for err in errors:
+        if err["type"] in _UNKNOWN_TYPE_CODES:
+            return "unknown client message", "type"
+        if err["type"] == "json_invalid":
+            return "malformed client message", None
+
+    if errors:
+        first = errors[0]
+        err_type = first["type"]
+        loc_strs = [str(part) for part in first.get("loc", ()) if isinstance(part, str)]
+        field = next(
+            (part for part in reversed(loc_strs) if part in _SAFE_CLIENT_FIELDS),
+            None,
+        )
+        if err_type == "string_too_long" and field == "text":
+            return "text exceeds maximum length", "text"
+        if err_type == "string_too_long" and field == "data":
+            return "audio frame exceeds maximum length", "data"
+        if field == "data":
+            return "invalid audio frame", "data"
+        if field is not None:
+            return f"invalid {field}", field
+    return "malformed client message", None
 
 
 def parse_client_msg(raw: str) -> ClientMsg:
     try:
         return _client_adapter.validate_json(raw)
     except ValidationError as exc:
-        for err in exc.errors():
-            if err["type"] in _UNKNOWN_TYPE_CODES:
-                raise ValueError("unknown client message") from exc
-        raise ValueError(str(exc)) from exc
+        client_message, field = _classify_validation_error(exc)
+        if client_message == "unknown client message":
+            raise ClientProtocolError(
+                "unknown client message",
+                client_message=client_message,
+                field=field,
+            ) from exc
+        raise ClientProtocolError(
+            str(exc),
+            client_message=client_message,
+            field=field,
+        ) from exc
 
 
 def serialize_client_msg(msg: ClientMsg) -> str:
@@ -230,7 +295,7 @@ _server_adapter: TypeAdapter[ServerMsg] = TypeAdapter(ServerMsg)
 
 def parse_server_msg(raw: str) -> ServerMsg:
     try:
-        return _server_adapter.validate_json(raw)
+        return _server_adapter.validate_json(raw, context={"direction": "server"})
     except ValidationError as exc:
         raise ValueError(str(exc)) from exc
 

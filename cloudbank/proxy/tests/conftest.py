@@ -9,7 +9,7 @@ from typing import Any
 
 import pytest
 
-from proxy import main
+from proxy import main, relay
 
 SHARED_DIR = Path(__file__).resolve().parents[2] / "shared"
 PERSONAS_DIR = SHARED_DIR / "personas"
@@ -60,13 +60,19 @@ def _isolated_proxy_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     monkeypatch.setenv("PROXY_START_TIMEOUT_SECONDS", "0.08")
     main._session_personas.clear()
     main._session_persona_timestamps.clear()
+    main._active_session_ids.clear()
     main._active_session_count = 0
     main._get_session_semaphore()
+    relay._official_help_allowlist.cache_clear()
+    relay._composite_tag_words.cache_clear()
     yield
     main._session_personas.clear()
     main._session_persona_timestamps.clear()
+    main._active_session_ids.clear()
     main._active_session_count = 0
     main._get_session_semaphore()
+    relay._official_help_allowlist.cache_clear()
+    relay._composite_tag_words.cache_clear()
 
 
 @pytest.fixture(scope="session")

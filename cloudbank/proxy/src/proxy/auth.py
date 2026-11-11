@@ -11,6 +11,7 @@ the browser's reconnect will open a session with a refreshed token.
 from __future__ import annotations
 
 import asyncio
+from typing import Any
 
 import google.auth
 from google.auth.credentials import Credentials
@@ -21,6 +22,49 @@ from google.auth.transport.requests import Request
 # code is ever adapted to run under a service account, bind a dedicated
 # identity with only the least-privilege CXAS session role.
 _SCOPES = ["https://www.googleapis.com/auth/cloud-platform"]
+_AUTH_REFRESH_TIMEOUT_SECONDS = 10
+
+
+class _TimedRequest(Request):
+    """google-auth HTTP transport enforcing an explicit token-refresh timeout."""
+
+    def __init__(
+        self,
+        base_request: Request | None = None,
+        *,
+        timeout: int = _AUTH_REFRESH_TIMEOUT_SECONDS,
+    ) -> None:
+        super().__init__()
+        self._base_request = base_request
+        self._timeout = timeout
+
+    def __call__(
+        self,
+        url: str,
+        method: str = "GET",
+        body: Any = None,
+        headers: Any = None,
+        timeout: Any = None,
+        **kwargs: Any,
+    ) -> Any:
+        effective_timeout = self._timeout if timeout is None else timeout
+        if self._base_request is not None:
+            return self._base_request(
+                url,
+                method=method,
+                body=body,
+                headers=headers,
+                timeout=effective_timeout,
+                **kwargs,
+            )
+        return super().__call__(
+            url,
+            method=method,
+            body=body,
+            headers=headers,
+            timeout=effective_timeout,
+            **kwargs,
+        )
 
 
 class GoogleTokenProvider:
@@ -39,7 +83,10 @@ class GoogleTokenProvider:
                 )
                 self._creds = creds
             if not creds.token or creds.expired:
-                await asyncio.to_thread(creds.refresh, Request())
+                timed_request = _TimedRequest(
+                    Request(), timeout=_AUTH_REFRESH_TIMEOUT_SECONDS
+                )
+                await asyncio.to_thread(creds.refresh, timed_request)
             if creds.token is None:
                 # Not an assert: `python -O` strips assertions, and a refresh
                 # yielding no token must fail loudly rather than send None.
