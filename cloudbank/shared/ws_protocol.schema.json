@@ -1,0 +1,417 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cloudbank.example.com/schemas/ws_protocol.schema.json",
+  "title": "CloudbankWsProtocol",
+  "description": "Shared WebSocket wire contract between the React workbench and the localhost FastAPI BidiRunSession proxy.",
+  "anyOf": [
+    { "$ref": "#/definitions/ClientMsg" },
+    { "$ref": "#/definitions/ServerMsg" }
+  ],
+  "definitions": {
+    "PersonaId": {
+      "type": "string",
+      "enum": ["chloe", "david", "tom", "sarah"]
+    },
+    "TimeOfDay": {
+      "type": "string",
+      "enum": ["morning", "afternoon", "evening"]
+    },
+    "IsoDate": {
+      "type": "string",
+      "minLength": 10,
+      "maxLength": 10,
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}$"
+    },
+    "ui_view_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["seq", "page"],
+      "properties": {
+        "seq": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000000
+        },
+        "page": {
+          "type": "string",
+          "enum": ["home", "spending", "savings", "mortgage", "profile"]
+        },
+        "view": {
+          "type": "string",
+          "enum": ["overview", "category", "vendor", "trend", "subscriptions"]
+        },
+        "period": {
+          "type": "string",
+          "enum": ["this_month", "last_month", "two_months_ago"]
+        },
+        "category": {
+          "type": "string",
+          "enum": [
+            "groceries",
+            "coffee_shops",
+            "eating_out",
+            "subscriptions",
+            "transport",
+            "shopping",
+            "bills",
+            "entertainment"
+          ]
+        },
+        "vendor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "not": {
+            "pattern": "[<>\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "highlight_vendor": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 120,
+          "not": {
+            "pattern": "[<>\\u0000-\\u001f\\u007f]"
+          }
+        },
+        "anomaly_status": {
+          "type": "string",
+          "enum": ["confirmed", "unrecognised"]
+        },
+        "extra_monthly_pence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "custom_target_pence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "subview": {
+          "type": "string",
+          "enum": ["overview", "overpay", "rates"]
+        },
+        "monthly_overpayment_pence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        },
+        "lump_sum_overpayment_pence": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 1000000000
+        }
+      }
+    },
+    "ClientStart": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "persona"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "start"
+        },
+        "persona": {
+          "$ref": "#/definitions/PersonaId"
+        },
+        "timeOfDay": {
+          "$ref": "#/definitions/TimeOfDay"
+        },
+        "demoDate": {
+          "$ref": "#/definitions/IsoDate"
+        },
+        "sessionId": {
+          "type": ["string", "null"],
+          "minLength": 1
+        },
+        "lastUiSeq": {
+          "type": ["integer", "null"],
+          "minimum": 0
+        }
+      }
+    },
+    "ClientAudio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "audio"
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 1048576
+        }
+      }
+    },
+    "ClientText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "text"
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 8192
+        }
+      }
+    },
+    "ClientStop": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "stop"
+        }
+      }
+    },
+    "ClientMsg": {
+      "description": "Discriminated union of inbound browser-to-proxy WebSocket messages.",
+      "oneOf": [
+        { "$ref": "#/definitions/ClientStart" },
+        { "$ref": "#/definitions/ClientAudio" },
+        { "$ref": "#/definitions/ClientText" },
+        { "$ref": "#/definitions/ClientStop" }
+      ]
+    },
+    "ServerReady": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sessionId"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ready"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ServerTranscript": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text", "isFinal"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "transcript"
+        },
+        "text": {
+          "type": "string"
+        },
+        "isFinal": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ServerText": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "text", "partial"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "text"
+        },
+        "text": {
+          "type": "string"
+        },
+        "partial": {
+          "type": "boolean"
+        }
+      }
+    },
+    "ServerAudio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "data"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "audio"
+        },
+        "data": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ServerUiState": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "state", "tier"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "ui_state"
+        },
+        "state": {
+          "$ref": "#/definitions/ui_view_state"
+        },
+        "tier": {
+          "type": "integer",
+          "enum": [1, 2, 3]
+        }
+      }
+    },
+    "ServerTurnDiagnostics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "agentTransfers"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "turn_diagnostics"
+        },
+        "turnIndex": {
+          "type": "integer"
+        },
+        "agentTransfers": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "ServerSearchSuggestions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "htmls", "webSearchQueries", "citations"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "search_suggestions"
+        },
+        "htmls": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "webSearchQueries": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "citations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
+      }
+    },
+    "ServerTurnComplete": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "turn_complete"
+        },
+        "turnIndex": {
+          "type": "integer"
+        }
+      }
+    },
+    "ServerGoAway": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "sessionId"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "go_away"
+        },
+        "sessionId": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "ServerSessionExpired": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "message"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "session_expired"
+        },
+        "message": {
+          "type": "string"
+        }
+      }
+    },
+    "ServerInterrupt": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "interrupt"
+        }
+      }
+    },
+    "ServerEnd": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "end"
+        }
+      }
+    },
+    "ServerError": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "message"],
+      "properties": {
+        "type": {
+          "type": "string",
+          "const": "error"
+        },
+        "message": {
+          "type": "string"
+        },
+        "field": {
+          "type": "string"
+        }
+      }
+    },
+    "ServerMsg": {
+      "description": "Discriminated union of outbound proxy-to-browser WebSocket messages.",
+      "oneOf": [
+        { "$ref": "#/definitions/ServerReady" },
+        { "$ref": "#/definitions/ServerTranscript" },
+        { "$ref": "#/definitions/ServerText" },
+        { "$ref": "#/definitions/ServerAudio" },
+        { "$ref": "#/definitions/ServerUiState" },
+        { "$ref": "#/definitions/ServerTurnDiagnostics" },
+        { "$ref": "#/definitions/ServerSearchSuggestions" },
+        { "$ref": "#/definitions/ServerTurnComplete" },
+        { "$ref": "#/definitions/ServerGoAway" },
+        { "$ref": "#/definitions/ServerSessionExpired" },
+        { "$ref": "#/definitions/ServerInterrupt" },
+        { "$ref": "#/definitions/ServerEnd" },
+        { "$ref": "#/definitions/ServerError" }
+      ]
+    }
+  }
+}
