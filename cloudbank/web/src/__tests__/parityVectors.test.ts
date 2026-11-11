@@ -3,7 +3,7 @@ import parityVectors from '../../../shared/parity_vectors.json'
 import savingsMathSource from '../util/savingsMath.ts?raw'
 import mortgageMathSource from '../util/mortgageMath.ts?raw'
 import demoClockSource from '../util/demoClock.ts?raw'
-import { getFixture, type Transaction } from '../data/fixture'
+import { getFixture, type MortgageAccount, type Transaction } from '../data/fixture'
 import type { Persona } from '../personas/personas'
 import {
   isValidIsoCalendarDate,
@@ -189,24 +189,42 @@ describe('parity_vectors.json: mortgage_overpayments, simulation_edges & renewal
   it.each(parityVectors.mortgage_overpayments)(
     'matches mortgage overpayment vector $id',
     (row) => {
-      const mg = getFixture(row.persona as Persona).accounts.mortgage!
+      const mg: MortgageAccount =
+        'synthetic' in row && row.synthetic
+          ? {
+              ...getFixture('chloe').accounts.mortgage!,
+              balance_pence: row.synthetic.balance_pence,
+              interest_rate_bps: row.synthetic.interest_rate_bps,
+              annual_overpayment_allowance_pence: row.synthetic.annual_overpayment_allowance_pence,
+              overpaid_this_year_pence: row.synthetic.overpaid_this_year_pence,
+              next_payment: {
+                day_of_month: 1,
+                amount_pence: row.synthetic.scheduled_payment_pence,
+              },
+            }
+          : getFixture(row.persona as Persona).accounts.mortgage!
       const res = projectOverpayment(
         mg,
         row.monthly_overpayment_pence,
         row.lump_sum_overpayment_pence,
       )
-      expect({
-        baseline_months: res.baseline_months,
-        projected_months: res.projected_months,
-        months_saved: res.months_saved,
-        baseline_interest_pence: res.baseline_interest_pence,
-        projected_interest_pence: res.projected_interest_pence,
-        interest_saved_pence: res.interest_saved_pence,
-        remaining_allowance_pence: res.remaining_allowance_pence,
-        first_year_overpayment_pence: res.first_year_overpayment_pence,
-        exceeds_allowance: res.exceeds_allowance,
-        excess_over_allowance_pence: res.excess_over_allowance_pence,
-      }).toEqual(row.expected)
+      const expectedBaselinePaidOff =
+        'baseline_paid_off' in row.expected ? row.expected.baseline_paid_off : true
+      const expectedPaidOff = 'paid_off' in row.expected ? row.expected.paid_off : true
+      expect(res).toEqual({
+        baseline_months: row.expected.baseline_months,
+        projected_months: row.expected.projected_months,
+        months_saved: row.expected.months_saved,
+        baseline_interest_pence: row.expected.baseline_interest_pence,
+        projected_interest_pence: row.expected.projected_interest_pence,
+        interest_saved_pence: row.expected.interest_saved_pence,
+        remaining_allowance_pence: row.expected.remaining_allowance_pence,
+        first_year_overpayment_pence: row.expected.first_year_overpayment_pence,
+        exceeds_allowance: row.expected.exceeds_allowance,
+        excess_over_allowance_pence: row.expected.excess_over_allowance_pence,
+        baseline_paid_off: expectedBaselinePaidOff,
+        paid_off: expectedPaidOff,
+      })
     },
   )
 

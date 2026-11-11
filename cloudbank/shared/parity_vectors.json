@@ -9,8 +9,8 @@
     "annual_interest_on_balance_pence": "12-step monthly compounding of gross_rate_bps starting from balance_pence with zero monthly contributions (summing the 12 monthly half_up(pot * gross_rate_bps, 120_000) steps).",
     "target_year_month": "From demo_date (year, month in 1..12) and months_to_goal m: total_m = year * 12 + (month - 1) + m; target_year = total_m // 12; target_month = (total_m % 12) + 1.",
     "simulate_mortgage": "If opening_balance_pence <= 0: months = 0, total_interest_pence = 0, ending_balance_pence = 0, paid_off = true. Else iterate m = 1..max_months (default 600): interest = half_up(bal * interest_rate_bps, 120_000); if bal + interest <= monthly_payment_pence return {months: m, total_interest_pence: total_interest + interest, ending_balance_pence: 0, paid_off: true}; else bal = bal + interest - monthly_payment_pence; total_interest += interest. After max_months return {months: max_months, total_interest_pence: total_interest, ending_balance_pence: bal, paid_off: false}.",
-    "mortgage_overpayment": "effective_lump_pence = min(max(0, lump_sum_overpayment_pence), balance_pence). Baseline runs simulate_mortgage(balance_pence, interest_rate_bps, next_payment.amount_pence, 600). Projected runs simulate_mortgage(balance_pence - effective_lump_pence, interest_rate_bps, next_payment.amount_pence + monthly_overpayment_pence, 600). first_year_overpayment_pence = min(balance_pence, effective_lump_pence + min(12, projected.months) * monthly_overpayment_pence). remaining_allowance_pence = max(0, annual_overpayment_allowance_pence - overpaid_this_year_pence). exceeds_allowance = first_year_overpayment_pence > remaining_allowance_pence (strict >, so equality is ERC-free). excess_over_allowance_pence = max(0, first_year_overpayment_pence - remaining_allowance_pence).",
-    "renewal_payment_bisection": "If balance_pence <= 0 return 0. Else integer bisection over simulate_mortgage(balance_pence, rate_bps, mid, max_months=term_remaining_months).paid_off with low = half_up(balance_pence * rate_bps, 120_000) + 1 and high = balance_pence + low, returning smallest payment_pence that pays off within term_remaining_months.",
+    "mortgage_overpayment": "effective_lump_pence = min(max(0, lump_sum_overpayment_pence), balance_pence). Baseline runs simulate_mortgage(balance_pence, interest_rate_bps, next_payment.amount_pence, 600). Projected runs simulate_mortgage(balance_pence - effective_lump_pence, interest_rate_bps, next_payment.amount_pence + monthly_overpayment_pence, 600). both_amortize = baseline.paid_off && projected.paid_off; months_saved = max(0, baseline.months - projected.months) when both_amortize else 0; interest_saved_pence = max(0, baseline.total_interest_pence - projected.total_interest_pence) when both_amortize else 0. first_year_overpayment_pence = min(balance_pence, effective_lump_pence + min(12, projected.months) * monthly_overpayment_pence). remaining_allowance_pence = max(0, annual_overpayment_allowance_pence - overpaid_this_year_pence). exceeds_allowance = first_year_overpayment_pence > remaining_allowance_pence (strict >, so equality is ERC-free). excess_over_allowance_pence = max(0, first_year_overpayment_pence - remaining_allowance_pence).",
+    "renewal_payment_bisection": "If balance_pence <= 0 return 0. If term_remaining_months <= 0 return balance_pence + half_up(balance_pence * rate_bps, 120_000). Else integer bisection over simulate_mortgage(balance_pence, rate_bps, mid, max_months=term_remaining_months).paid_off with low = half_up(balance_pence * rate_bps, 120_000) + 1 and high = balance_pence + low, returning smallest payment_pence that pays off within term_remaining_months.",
     "renter_readiness": "max_borrowing_pence = half_up(annual_income_pence * 45, 10); indicative_budget_with_goal_pence = max_borrowing_pence + goal_target_pence; remaining_to_goal_pence = max(0, goal_target_pence - balance_pence); deposit_progress_bps = min(10000, half_up(balance_pence * 10000, goal_target_pence))."
   },
   "half_up_cases": [
@@ -490,6 +490,58 @@
         "exceeds_allowance": true,
         "excess_over_allowance_pence": 9285000
       }
+    },
+    {
+      "id": "edge_non_amortizing_baseline_proj_pays_off",
+      "synthetic": {
+        "balance_pence": 10000000,
+        "interest_rate_bps": 480,
+        "annual_overpayment_allowance_pence": 1000000,
+        "overpaid_this_year_pence": 0,
+        "scheduled_payment_pence": 30000
+      },
+      "monthly_overpayment_pence": 50000,
+      "lump_sum_overpayment_pence": 0,
+      "expected": {
+        "baseline_months": 600,
+        "projected_months": 174,
+        "months_saved": 0,
+        "baseline_interest_pence": 42926349,
+        "projected_interest_pence": 3890687,
+        "interest_saved_pence": 0,
+        "remaining_allowance_pence": 1000000,
+        "first_year_overpayment_pence": 600000,
+        "exceeds_allowance": false,
+        "excess_over_allowance_pence": 0,
+        "baseline_paid_off": false,
+        "paid_off": true
+      }
+    },
+    {
+      "id": "edge_non_amortizing_both_capped_at_600",
+      "synthetic": {
+        "balance_pence": 10000000,
+        "interest_rate_bps": 480,
+        "annual_overpayment_allowance_pence": 1000000,
+        "overpaid_this_year_pence": 0,
+        "scheduled_payment_pence": 30000
+      },
+      "monthly_overpayment_pence": 5000,
+      "lump_sum_overpayment_pence": 0,
+      "expected": {
+        "baseline_months": 600,
+        "projected_months": 600,
+        "months_saved": 0,
+        "baseline_interest_pence": 42926349,
+        "projected_interest_pence": 33463186,
+        "interest_saved_pence": 0,
+        "remaining_allowance_pence": 1000000,
+        "first_year_overpayment_pence": 60000,
+        "exceeds_allowance": false,
+        "excess_over_allowance_pence": 0,
+        "baseline_paid_off": false,
+        "paid_off": false
+      }
     }
   ],
   "mortgage_simulation_edges": [
@@ -588,6 +640,13 @@
       "rate_bps": 400,
       "term_remaining_months": 120,
       "expected_payment_pence": 0
+    },
+    {
+      "id": "edge_zero_term_renewal_immediate_payoff",
+      "balance_pence": 120000,
+      "rate_bps": 400,
+      "term_remaining_months": 0,
+      "expected_payment_pence": 120400
     }
   ],
   "vendor_matching_cases": [

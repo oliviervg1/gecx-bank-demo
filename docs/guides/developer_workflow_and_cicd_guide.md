@@ -113,10 +113,11 @@ Always deploy through `./cloudbank/push.sh` rather than calling `cxas push` or `
 ```
 
 What `./push.sh` enforces in chronological order:
-1. Runs `uv run --locked cxas lint`, `scripts/audit_agent.py`, `scripts/sync_shared.py --check`, and `pytest -v`.
-2. Confirms `OVERWRITE` intent when targeting `prod` (`--yes` or interactive terminal prompt), then runs `scripts/manage_app.py --config gecx-config.json push`, which imports `cxas_app/Cloudbank` with `conflict_strategy="OVERWRITE"`, fails closed on any `ImportAppResponse.warnings`, and calls `verify_expected_tools` so neither missing tools nor orphaned legacy tools remain on the server.
-3. Runs `scripts/run_golden_evals.py --config gecx-config.json sync`, compiling multi-agent turns in execution order (`toolCall -> agentResponse -> agentTransfer`) to re-populate server-side evaluations cleared by `OVERWRITE`.
-4. Optionally snapshots a version via `scripts/manage_app.py --config gecx-config.json create-version`.
+1. Confirms `OVERWRITE` intent up front when targeting `prod` (`--yes` or interactive terminal prompt).
+2. Runs `scripts/sync_shared.py --check`, `uv run --locked cxas lint`, `scripts/audit_agent.py`, and `uv run --locked pytest -v` in sequence.
+3. Runs `scripts/manage_app.py --config "${CONFIG_FILE}" push "${TARGET}"`, which imports `cxas_app/Cloudbank` with `conflict_strategy="OVERWRITE"`, fails closed on any `ImportAppResponse.warnings`, and calls `verify_expected_tools` so neither missing tools nor orphaned legacy tools remain on the server.
+4. Runs `scripts/run_golden_evals.py --config "${CONFIG_FILE}" sync "${TARGET}"`, compiling multi-agent turns in execution order (`toolCall -> agentResponse -> agentTransfer`) to re-populate server-side evaluations cleared by `OVERWRITE`.
+5. Optionally snapshots an immutable version via `scripts/manage_app.py --config "${CONFIG_FILE}" create-version`.
 
 To inspect versions, manage channel deployments, or execute live platform NAIVE golden evaluations:
 

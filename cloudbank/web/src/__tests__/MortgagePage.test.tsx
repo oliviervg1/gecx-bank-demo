@@ -1,9 +1,11 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import { render, screen, fireEvent } from '@testing-library/react'
 import { MortgagePage } from '../pages/mortgage/MortgagePage'
 import { PersonaProvider } from '../personas/PersonaProvider'
 import { PageProvider } from '../pages/PageProvider'
 import { BankingViewStateProvider } from '../agent/BankingViewStateProvider'
+import { getFixture } from '../data/fixture'
+import * as useFixtureModule from '../data/useFixture'
 
 function renderMortgage(persona: 'chloe' | 'sarah' | 'tom' = 'chloe') {
   return render(
@@ -100,5 +102,28 @@ describe('MortgagePage', () => {
     expect(
       screen.getByRole('progressbar', { name: 'First Home Deposit deposit progress' }),
     ).toBeInTheDocument()
+  })
+
+  it('renders Over 50 years when a non-amortising schedule hits the 600-month cap', () => {
+    const baseChloe = getFixture('chloe')
+    const spy = vi.spyOn(useFixtureModule, 'useFixture').mockReturnValue({
+      ...baseChloe,
+      accounts: {
+        ...baseChloe.accounts,
+        mortgage: {
+          ...baseChloe.accounts.mortgage!,
+          balance_pence: 10_000_000,
+          interest_rate_bps: 480,
+          next_payment: { day_of_month: 1, amount_pence: 30_000 },
+        },
+      },
+    })
+    try {
+      renderMortgage('chloe')
+      fireEvent.click(screen.getByRole('tab', { name: 'Overpay' }))
+      expect(screen.getByText('Over 50 years')).toBeInTheDocument()
+    } finally {
+      spy.mockRestore()
+    }
   })
 })

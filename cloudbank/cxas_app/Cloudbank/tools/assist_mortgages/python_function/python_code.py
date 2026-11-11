@@ -82,7 +82,10 @@ def assist_mortgages(
             return _handle_switch_intent(clean_switch)
 
         clean_confirm = (confirm_pivot or "").strip()
-        if clean_confirm in ("yes", "no") and not (query_type or "").strip():
+        pending_pivot = bool(
+            (context.state.get("mortgage_state") or {}).get("pending_savings_pivot")
+        )
+        if clean_confirm in ("yes", "no") and pending_pivot and not (query_type or "").strip():
             return _handle_pivot_confirmation(clean_confirm)
 
         handoff = dict(context.state.get("handoff_context") or {})

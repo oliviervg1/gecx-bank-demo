@@ -131,7 +131,21 @@ def test_pending_redirect_offer_two_strike_ladder_and_bare_yes_no(
 def test_renter_pending_savings_pivot_confirm_no_yes_and_two_strike_recovery(
     struct_fixtures: dict[str, dict[str, Any]],
 ) -> None:
-    """Verify Tom's renter pending_savings_pivot supports confirm_pivot='no'/'yes' and 2-strike recovery."""
+    """Verify Tom's renter pending_savings_pivot supports confirm_pivot='no'/'yes', 2-strike recovery, and ignores stray homeowner calls."""
+    # 0. Stray confirm_pivot on homeowner Chloe (pending_savings_pivot not armed) must NOT route to savings_agent or bypass unclear_count
+    homeowner_state = make_seeded_state("chloe", struct_fixtures)
+    homeowner_ns = load_controller_namespace("assist_mortgages", homeowner_state)
+    stray_yes = homeowner_ns["assist_mortgages"](confirm_pivot="yes")
+    assert homeowner_state.get("target_agent", "") == ""
+    assert homeowner_state["unclear_count"] == "1"
+    assert "savings projections" not in stray_yes["agent_action"].lower()
+
+    stray_no = homeowner_ns["assist_mortgages"](confirm_pivot="no")
+    assert homeowner_state.get("target_agent", "") == ""
+    assert homeowner_state["unclear_count"] == "0"
+    assert homeowner_state["ui_view_state"]["page"] == "home"
+    assert "no problem" not in stray_no["agent_action"].lower()
+
     # 1. Declining with confirm_pivot="no" clears pending_savings_pivot cleanly
     decline_state = make_seeded_state("tom", struct_fixtures)
     dec_ns = load_controller_namespace("assist_mortgages", decline_state)
