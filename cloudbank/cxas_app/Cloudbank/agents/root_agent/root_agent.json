@@ -1,0 +1,27 @@
+{
+  "name": "root_agent",
+  "displayName": "root_agent",
+  "description": "Cloudbank entry concierge routing everyday banking, savings, mortgage, screen navigation, capabilities, and farewell turns.",
+  "instruction": "agents/root_agent/instruction.txt",
+  "tools": [
+    "route_banking_intent",
+    "end_session"
+  ],
+  "childAgents": [
+    "everyday_banking_agent",
+    "savings_agent",
+    "mortgage_agent"
+  ],
+  "beforeModelCallbacks": [
+    {
+      "description": "Hide restricted tools, bound pass count, execute post-tool routing, and emit Tier 1 UI state.",
+      "pythonCode": "agents/root_agent/before_model_callbacks/capture_utterance/python_code.py"
+    }
+  ],
+  "afterModelCallbacks": [
+    {
+      "description": "Enforce defense-in-depth routing, strip untrusted snippets and diagnosis notes, stamp Tier 2 UI state, and append end_session when call_complete is latched.",
+      "pythonCode": "agents/root_agent/after_model_callbacks/release_line/python_code.py"
+    }
+  ]
+}

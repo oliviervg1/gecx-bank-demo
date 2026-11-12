@@ -1,0 +1,9 @@
+{
+  "name": "assist_mortgages",
+  "displayName": "assist_mortgages",
+  "pythonFunction": {
+    "name": "assist_mortgages",
+    "pythonCode": "tools/assist_mortgages/python_function/python_code.py",
+    "description": "Answer mortgage balance, next payment, 10% ERC-free overpayment allowance, overpayment amortisation projection, fixed-rate renewal comparison, and renter borrowing readiness queries while synchronising the Mortgage screen."
+  }
+}

@@ -1,0 +1,203 @@
+common_session_parameters:
+  persona_id: "tom"
+  first_name: "Tom"
+  demo_date: "2026-11-24"
+  time_of_day: "afternoon"
+  customer_snapshot:
+    user:
+      first_name: "Tom"
+      last_name: "Harding"
+      age: 32
+      location: "London, UK"
+      employment: "Freelance Graphic Designer"
+      email: "tom.harding@example.com"
+      annual_income_pence: 4200000
+      monthly_rent_pence: 145000
+      goals:
+        - "Reach £35,000 First Home Deposit"
+        - "Keep recurring software subscriptions lean"
+    accounts:
+      current:
+        name: "Cloudbank Everyday Account"
+        sort_code: "00-00-99"
+        account_number_last4: "1954"
+        balance_pence: 184050
+        currency: "GBP"
+      savings:
+        name: "Cloudbank First Home Saver"
+        balance_pence: 1420000
+        gross_rate_bps: 465
+        aer_bps: 475
+        monthly_contribution_pence: 35000
+        goal_name: "First Home Deposit"
+        goal_target_pence: 3500000
+    transactions:
+      - { id: "txn-invoice", month_offset: 0, day: 1, vendor: "Client Invoice", category: "income", amount_pence: -295000 }
+      - { id: "txn-rent", month_offset: 0, day: 1, vendor: "Hamilton Lettings", category: "bills", amount_pence: 145000, is_subscription: true }
+      - { id: "txn-coffee-0-0", month_offset: 0, day: 2, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 360 }
+      - { id: "txn-lunch-0-0", month_offset: 0, day: 3, vendor: "Itsu", category: "eating_out", amount_pence: 940 }
+      - { id: "txn-tesco-t", month_offset: 0, day: 4, vendor: "Tesco Express", category: "groceries", amount_pence: 3420 }
+      - { id: "txn-tfl", month_offset: 0, day: 5, vendor: "TfL", category: "transport", amount_pence: 4230 }
+      - { id: "txn-energy-t", month_offset: 0, day: 6, vendor: "Octopus Energy", category: "bills", amount_pence: 7840, is_subscription: true }
+      - { id: "txn-lunch-0-1", month_offset: 0, day: 7, vendor: "Leon", category: "eating_out", amount_pence: 875 }
+      - { id: "txn-spotify-t", month_offset: 0, day: 8, vendor: "Spotify", category: "subscriptions", amount_pence: 1199, is_subscription: true }
+      - { id: "txn-coffee-0-1", month_offset: 0, day: 9, vendor: "Grind", category: "coffee_shops", amount_pence: 320 }
+      - { id: "txn-mobile-t", month_offset: 0, day: 10, vendor: "Giffgaff", category: "bills", amount_pence: 2000, is_subscription: true }
+      - { id: "txn-lunch-0-2", month_offset: 0, day: 12, vendor: "Deliveroo", category: "eating_out", amount_pence: 2230 }
+      - { id: "txn-tesco-t2", month_offset: 0, day: 13, vendor: "Tesco Express", category: "groceries", amount_pence: 2890 }
+      - { id: "txn-icloud", month_offset: 0, day: 14, vendor: "iCloud", category: "subscriptions", amount_pence: 899, is_subscription: true }
+      - { id: "txn-coffee-0-2", month_offset: 0, day: 16, vendor: "Ozone Coffee", category: "coffee_shops", amount_pence: 385 }
+      - { id: "txn-gig", month_offset: 0, day: 17, vendor: "Village Underground", category: "entertainment", amount_pence: 2800 }
+      - { id: "txn-lunch-0-3", month_offset: 0, day: 18, vendor: "Franco Manca", category: "eating_out", amount_pence: 1450 }
+      - { id: "txn-muji", month_offset: 0, day: 20, vendor: "Muji", category: "shopping", amount_pence: 4600 }
+      - { id: "txn-adobe", month_offset: 0, day: 22, vendor: "Adobe Creative Cloud", category: "subscriptions", amount_pence: 19900, is_subscription: true, is_anomaly: true }
+      - { id: "txn-invoice-2", month_offset: 1, day: 1, vendor: "Client Invoice", category: "income", amount_pence: -265000 }
+      - { id: "txn-rent-2", month_offset: 1, day: 1, vendor: "Hamilton Lettings", category: "bills", amount_pence: 145000, is_subscription: true }
+      - { id: "txn-coffee-1-0", month_offset: 1, day: 2, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 360 }
+      - { id: "txn-tfl-2", month_offset: 1, day: 5, vendor: "TfL", category: "transport", amount_pence: 3870 }
+      - { id: "txn-energy-t-2", month_offset: 1, day: 6, vendor: "Octopus Energy", category: "bills", amount_pence: 7840, is_subscription: true }
+      - { id: "txn-spotify-t-2", month_offset: 1, day: 8, vendor: "Spotify", category: "subscriptions", amount_pence: 1199, is_subscription: true }
+      - { id: "txn-mobile-t-2", month_offset: 1, day: 10, vendor: "Giffgaff", category: "bills", amount_pence: 2000, is_subscription: true }
+      - { id: "txn-tesco-t3", month_offset: 1, day: 11, vendor: "Tesco Express", category: "groceries", amount_pence: 4160 }
+      - { id: "txn-lunch-1-0", month_offset: 1, day: 13, vendor: "Deliveroo", category: "eating_out", amount_pence: 2230 }
+      - { id: "txn-icloud-2", month_offset: 1, day: 14, vendor: "iCloud", category: "subscriptions", amount_pence: 899, is_subscription: true }
+      - { id: "txn-coffee-1-1", month_offset: 1, day: 16, vendor: "Grind", category: "coffee_shops", amount_pence: 320 }
+      - { id: "txn-tesco-t4", month_offset: 1, day: 18, vendor: "Tesco Express", category: "groceries", amount_pence: 3015 }
+      - { id: "txn-uniqlo", month_offset: 1, day: 20, vendor: "Uniqlo", category: "shopping", amount_pence: 6290 }
+      - { id: "txn-adobe-2", month_offset: 1, day: 22, vendor: "Adobe Creative Cloud", category: "subscriptions", amount_pence: 5499, is_subscription: true }
+      - { id: "txn-lunch-1-1", month_offset: 1, day: 24, vendor: "Franco Manca", category: "eating_out", amount_pence: 1450 }
+      - { id: "txn-gig-2", month_offset: 1, day: 26, vendor: "Barbican", category: "entertainment", amount_pence: 3500 }
+      - { id: "txn-invoice-3", month_offset: 2, day: 1, vendor: "Client Invoice", category: "income", amount_pence: -310000 }
+      - { id: "txn-rent-3", month_offset: 2, day: 1, vendor: "Hamilton Lettings", category: "bills", amount_pence: 145000, is_subscription: true }
+      - { id: "txn-coffee-2-0", month_offset: 2, day: 3, vendor: "Pret a Manger", category: "coffee_shops", amount_pence: 360 }
+      - { id: "txn-tfl-3", month_offset: 2, day: 5, vendor: "TfL", category: "transport", amount_pence: 4510 }
+      - { id: "txn-energy-t-3", month_offset: 2, day: 6, vendor: "Octopus Energy", category: "bills", amount_pence: 7840, is_subscription: true }
+      - { id: "txn-spotify-t-3", month_offset: 2, day: 8, vendor: "Spotify", category: "subscriptions", amount_pence: 1199, is_subscription: true }
+      - { id: "txn-mobile-t-3", month_offset: 2, day: 10, vendor: "Giffgaff", category: "bills", amount_pence: 2000, is_subscription: true }
+      - { id: "txn-tesco-t5", month_offset: 2, day: 12, vendor: "Tesco Express", category: "groceries", amount_pence: 3680 }
+      - { id: "txn-icloud-3", month_offset: 2, day: 14, vendor: "iCloud", category: "subscriptions", amount_pence: 899, is_subscription: true }
+      - { id: "txn-lunch-2-0", month_offset: 2, day: 17, vendor: "Deliveroo", category: "eating_out", amount_pence: 2230 }
+      - { id: "txn-coffee-2-1", month_offset: 2, day: 19, vendor: "Ozone Coffee", category: "coffee_shops", amount_pence: 385 }
+      - { id: "txn-adobe-3", month_offset: 2, day: 22, vendor: "Adobe Creative Cloud", category: "subscriptions", amount_pence: 5499, is_subscription: true }
+      - { id: "txn-lunch-2-1", month_offset: 2, day: 25, vendor: "Itsu", category: "eating_out", amount_pence: 940 }
+
+conversations:
+  - conversation: "tom_renter_readiness_to_deposit_savings_journey"
+    tags:
+      - "P1"
+      - "renter"
+      - "savings"
+    turns:
+      - user: "How much could I roughly borrow for a mortgage on my first home?"
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "MORTGAGES"
+              topic_hint:
+                $matchType: "ignore"
+          - action: transfer_to_agent
+            args:
+              agent: "mortgage_agent"
+          - action: assist_mortgages
+            args:
+              query_type: "summary"
+        agent:
+          - "# silent"
+          - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000 suggests borrowing up to £189,000, or a property budget around £224,000 once your £35,000 First Home Deposit is complete (£20,800 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
+
+      - user: "Yes, please show me that."
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              confirm_pivot: "yes"
+          - action: transfer_to_agent
+            args:
+              agent: "savings_agent"
+          - action: assist_savings
+            args:
+              query_type: "summary"
+        agent:
+          - "# silent"
+          - "As of November, your First Home Deposit in Cloudbank First Home Saver holds £14,200 toward your £35,000 target at 4.75% AER, with £350 going in each month, putting you on track to reach your goal in 47 months (October 2030)."
+
+      - user: "Cheers, that's all, goodbye."
+        tool_calls:
+          - action: assist_savings
+            args:
+              switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Tom. Have a great rest of your day, and goodbye."
+
+  - conversation: "tom_renter_declines_savings_pivot_journey"
+    tags:
+      - "P1"
+      - "renter"
+      - "confirm_pivot_no"
+    turns:
+      - user: "Could you check roughly how much I could borrow for a first home?"
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "MORTGAGES"
+              topic_hint:
+                $matchType: "ignore"
+          - action: transfer_to_agent
+            args:
+              agent: "mortgage_agent"
+          - action: assist_mortgages
+            args:
+              query_type: "summary"
+        agent:
+          - "# silent"
+          - "You do not hold a Cloudbank mortgage right now, though as of November an indicative 4.5 times income multiple on £42,000 suggests borrowing up to £189,000, or a property budget around £224,000 once your £35,000 First Home Deposit is complete (£20,800 left to go). These figures are an indicative illustration only and not personalised mortgage advice. Would you like to look at your First Home Deposit projection?"
+
+      - user: "No thanks, not right now."
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              confirm_pivot: "no"
+        agent: "No problem at all. Would you like to check anything on your everyday banking and spending, or your savings pot?"
+
+      - user: "Nothing else today, thanks, goodbye."
+        tool_calls:
+          - action: assist_mortgages
+            args:
+              switch_intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Tom. Have a great rest of your day, and goodbye."
+
+  - conversation: "tom_two_strike_unclear_recovery_journey"
+    tags:
+      - "P1"
+      - "unclear_recovery"
+    turns:
+      - user: "Testing, one two."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "UNCLEAR"
+        agent: "Sorry, I did not quite catch that. Would you like help with everyday banking, savings, or mortgages?"
+
+      - user: "Hmm, still not sure."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "UNCLEAR"
+        agent: "I have opened your Home summary on screen. I can help with everyday banking and spending, your savings pot and goal projections, or your mortgage payments, overpayments, and fixed-rate renewal options. Which area would you like to explore?"
+
+      - user: "All good for now, goodbye."
+        tool_calls:
+          - action: route_banking_intent
+            args:
+              intent: "FAREWELL"
+          - action: end_session
+            args:
+              session_escalated: false
+              reason: "CALL_COMPLETED"
+        agent: "You are very welcome, Tom. Have a great rest of your day, and goodbye."

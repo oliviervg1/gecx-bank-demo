@@ -1,0 +1,99 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://cloudbank.example.com/schemas/ui_view_state.schema.json",
+  "title": "UiViewState",
+  "description": "Cross-runtime contract for context.state['ui_view_state'] emitted by CXAS Python controllers and consumed by relay.py and the React 5-tab Workbench.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["seq", "page"],
+  "properties": {
+    "seq": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 1000000
+    },
+    "page": {
+      "type": "string",
+      "enum": ["home", "spending", "savings", "mortgage", "profile"]
+    },
+    "view": {
+      "type": "string",
+      "enum": ["overview", "category", "vendor", "trend", "subscriptions"]
+    },
+    "period": {
+      "type": "string",
+      "enum": ["this_month", "last_month", "two_months_ago"]
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "groceries",
+        "coffee_shops",
+        "eating_out",
+        "subscriptions",
+        "transport",
+        "shopping",
+        "bills",
+        "entertainment"
+      ]
+    },
+    "vendor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
+    },
+    "highlight_vendor": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 120,
+      "not": {
+        "pattern": "[<>\\u0000-\\u001f\\u007f]"
+      }
+    },
+    "anomaly_status": {
+      "type": "string",
+      "enum": ["confirmed", "unrecognised"]
+    },
+    "anomaly_by_vendor": {
+      "type": "object",
+      "propertyNames": {
+        "minLength": 1,
+        "maxLength": 120,
+        "not": {
+          "pattern": "[<>\\u0000-\\u001f\\u007f]"
+        }
+      },
+      "additionalProperties": {
+        "type": "string",
+        "enum": ["confirmed", "unrecognised"]
+      }
+    },
+    "extra_monthly_pence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "custom_target_pence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "subview": {
+      "type": "string",
+      "enum": ["overview", "overpay", "rates"]
+    },
+    "monthly_overpayment_pence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    },
+    "lump_sum_overpayment_pence": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 1000000000
+    }
+  }
+}

@@ -1,0 +1,14 @@
+# Zero-warning lint policy for the Cloudbank Multi-Product CX Agent Studio (GECX) app.
+# Run from `cloudbank/` WITHOUT `--app-dir` so evaluation rules (E001-E011) execute:
+#   cd cloudbank && uv run --locked cxas lint
+
+app_dir: cxas_app/Cloudbank
+
+evals_dir: evals/
+
+rules: {}
+
+ignore:
+  - "**/__pycache__/**"
+  - "**/test_*.py"
+  - "cxas_shared/**"

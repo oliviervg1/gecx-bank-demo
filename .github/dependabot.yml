@@ -1,0 +1,57 @@
+# Keeps all four dependency surfaces current (/cloudbank/web, /cloudbank,
+# /cloudbank/proxy, and GitHub Actions).
+#
+# Updates are grouped so a quiet week produces a single PR per ecosystem rather
+# than one per transitive package, and minor/patch bumps are separated from
+# major upgrades so breaking changes are reviewed deliberately.
+version: 2
+
+updates:
+  - package-ecosystem: npm
+    directory: /cloudbank/web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # Families with tight peer-version coupling are grouped so Dependabot
+      # proposes them together instead of opening individually unmergeable PRs.
+      vite:
+        patterns: ["vite", "@vitejs/*", "vitest", "@vitest/*"]
+      eslint:
+        patterns: ["eslint", "@eslint/*", "eslint-plugin-*", "typescript-eslint", "globals", "typescript"]
+      web-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      # typescript-eslint currently peers `typescript >=4.8.4 <6.1.0`; keep
+      # major TypeScript bumps gated until typescript-eslint widens its peer range.
+      - dependency-name: typescript
+        update-types: [version-update:semver-major]
+
+  - package-ecosystem: uv
+    directory: /cloudbank
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      agent-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: uv
+    directory: /cloudbank/proxy
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      proxy-minor-and-patch:
+        patterns: ["*"]
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns: ["*"]

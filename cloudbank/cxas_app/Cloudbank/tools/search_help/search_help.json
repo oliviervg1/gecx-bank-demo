@@ -1,0 +1,14 @@
+{
+  "name": "search_help",
+  "displayName": "search_help",
+  "googleSearchTool": {
+    "name": "search_help",
+    "description": "Search public UK help guidance on how to cancel or manage a third-party subscription. Do not speak a conversational pacing phrase before calling this tool; call it immediately through the everyday banking controller."
+  },
+  "toolFakeConfig": {
+    "enableFakeMode": true,
+    "codeBlock": {
+      "pythonCode": "tools/search_help/tool_fake_config/code_block/python_code.py"
+    }
+  }
+}

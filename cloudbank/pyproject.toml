@@ -1,0 +1,65 @@
+[project]
+name = "cloudbank-agent-workspace"
+version = "0.1.0"
+description = "Cloudbank multi-product CX Agent Studio (GECX) bundle, offline test suite, and evaluation tooling"
+requires-python = ">=3.11"
+dependencies = [
+  "cxas-scrapi>=1.11.0,<2",
+  "jsonschema>=4.23,<5",
+  "protobuf>=5.28,<7",
+  "pyyaml>=6.0,<7",
+]
+
+[dependency-groups]
+dev = [
+  "pip-audit>=2.9,<3",
+  "pyright>=1.1.390,<2",
+  "pytest>=8.3,<10",
+  "ruff>=0.14,<1.0",
+]
+
+[tool.uv]
+package = false
+
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+include = [
+  "cxas_app/**/*.py",
+  "cxas_shared/**/*.py",
+  "scripts/**/*.py",
+  "tests/**/*.py",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = ["E501"]
+
+[tool.pyright]
+pythonVersion = "3.11"
+include = [
+  "cxas_app",
+  "cxas_shared",
+  "scripts",
+  "tests",
+]
+extraPaths = [
+  "scripts",
+  "tests",
+]
+typeCheckingMode = "standard"
+executionEnvironments = [
+  { root = "cxas_app", reportUndefinedVariable = false },
+  { root = "cxas_shared", reportUndefinedVariable = false },
+  { root = "scripts" },
+  { root = "tests" },
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-ra"

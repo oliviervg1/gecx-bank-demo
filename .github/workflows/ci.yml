@@ -1,0 +1,237 @@
+# Enforces local verification gates from AGENTS.md and Makefile plus repository
+# privacy, lockfile host allowlisting, dependency audits, and live-browser
+# Playwright + axe-core WCAG 2.1 AA end-to-end checks.
+#
+# Every gate runs offline with zero GCP credentials so it is safe to run on
+# untrusted pull requests.
+#
+# Security note: no `github.event.*` value is interpolated into any `run:`
+# block, all third-party actions are pinned to full 40-character commit SHAs,
+# and every checkout disables credential persistence.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+permissions:
+  contents: read
+
+jobs:
+  privacy-and-hygiene:
+    name: privacy and lockfile hygiene
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Run repository privacy and lockfile hygiene gate
+        run: make hygiene
+
+  agent:
+    name: agent (sync check, ruff, pyright, cxas lint, audit, pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudbank
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "cloudbank/uv.lock"
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Verify shared callbacks and evaluation snapshots are in sync
+        run: uv run --locked python scripts/sync_shared.py --check
+
+      - name: Ruff lint
+        run: uv run --locked ruff check .
+
+      - name: Pyright typecheck
+        run: uv run --locked pyright
+
+      # Run from cloudbank/ WITHOUT --app-dir so evaluation rules E001-E011 execute.
+      - name: CXAS structural and evaluation lint
+        run: uv run --locked cxas lint
+
+      - name: Composite v2 readiness audit
+        run: uv run --locked python scripts/audit_agent.py --workspace=cxas_app/Cloudbank --report
+
+      - name: Offline Python agent suite
+        run: uv run --locked pytest -v
+
+  proxy:
+    name: proxy (ruff, pyright, pytest)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudbank/proxy
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "cloudbank/proxy/uv.lock"
+
+      - name: Install (locked)
+        run: uv sync --locked
+
+      - name: Ruff lint
+        run: uv run --locked ruff check .
+
+      - name: Pyright typecheck
+        run: uv run --locked pyright
+
+      - name: Proxy test suite
+        run: uv run --locked pytest -v
+
+  web:
+    name: web (vitest, tsc, eslint, build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: cloudbank/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: cloudbank/web/.nvmrc
+          cache: npm
+          cache-dependency-path: cloudbank/web/package-lock.json
+
+      # `npm ci` fails if package.json and package-lock.json disagree.
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Unit and parity tests
+        run: npm test
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint (zero warnings)
+        run: npm run lint
+
+      - name: Production build
+        run: npm run build
+
+  e2e:
+    name: e2e (Playwright + axe-core WCAG 2.1 AA)
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "cloudbank/proxy/uv.lock"
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: cloudbank/web/.nvmrc
+          cache: npm
+          cache-dependency-path: cloudbank/web/package-lock.json
+
+      - name: Install proxy dependencies (locked)
+        working-directory: cloudbank/proxy
+        run: uv sync --locked
+
+      - name: Install web dependencies (locked)
+        working-directory: cloudbank/web
+        run: npm ci
+
+      - name: Install Playwright Chromium
+        working-directory: cloudbank/web
+        run: npx playwright install chromium
+
+      - name: Build production web bundle
+        working-directory: cloudbank/web
+        run: npm run build
+
+      - name: Run Playwright E2E and axe-core accessibility suite
+        working-directory: cloudbank/web
+        run: npm run test:e2e
+
+  python-audit:
+    name: python (pip-audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7.6.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: "**/uv.lock"
+
+      - name: Audit cloudbank Python lockfile
+        working-directory: cloudbank
+        run: |
+          reqs="$(mktemp)"
+          trap 'rm -f "$reqs"' EXIT
+          uv export --frozen --no-hashes --no-emit-project > "$reqs"
+          uv run --locked pip-audit --no-deps --disable-pip -r "$reqs"
+
+      - name: Audit proxy Python lockfile
+        working-directory: cloudbank/proxy
+        run: |
+          reqs="$(mktemp)"
+          trap 'rm -f "$reqs"' EXIT
+          uv export --frozen --no-hashes --no-emit-project > "$reqs"
+          uv run --locked pip-audit --no-deps --disable-pip -r "$reqs"
+
+  web-audit:
+    # Split from `web` so an advisory published upstream reports as its own
+    # failure rather than masquerading as a broken build.
+    name: web (npm audit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: cloudbank/web
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version-file: cloudbank/web/.nvmrc
+          cache: npm
+          cache-dependency-path: cloudbank/web/package-lock.json
+
+      - name: Install (locked)
+        run: npm ci
+
+      - name: Audit (report everything)
+        run: npm audit || true
+
+      - name: Audit (fail on high or critical)
+        run: npm audit --audit-level=high

@@ -1,0 +1,23 @@
+{
+  "name": "savings_agent",
+  "displayName": "savings_agent",
+  "description": "Cloudbank Savings specialist covering savings pot balances, AER rates, monthly auto-save, and compound goal completion projections.",
+  "instruction": "agents/savings_agent/instruction.txt",
+  "tools": [
+    "assist_savings",
+    "end_session"
+  ],
+  "childAgents": [],
+  "beforeModelCallbacks": [
+    {
+      "description": "Hide restricted tools, bound pass count, execute post-tool routing, and emit Tier 1 UI state.",
+      "pythonCode": "agents/savings_agent/before_model_callbacks/capture_utterance/python_code.py"
+    }
+  ],
+  "afterModelCallbacks": [
+    {
+      "description": "Enforce defense-in-depth routing, strip untrusted snippets and diagnosis notes, stamp Tier 2 UI state, and append end_session when call_complete is latched.",
+      "pythonCode": "agents/savings_agent/after_model_callbacks/release_line/python_code.py"
+    }
+  ]
+}
