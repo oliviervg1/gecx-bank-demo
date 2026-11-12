@@ -51,8 +51,10 @@ MAX_IAP_JWT_LENGTH = 8192
 MAX_CERT_RESPONSE_BYTES = 256 * 1024
 CERT_FETCH_TIMEOUT_SECONDS = 5
 DEFAULT_CLOCK_SKEW_SECONDS = 30
+MAX_IAP_TOKEN_LIFETIME_SECONDS = 3600.0
 DEFAULT_CERT_CACHE_TTL_SECONDS = 3600.0
 DEFAULT_CERT_REFRESH_MIN_INTERVAL_SECONDS = 30.0
+DEFAULT_MAX_CERT_STALE_SECONDS = 86400.0
 
 _IAP_AUDIENCE_RE = re.compile(
     r"\A/projects/[0-9]+/locations/[a-z0-9-]+/services/[a-z0-9-]+\Z"
@@ -179,6 +181,19 @@ def _fetch_iap_certs_sync(
     return _validate_cert_map(decoded)
 
 
+def _validate_timestamp_claim(value: Any, claim_name: str) -> float:
+    """Validate a numeric JWT timestamp claim without float conversion overflow."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise IapAuthError(f"invalid {claim_name} claim")
+    try:
+        as_float = float(value)
+    except OverflowError as exc:
+        raise IapAuthError(f"overflow in {claim_name} claim") from exc
+    if not math.isfinite(as_float):
+        raise IapAuthError(f"non-finite {claim_name} claim")
+    return as_float
+
+
 class IapVerifier:
     """Single-flight cached ES256 verifier for Cloud Run Direct IAP assertions."""
 
@@ -188,6 +203,7 @@ class IapVerifier:
         cert_fetcher: CertFetcher | None = None,
         cache_ttl_seconds: float = DEFAULT_CERT_CACHE_TTL_SECONDS,
         min_refresh_interval_seconds: float = DEFAULT_CERT_REFRESH_MIN_INTERVAL_SECONDS,
+        max_stale_seconds: float = DEFAULT_MAX_CERT_STALE_SECONDS,
         clock_skew_seconds: int = DEFAULT_CLOCK_SKEW_SECONDS,
         monotonic_clock: Callable[[], float] = time.monotonic,
         wall_clock: Callable[[], float] = time.time,
@@ -197,6 +213,7 @@ class IapVerifier:
         )
         self._cache_ttl_seconds = cache_ttl_seconds
         self._min_refresh_interval_seconds = min_refresh_interval_seconds
+        self._max_stale_seconds = max_stale_seconds
         self._clock_skew_seconds = clock_skew_seconds
         self._monotonic = monotonic_clock
         self._wall_clock = wall_clock
@@ -205,14 +222,21 @@ class IapVerifier:
         self._certs: dict[str, str] = {}
         self._fetched_at: float | None = None
         self._last_unknown_kid_refresh_at: float | None = None
-        self._last_failed_ttl_refresh_at: float | None = None
+        self._last_failed_refresh_at: float | None = None
 
     def clear_cache(self) -> None:
         """Reset cached keys and rate-limit timestamps (intended for test isolation)."""
         self._certs = {}
         self._fetched_at = None
         self._last_unknown_kid_refresh_at = None
-        self._last_failed_ttl_refresh_at = None
+        self._last_failed_refresh_at = None
+
+    def _has_usable_stale_certs(self, now: float) -> bool:
+        return (
+            bool(self._certs)
+            and self._fetched_at is not None
+            and (now - self._fetched_at) <= self._max_stale_seconds
+        )
 
     async def _get_certs_for_kid(self, kid: str) -> Mapping[str, str]:
         now = self._monotonic()
@@ -245,21 +269,26 @@ class IapVerifier:
                     return self._certs
                 self._last_unknown_kid_refresh_at = now
             elif (
-                self._certs
-                and self._last_failed_ttl_refresh_at is not None
-                and (now - self._last_failed_ttl_refresh_at)
+                self._last_failed_refresh_at is not None
+                and (now - self._last_failed_refresh_at)
                 < self._min_refresh_interval_seconds
             ):
-                # TTL expired but a recent refresh failed: keep serving last-known-good keys
-                # during cooldown rather than stalling every request on upstream timeout.
-                return self._certs
+                # Cold-start or expired-TTL refresh failed recently: fail fast when no
+                # usable keys remain within `max_stale_seconds` so concurrent callers
+                # never queue serial upstream timeouts under the lock.
+                if self._has_usable_stale_certs(now):
+                    return self._certs
+                raise IapCertUnavailableError(
+                    "IAP public keys unavailable during refresh cooldown"
+                )
 
             try:
                 raw_fetched = await self._cert_fetcher()
                 validated = _validate_cert_map(raw_fetched)
             except Exception as exc:
-                if self._certs:
-                    self._last_failed_ttl_refresh_at = self._monotonic()
+                failed_at = self._monotonic()
+                self._last_failed_refresh_at = failed_at
+                if self._has_usable_stale_certs(failed_at):
                     log.warning(
                         "retaining cached IAP public keys after refresh failure: %s",
                         type(exc).__name__,
@@ -272,7 +301,7 @@ class IapVerifier:
             refreshed_at = self._monotonic()
             self._certs = validated
             self._fetched_at = refreshed_at
-            self._last_failed_ttl_refresh_at = None
+            self._last_failed_refresh_at = None
             return self._certs
 
     async def verify_token(
@@ -327,29 +356,21 @@ class IapVerifier:
             ValueError,
             TypeError,
             KeyError,
+            OverflowError,
         ) as exc:
             raise IapAuthError("IAP JWT cryptographic or claim verification failed") from exc
 
         if not isinstance(payload, Mapping):
             raise IapAuthError("JWT payload must be a JSON object")
 
-        for numeric_claim in ("iat", "exp"):
-            claim_val = payload.get(numeric_claim)
-            if (
-                isinstance(claim_val, bool)
-                or not isinstance(claim_val, (int, float))
-                or not math.isfinite(claim_val)
-            ):
-                raise IapAuthError(f"invalid {numeric_claim} claim")
+        iat_val = _validate_timestamp_claim(payload.get("iat"), "iat")
+        exp_val = _validate_timestamp_claim(payload.get("exp"), "exp")
+        lifetime = exp_val - iat_val
+        if lifetime < 0 or lifetime > MAX_IAP_TOKEN_LIFETIME_SECONDS:
+            raise IapAuthError("IAP JWT lifetime out of permitted bounds")
 
         if "nbf" in payload:
-            nbf_val = payload["nbf"]
-            if (
-                isinstance(nbf_val, bool)
-                or not isinstance(nbf_val, (int, float))
-                or not math.isfinite(nbf_val)
-            ):
-                raise IapAuthError("invalid nbf claim")
+            nbf_val = _validate_timestamp_claim(payload["nbf"], "nbf")
             if self._wall_clock() + self._clock_skew_seconds < nbf_val:
                 raise IapAuthError("IAP JWT not yet valid (nbf)")
 

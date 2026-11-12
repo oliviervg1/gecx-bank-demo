@@ -1490,6 +1490,11 @@ async def test_iap_jwt_es256_alg_pinning_header_caps_claims_and_no_ws_accept_on_
         _sign_es256_jwt(priv_ec, iss="https://accounts.google.com"),
         _sign_es256_jwt(priv_ec, exp=now - 120),
         _sign_es256_jwt(priv_ec, iat=now + 120),
+        _sign_es256_jwt(priv_ec, exp=10**400),
+        _sign_es256_jwt(priv_ec, exp=1e308),
+        _sign_es256_jwt(priv_ec, iat=now - 5, exp=now + 7200),
+        _sign_es256_jwt(priv_ec, iat=now + 10, exp=now + 5),
+        _sign_es256_jwt(priv_ec, extra_claims={"nbf": 10**400}),
         _sign_es256_jwt(priv_ec, extra_claims={"nbf": now + 120}),
         _sign_es256_jwt(priv_ec, sub=""),
         _sign_es256_jwt(priv_ec, sub="   "),
@@ -1573,6 +1578,17 @@ async def test_iap_jwt_es256_alg_pinning_header_caps_claims_and_no_ws_accept_on_
     assert not any(e["type"] == "websocket.accept" for e in ws_bad_no_ext)
     assert ws_bad_no_ext == [{"type": "websocket.close", "code": 1008}]
 
+    # Huge signed exp=10**400 over HTTP returns 401 (never 500 OverflowError)
+    huge_exp_tok = _sign_es256_jwt(priv_ec, exp=10**400)
+    http_huge_exp = client.get(
+        "/unknown",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "x-goog-iap-jwt-assertion": huge_exp_tok,
+        },
+    )
+    assert http_huge_exp.status_code == 401
+
 
 @pytest.mark.asyncio
 async def test_iap_cert_cache_single_flight_unknown_kid_rotation_and_503_on_no_keys(
@@ -1603,6 +1619,7 @@ async def test_iap_cert_cache_single_flight_unknown_kid_rotation_and_503_on_no_k
         cert_fetcher=controlled_fetcher,
         cache_ttl_seconds=3600.0,
         min_refresh_interval_seconds=30.0,
+        max_stale_seconds=86400.0,
         monotonic_clock=lambda: fake_now[0],
     )
     monkeypatch.setattr(main, "_iap_verifier", verifier)
@@ -1612,7 +1629,30 @@ async def test_iap_cert_cache_single_flight_unknown_kid_rotation_and_503_on_no_k
     tok_k2 = _sign_es256_jwt(priv_2, kid="kid-2")
     tok_k3 = _sign_es256_jwt(priv_2, kid="kid-3")
 
-    # 1. Cold-start fetch failure with zero usable keys -> HTTP 503 & WS denied before accept
+    # 1. Cold-start fetch failure across 20 concurrent calls is single-flight (EXACTLY 1 fetch!)
+    cold_gate = asyncio.Event()
+    fetch_calls = 0
+
+    async def slow_failing_cold_fetcher() -> dict[str, str]:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        await cold_gate.wait()
+        raise OSError("network unreachable")
+
+    verifier._cert_fetcher = slow_failing_cold_fetcher
+    cold_tasks = [
+        asyncio.create_task(verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,)))
+        for _ in range(20)
+    ]
+    await asyncio.sleep(0.02)
+    cold_gate.set()
+    cold_outcomes = await asyncio.gather(*cold_tasks, return_exceptions=True)
+    assert len(cold_outcomes) == 20
+    assert all(isinstance(o, iap.IapCertUnavailableError) for o in cold_outcomes)
+    assert fetch_calls == 1
+
+    # During cold-start cooldown, HTTP returns 503 and WS is denied before accept with 0 extra fetches
+    verifier._cert_fetcher = controlled_fetcher
     r_503 = client.get(
         "/missing",
         headers={
@@ -1634,8 +1674,10 @@ async def test_iap_cert_cache_single_flight_unknown_kid_rotation_and_503_on_no_k
         ):
             pass
     assert getattr(ws_503_exc.value, "status_code", None) == 503
+    assert fetch_calls == 1
 
-    # 2. Populate initial cache with kid-1
+    # 2. Advance past cold-start cooldown and populate initial cache with kid-1
+    fake_now[0] += 35.0
     fetch_calls = 0
     mode = "initial"
     assert (await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
@@ -1653,6 +1695,7 @@ async def test_iap_cert_cache_single_flight_unknown_kid_rotation_and_503_on_no_k
     principals = await asyncio.gather(*tasks)
     assert len(principals) == 8
     assert fetch_calls == 2
+    last_good_fetch_at = fake_now[0]
 
     # 4. Rate-limited: bogus unknown kid-3 within 30s does ZERO extra fetches and fails 401
     for _ in range(4):
@@ -1669,6 +1712,28 @@ async def test_iap_cert_cache_single_flight_unknown_kid_rotation_and_503_on_no_k
     assert fetch_calls == 3
     assert (await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
     assert (await verifier.verify_token(tok_k2, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
+
+    # 6. Hard maximum stale age (24h = 86400s): just inside 24h still serves stale keyset on
+    #    refresh outage; past 24h fails closed with IapCertUnavailableError (HTTP 503)!
+    mode = "outage"
+    fake_now[0] = last_good_fetch_at + 86399.0
+    assert (await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
+
+    # Inside failure cooldown AND past 24h hard cap -> 503!
+    fake_now[0] = last_good_fetch_at + 86401.0
+    with pytest.raises(iap.IapCertUnavailableError):
+        await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))
+
+    # Past failure cooldown AND past 24h hard cap (90 days later) -> still 503!
+    fake_now[0] = last_good_fetch_at + (90 * 86400.0)
+    r_stale_503 = client.get(
+        "/missing",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "x-goog-iap-jwt-assertion": tok_k1,
+        },
+    )
+    assert r_stale_503.status_code == 503
 
 
 @pytest.mark.asyncio
@@ -2053,6 +2118,7 @@ def test_static_spa_serving_methods_mime_traversal_and_csp_startup_guards(
     (assets_dir / "index-abc123.js").write_text("export const x = 1;\n", encoding="utf-8")
     (assets_dir / "brand-font.woff2").write_bytes(b"wOF2\x00\x01\x00\x00")
     (assets_dir / "styles.css").write_text("body{margin:0}\n", encoding="utf-8")
+    (assets_dir / ".hidden.json").write_text('{"secret":true}\n', encoding="utf-8")
 
     outside_secret = tmp_path / "outside_secret.js"
     outside_secret.write_text("secret = true;\n", encoding="utf-8")
@@ -2108,6 +2174,7 @@ def test_static_spa_serving_methods_mime_traversal_and_csp_startup_guards(
         # 3. Missing assets, symlinks, traversals, root files, arbitrary SPA paths, and OpenAPI routes ALL 404
         for must_404 in (
             "/assets/missing.js",
+            "/assets/.hidden.json",
             "/assets/symlink-escape.js",
             "/assets/%2e%2e/index.html",
             "/assets/..%5cindex.html",

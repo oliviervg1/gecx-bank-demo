@@ -47,7 +47,7 @@ export default defineConfig({
       },
     },
     {
-      command: `sh -c '[ -f dist/index.html ] || npm run build; exec npx vite preview --host 127.0.0.1 --port ${webPort} --strictPort'`,
+      command: `npx vite preview --host 127.0.0.1 --port ${webPort} --strictPort`,
       url: `http://127.0.0.1:${webPort}`,
       reuseExistingServer: false,
       timeout: 30_000,

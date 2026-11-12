@@ -1231,7 +1231,7 @@ def _register_static_spa_routes(fastapi_app: FastAPI, static_dir_raw: str) -> No
             return _static_not_found(bundle)
 
         segments = asset_path.split("/")
-        if any(seg in ("", ".", "..") for seg in segments):
+        if any(not seg or seg.startswith(".") for seg in segments):
             return _static_not_found(bundle)
 
         cursor = bundle.assets_root
