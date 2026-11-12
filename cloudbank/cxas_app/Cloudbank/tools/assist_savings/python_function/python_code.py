@@ -449,8 +449,10 @@ def _format_projection_reply(
         )
 
     return (
-        f"Starting from {statement_month}, saving {_format_gbp(total_monthly)} a month in your {sav['goal_name']} "
-        f"at {_format_bps(sav['aer_bps'])} AER reaches {_format_gbp(target_pence)} in {proj_months} months ({proj_date})."
+        f"As of {statement_month}, your {sav['goal_name']} in {sav['name']} holds "
+        f"{_format_gbp(sav['balance_pence'])} at {_format_bps(sav['aer_bps'])} AER, and saving "
+        f"{_format_gbp(total_monthly)} a month puts you on track to reach {_format_gbp(target_pence)} "
+        f"in {proj_months} months ({proj_date})."
     )
 
 

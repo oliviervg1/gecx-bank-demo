@@ -2,7 +2,16 @@
 
 All notable changes to the Cloudbank Multi-Product Retail Banking Reference Application are documented in this file. Entries follow Why / Fix / Test / Docs so engineers and reviewers can trace both intent and verification.
 
-## [Unreleased] - 2026-11-11
+## [Unreleased] - 2026-11-12
+
+### Baseline Savings Projection Completeness & Golden Evaluation Determinism
+
+- **Why:** Ensure baseline `assist_savings(query_type="projection")` replies include the customer's current savings pot balance when reached from renter mortgage pivots, and eliminate ambiguity between `UNCLEAR` and `CAPABILITIES` on Strike 2 of the two-strike recovery golden evaluation.
+- **Fix:** Updated `_format_projection_reply` in `assist_savings` so baseline (`extra_monthly_amount == 0`) projections state the current pot balance, account name, and AER alongside the monthly contribution and completion month; aligned Turn 2 of `tom_renter_readiness_to_deposit_savings_journey` to `query_type: "projection"`; and updated Turn 2 of `tom_two_strike_unclear_recovery_journey` to an unambiguous second microphone check utterance.
+- **Test:** Added baseline `query_type="projection"` balance assertion in `cloudbank/tests/test_controllers.py` and verified all 7 live NAIVE golden evaluations on CXAS.
+- **Docs:** Updated `docs/tools/assist_savings.md` and `CHANGELOG.md`.
+
+## [1.0.0] - 2026-11-11
 
 ### Security, Session Integrity, Multimodal Accessibility & Architecture Hardening
 

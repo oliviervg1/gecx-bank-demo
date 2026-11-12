@@ -816,6 +816,7 @@ def test_savings_and_everyday_remaining_branches(
     for s_kwargs in (
         {"query_type": "summary"},
         {"query_type": "interest_rate"},
+        {"query_type": "projection"},
         {
             "query_type": "projection",
             "extra_monthly_amount": 100.0,
@@ -825,6 +826,10 @@ def test_savings_and_everyday_remaining_branches(
     ):
         s_res = s_ns["assist_savings"](**s_kwargs)
         _assert_envelope_and_ui(s_res, state, ui_view_state_schema)
+
+    base_proj = s_ns["assist_savings"](query_type="projection")["agent_action"]
+    assert "holds £4,850" in base_proj and "saving £200 a month" in base_proj
+    assert "23 months (October 2028)" in base_proj
 
     # Missing required snapshot key yields graceful apology rather than "£0"
     broken_state = make_seeded_state("chloe", struct_fixtures)
