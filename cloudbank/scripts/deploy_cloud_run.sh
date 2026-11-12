@@ -677,7 +677,19 @@ CLOUDSDK_CORE_INTERACTIVE_UX_STYLE=OFF gcloud builds submit . \
 extract_service_hosts() {
   local svc_json="$1"
   [ -n "${svc_json}" ] || return 0
-  local raw_url bare_h valid_h
+  local urls_nl raw_url bare_h valid_h
+  urls_nl=$(
+    printf '%s' "${svc_json}" | jq -r '
+      if type != "object" then error("expected service JSON object") else . end
+      | [
+          (.status.url // empty),
+          ((.metadata.annotations["run.googleapis.com/urls"] // "[]") | fromjson? // [] | .[])
+        ]
+      | map(select(type == "string" and length > 0))
+      | .[]
+    '
+  ) || exit 1
+  [ -n "${urls_nl}" ] || return 0
   while IFS= read -r raw_url; do
     [ -n "${raw_url}" ] || continue
     if [[ "${raw_url}" != https://* ]]; then
@@ -686,18 +698,9 @@ extract_service_hosts() {
     fi
     bare_h="${raw_url#https://}"
     bare_h="${bare_h%%/*}"
-    valid_h=$(validate_bare_non_loopback_host "${bare_h}")
+    valid_h=$(validate_bare_non_loopback_host "${bare_h}") || exit 1
     printf '%s\n' "${valid_h}"
-  done < <(
-    printf '%s' "${svc_json}" | jq -r '
-      [
-        (.status.url // empty),
-        ((.metadata.annotations["run.googleapis.com/urls"] // "[]") | fromjson? // [] | .[])
-      ]
-      | map(select(type == "string" and length > 0))
-      | .[]
-    '
-  )
+  done <<< "${urls_nl}"
 }
 
 PREEXISTING_HOSTS=()

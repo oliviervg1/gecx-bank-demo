@@ -1102,3 +1102,23 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
     )
     assert r_bad_http_url.returncode != 0
     assert "refusing non-HTTPS Cloud Run URL" in r_bad_http_url.stderr
+
+    # 7. Invalid or loopback https:// hostname inside extract_service_hosts aborts with non-zero exit!
+    deployed_marker.unlink()
+    gcloud_log.unlink()
+    for f in captured_env_dir.iterdir():
+        f.unlink()
+    r_bad_https_host = run_deploy(
+        [
+            "--service-account",
+            valid_sa,
+            "--iap-domains",
+            "example.com",
+            "--yes",
+        ],
+        env_overrides={
+            "FAKE_CLOUD_RUN_URLS": json.dumps(["https://bad_host!.run.app"])
+        },
+    )
+    assert r_bad_https_host.returncode != 0
+    assert "malformed hostname" in r_bad_https_host.stderr
