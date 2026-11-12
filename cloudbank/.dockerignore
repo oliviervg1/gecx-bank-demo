@@ -1,0 +1,76 @@
+# Docker build context exclusions for `cloudbank/`.
+# Keep secrets, local cloud configs, caches, virtualenvs, and non-runtime directories out of layers.
+
+# Local configuration & credentials (never bake into images)
+gecx-config.json
+**/gecx-config.json
+.env
+.env.*
+.env*
+**/.env*
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+id_rsa*
+*_rsa
+service-account*.json
+*credentials*.json
+gha-creds-*.json
+secrets/
+
+# VCS & editor metadata
+.git
+.gitignore
+.gcloudignore
+.dockerignore
+.idea/
+.vscode/
+.claude/
+.gemini/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python virtualenvs & caches
+.venv/
+**/.venv/
+venv/
+env/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+.coverage
+.coverage.*
+
+# Node / Vite local build & test outputs
+node_modules/
+**/node_modules/
+web/dist/
+web/.tsbuild/
+web/*.tsbuildinfo
+web/coverage/
+web/playwright-report/
+web/test-results/
+*.log
+npm-debug.log*
+
+# Non-containerized CXAS bundle, evaluations, CLI scripts, and offline pytest suites
+/cxas_app/
+/cxas_shared/
+/evals/
+/scripts/
+/tests/
+/proxy/tests/
+/README.md
+/proxy/README.md
+/cxaslint.yaml
+/pyproject.toml
+/uv.lock
+/push.sh
+/tmp/
+/.tmp/
