@@ -707,9 +707,12 @@ EXISTING_SERVICE_JSON=$(gcloud run services describe "${SERVICE_NAME}" \
   --format=json \
   --quiet 2>/dev/null || true)
 if [ -n "${EXISTING_SERVICE_JSON}" ]; then
-  while IFS= read -r existing_h; do
-    [ -n "${existing_h}" ] && PREEXISTING_HOSTS+=("${existing_h}")
-  done < <(extract_service_hosts "${EXISTING_SERVICE_JSON}")
+  EXISTING_HOSTS_NL=$(extract_service_hosts "${EXISTING_SERVICE_JSON}")
+  if [ -n "${EXISTING_HOSTS_NL}" ]; then
+    while IFS= read -r existing_h; do
+      [ -n "${existing_h}" ] && PREEXISTING_HOSTS+=("${existing_h}")
+    done <<< "${EXISTING_HOSTS_NL}"
+  fi
 fi
 
 INITIAL_PAIR=$(build_hosts_and_origins_csv \
@@ -743,9 +746,12 @@ SERVICE_JSON=$(gcloud run services describe "${SERVICE_NAME}" \
   --quiet)
 
 DISCOVERED_HOSTS=()
-while IFS= read -r disc_h; do
-  [ -n "${disc_h}" ] && DISCOVERED_HOSTS+=("${disc_h}")
-done < <(extract_service_hosts "${SERVICE_JSON}")
+DISCOVERED_HOSTS_NL=$(extract_service_hosts "${SERVICE_JSON}")
+if [ -n "${DISCOVERED_HOSTS_NL}" ]; then
+  while IFS= read -r disc_h; do
+    [ -n "${disc_h}" ] && DISCOVERED_HOSTS+=("${disc_h}")
+  done <<< "${DISCOVERED_HOSTS_NL}"
+fi
 
 FINAL_PAIR=$(build_hosts_and_origins_csv \
   "${DETERMINISTIC_HOST}" \

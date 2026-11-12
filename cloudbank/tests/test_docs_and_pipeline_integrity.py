@@ -1080,3 +1080,25 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
         c["args"][:3] == ["run", "services", "update"] for c in single_calls
     )
     assert len(list(captured_env_dir.glob("env_*.yaml"))) == 1
+
+    # 6. Non-HTTPS URL in Cloud Run status/annotations aborts deploy_cloud_run.sh with non-zero exit!
+    deployed_marker.unlink()
+    gcloud_log.unlink()
+    for f in captured_env_dir.iterdir():
+        f.unlink()
+    r_bad_http_url = run_deploy(
+        [
+            "--service-account",
+            valid_sa,
+            "--iap-domains",
+            "example.com",
+            "--yes",
+        ],
+        env_overrides={
+            "FAKE_CLOUD_RUN_URLS": json.dumps(
+                ["http://cloudbank-123456789012.europe-west1.run.app"]
+            )
+        },
+    )
+    assert r_bad_http_url.returncode != 0
+    assert "refusing non-HTTPS Cloud Run URL" in r_bad_http_url.stderr
