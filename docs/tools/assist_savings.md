@@ -62,7 +62,7 @@ def assist_savings(
 - `_half_up` and `_to_pence`: exact integer half-up division and clamped model-float-to-pence conversion (`[0, £10,000,000]`), spliced from `controller_common.py`.
 - `_project_savings_goal`, `_annual_interest_on_balance()`, and `_target_month_label()`: 600-month compound goal simulator, 12-step annual interest on current balance, and calendar completion month formatter.
 - `_normalize_snapshot`, `_parse_demo_date`, `_format_gbp`, `_format_bps`, and `_emit_ui_view`: snapshot integer coercion, `datetime.date` parser, currency and rate formatters, and monotonic `ui_view_state` writer.
-- `_handle_summary()`, `_handle_interest_rate()`, `_format_projection_reply()`, and `_handle_projection()`: savings pot balance and AER summary, rate details, and goal completion timeline delta.
+- `_handle_summary()`, `_handle_interest_rate()`, `_format_projection_reply()`, and `_handle_projection()`: savings pot balance and AER summary, rate details, and goal completion timeline projections (always including the current pot balance and account name alongside baseline and extra-contribution timelines).
 - `_handle_switch_intent` and `_handle_unclear()`: spoke-local navigation (clearing `handoff_context` on `Home`/`Profile`), guarded cross-spoke pivots, and 2-strike unclear recovery.
 
 ### Session State Reads & Writes

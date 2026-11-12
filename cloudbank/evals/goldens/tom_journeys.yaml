@@ -115,10 +115,10 @@ conversations:
               agent: "savings_agent"
           - action: assist_savings
             args:
-              query_type: "summary"
+              query_type: "projection"
         agent:
           - "# silent"
-          - "As of November, your First Home Deposit in Cloudbank First Home Saver holds £14,200 toward your £35,000 target at 4.75% AER, with £350 going in each month, putting you on track to reach your goal in 47 months (October 2030)."
+          - "As of November, your First Home Deposit in Cloudbank First Home Saver holds £14,200 at 4.75% AER, and saving £350 a month puts you on track to reach £35,000 in 47 months (October 2030)."
 
       - user: "Cheers, that's all, goodbye."
         tool_calls:
@@ -182,13 +182,17 @@ conversations:
           - action: route_banking_intent
             args:
               intent: "UNCLEAR"
+              topic_hint:
+                $matchType: "ignore"
         agent: "Sorry, I did not quite catch that. Would you like help with everyday banking, savings, or mortgages?"
 
-      - user: "Hmm, still not sure."
+      - user: "Static on the line... testing, three four."
         tool_calls:
           - action: route_banking_intent
             args:
               intent: "UNCLEAR"
+              topic_hint:
+                $matchType: "ignore"
         agent: "I have opened your Home summary on screen. I can help with everyday banking and spending, your savings pot and goal projections, or your mortgage payments, overpayments, and fixed-rate renewal options. Which area would you like to explore?"
 
       - user: "All good for now, goodbye."
@@ -196,6 +200,8 @@ conversations:
           - action: route_banking_intent
             args:
               intent: "FAREWELL"
+              topic_hint:
+                $matchType: "ignore"
           - action: end_session
             args:
               session_escalated: false
