@@ -53,7 +53,7 @@ Optional parameters:
                                  timestamp).
   --cxas-role <role>             Optional IAM role ID for CXAS BidiRunSession access
                                  (`CLOUDBANK_CXAS_ROLE`); when set, binds both this role
-                                 and `roles/serviceusage.servicesUsageConsumer` to
+                                 and `roles/serviceusage.serviceUsageConsumer` to
                                  `--service-account`.
   --extra-hosts <csv>            Optional comma-separated custom domain hostnames to allow
                                  alongside `.run.app` URLs (`CLOUDBANK_EXTRA_ALLOWED_HOSTS`).
@@ -361,13 +361,14 @@ if [[ ! "${AR_REPO}" =~ ^[a-z][a-z0-9-]{0,61}[a-z0-9]$ ]]; then
   exit 1
 fi
 
-# Require explicit dedicated service account and refuse default Compute Engine SA
+# Require explicit dedicated service account and refuse default Compute/App Engine SAs
 if [ -z "${SA_EMAIL_VAL}" ] || [[ "${SA_EMAIL_VAL}" == \<*\> ]]; then
   echo "error: --service-account (or SA_EMAIL) is required and must be a dedicated least-privilege service account" >&2
   exit 1
 fi
-if [[ "${SA_EMAIL_VAL}" == *-compute@developer.gserviceaccount.com ]]; then
-  echo "error: refusing default Compute Engine service account '${SA_EMAIL_VAL}'; create and pass a dedicated service account" >&2
+if [[ "${SA_EMAIL_VAL}" == *-compute@developer.gserviceaccount.com ]] || \
+   [[ "${SA_EMAIL_VAL}" == *@appspot.gserviceaccount.com ]]; then
+  echo "error: refusing default Compute Engine or App Engine service account '${SA_EMAIL_VAL}'; create and pass a dedicated service account" >&2
   exit 1
 fi
 if [[ ! "${SA_EMAIL_VAL}" =~ ^[a-zA-Z0-9._-]+@[a-zA-Z0-9.-]+\.gserviceaccount\.com$ ]]; then
@@ -630,10 +631,12 @@ fi
 IAP_AUDIENCE="/projects/${PROJECT_NUMBER}/locations/${REGION}/services/${SERVICE_NAME}"
 DETERMINISTIC_HOST="${SERVICE_NAME}-${PROJECT_NUMBER}.${REGION}.run.app"
 
-gcloud beta services identity create \
+if ! gcloud beta services identity create \
   --service=iap.googleapis.com \
   --project="${PROJECT}" \
-  --quiet >/dev/null 2>&1 || true
+  --quiet >/dev/null 2>&1; then
+  echo "warning: unable to verify or create iap.googleapis.com service identity; continuing..." >&2
+fi
 
 if [ -n "${CXAS_ROLE}" ]; then
   echo "==> Binding least-privilege runtime roles on '${SA_EMAIL_VAL}'..."
@@ -644,7 +647,7 @@ if [ -n "${CXAS_ROLE}" ]; then
     --quiet >/dev/null
   gcloud projects add-iam-policy-binding "${PROJECT}" \
     --member="serviceAccount:${SA_EMAIL_VAL}" \
-    --role="roles/serviceusage.servicesUsageConsumer" \
+    --role="roles/serviceusage.serviceUsageConsumer" \
     --condition=None \
     --quiet >/dev/null
 fi
@@ -662,7 +665,8 @@ if ! gcloud artifacts repositories describe "${AR_REPO}" \
     --quiet
 fi
 
-IMAGE_URI="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
+AR_PROJECT_PATH="${PROJECT//://}"
+IMAGE_URI="${REGION}-docker.pkg.dev/${AR_PROJECT_PATH}/${AR_REPO}/${SERVICE_NAME}:${IMAGE_TAG}"
 echo "==> [3/6] Building single-origin container image via Cloud Build..."
 CLOUDSDK_CORE_INTERACTIVE_UX_STYLE=OFF gcloud builds submit . \
   --project="${PROJECT}" \
@@ -670,7 +674,48 @@ CLOUDSDK_CORE_INTERACTIVE_UX_STYLE=OFF gcloud builds submit . \
   --tag="${IMAGE_URI}" \
   --quiet
 
-INITIAL_PAIR=$(build_hosts_and_origins_csv "${DETERMINISTIC_HOST}" ${EXTRA_HOSTS[@]+"${EXTRA_HOSTS[@]}"})
+extract_service_hosts() {
+  local svc_json="$1"
+  [ -n "${svc_json}" ] || return 0
+  local raw_url bare_h valid_h
+  while IFS= read -r raw_url; do
+    [ -n "${raw_url}" ] || continue
+    if [[ "${raw_url}" != https://* ]]; then
+      echo "error: refusing non-HTTPS Cloud Run URL '${raw_url}'" >&2
+      exit 1
+    fi
+    bare_h="${raw_url#https://}"
+    bare_h="${bare_h%%/*}"
+    valid_h=$(validate_bare_non_loopback_host "${bare_h}")
+    printf '%s\n' "${valid_h}"
+  done < <(
+    printf '%s' "${svc_json}" | jq -r '
+      [
+        (.status.url // empty),
+        ((.metadata.annotations["run.googleapis.com/urls"] // "[]") | fromjson? // [] | .[])
+      ]
+      | map(select(type == "string" and length > 0))
+      | .[]
+    '
+  )
+}
+
+PREEXISTING_HOSTS=()
+EXISTING_SERVICE_JSON=$(gcloud run services describe "${SERVICE_NAME}" \
+  --project="${PROJECT}" \
+  --region="${REGION}" \
+  --format=json \
+  --quiet 2>/dev/null || true)
+if [ -n "${EXISTING_SERVICE_JSON}" ]; then
+  while IFS= read -r existing_h; do
+    [ -n "${existing_h}" ] && PREEXISTING_HOSTS+=("${existing_h}")
+  done < <(extract_service_hosts "${EXISTING_SERVICE_JSON}")
+fi
+
+INITIAL_PAIR=$(build_hosts_and_origins_csv \
+  "${DETERMINISTIC_HOST}" \
+  ${PREEXISTING_HOSTS[@]+"${PREEXISTING_HOSTS[@]}"} \
+  ${EXTRA_HOSTS[@]+"${EXTRA_HOSTS[@]}"})
 INITIAL_HOSTS_CSV=$(printf '%s\n' "${INITIAL_PAIR}" | sed -n '1p')
 INITIAL_ORIGINS_CSV=$(printf '%s\n' "${INITIAL_PAIR}" | sed -n '2p')
 write_env_vars_yaml "${ENV_FILE}" "${INITIAL_HOSTS_CSV}" "${INITIAL_ORIGINS_CSV}" "${IAP_AUDIENCE}"
@@ -698,26 +743,9 @@ SERVICE_JSON=$(gcloud run services describe "${SERVICE_NAME}" \
   --quiet)
 
 DISCOVERED_HOSTS=()
-while IFS= read -r raw_url; do
-  [ -n "${raw_url}" ] || continue
-  if [[ "${raw_url}" != https://* ]]; then
-    echo "error: refusing non-HTTPS Cloud Run URL '${raw_url}'" >&2
-    exit 1
-  fi
-  bare_h="${raw_url#https://}"
-  bare_h="${bare_h%%/*}"
-  valid_h=$(validate_bare_non_loopback_host "${bare_h}")
-  DISCOVERED_HOSTS+=("${valid_h}")
-done < <(
-  printf '%s' "${SERVICE_JSON}" | jq -r '
-    [
-      (.status.url // empty),
-      ((.metadata.annotations["run.googleapis.com/urls"] // "[]") | fromjson? // [] | .[])
-    ]
-    | map(select(type == "string" and length > 0))
-    | .[]
-  '
-)
+while IFS= read -r disc_h; do
+  [ -n "${disc_h}" ] && DISCOVERED_HOSTS+=("${disc_h}")
+done < <(extract_service_hosts "${SERVICE_JSON}")
 
 FINAL_PAIR=$(build_hosts_and_origins_csv \
   "${DETERMINISTIC_HOST}" \
@@ -743,6 +771,7 @@ gcloud run services add-iam-policy-binding "${SERVICE_NAME}" \
   --region="${REGION}" \
   --member="${IAP_SERVICE_AGENT}" \
   --role="roles/run.invoker" \
+  --condition=None \
   --quiet >/dev/null
 
 if [ -n "${OAUTH_CLIENT_ID}" ] && [ -n "${OAUTH_SECRET_NAME}" ]; then
@@ -779,6 +808,7 @@ for member in "${PRINCIPAL_LIST[@]}"; do
     --service="${SERVICE_NAME}" \
     --member="${member}" \
     --role="roles/iap.httpsResourceAccessor" \
+    --condition=None \
     --quiet >/dev/null
 done
 

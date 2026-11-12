@@ -482,8 +482,27 @@ def test_documented_proxy_ports_match_vite_and_proxy_defaults() -> None:
         )
 
 
-def _matches_ignore_rules(rel_posix_path: str, ignore_lines: list[str]) -> bool:
-    """Evaluate `.dockerignore` / `.gcloudignore` patterns against a relative POSIX path."""
+def _glob_no_slash(text: str, pattern: str) -> bool:
+    """Match a glob pattern where `*` and `?` do NOT cross `/` separators (Docker/Go semantics)."""
+    regex_parts = [r"\A"]
+    for ch in pattern:
+        if ch == "*":
+            regex_parts.append("[^/]*")
+        elif ch == "?":
+            regex_parts.append("[^/]")
+        else:
+            regex_parts.append(re.escape(ch))
+    regex_parts.append(r"\Z")
+    return re.match("".join(regex_parts), text) is not None
+
+
+def _matches_ignore_rules(
+    rel_posix_path: str,
+    ignore_lines: list[str],
+    *,
+    docker_semantics: bool,
+) -> bool:
+    """Evaluate `.dockerignore` (root-anchored slash-less globs) or `.gcloudignore` (gitignore) rules."""
     path = rel_posix_path.strip("/")
     segments = path.split("/")
     for raw in ignore_lines:
@@ -497,16 +516,16 @@ def _matches_ignore_rules(rel_posix_path: str, ignore_lines: list[str]) -> bool:
             sub_pat = pat[3:]
             for idx in range(len(segments)):
                 tail = "/".join(segments[idx:])
-                if fnmatch.fnmatchcase(tail, sub_pat) or tail.startswith(f"{sub_pat}/"):
+                if _glob_no_slash(tail, sub_pat) or tail.startswith(f"{sub_pat}/"):
                     return True
-                if not dir_only and fnmatch.fnmatchcase(segments[idx], sub_pat):
+                if not dir_only and _glob_no_slash(segments[idx], sub_pat):
                     return True
             continue
-        if rooted or "/" in pat:
+        if docker_semantics or rooted or "/" in pat:
             if dir_only:
                 if path == pat or path.startswith(f"{pat}/"):
                     return True
-            elif fnmatch.fnmatchcase(path, pat) or path.startswith(f"{pat}/"):
+            elif _glob_no_slash(path, pat) or path.startswith(f"{pat}/"):
                 return True
         else:
             for idx, seg in enumerate(segments):
@@ -521,6 +540,14 @@ def _matches_ignore_rules(rel_posix_path: str, ignore_lines: list[str]) -> bool:
 
 def test_dockerfile_and_ignore_files_preserve_layout_and_exclude_secrets() -> None:
     """Verify Dockerfile runtime invariants and both .dockerignore and .gcloudignore hygiene."""
+    # Sanity-check that docker_semantics=True matches slash-less globs ONLY at context root
+    assert _matches_ignore_rules("private.pem", ["*.pem"], docker_semantics=True) is True
+    assert _matches_ignore_rules("proxy/src/private.pem", ["*.pem"], docker_semantics=True) is False
+    assert (
+        _matches_ignore_rules("proxy/src/private.pem", ["**/*.pem"], docker_semantics=True)
+        is True
+    )
+
     dockerfile = (CLOUDBANK_ROOT / "Dockerfile").read_text(encoding="utf-8")
     active_docker = "\n".join(
         line.strip()
@@ -543,7 +570,7 @@ def test_dockerfile_and_ignore_files_preserve_layout_and_exclude_secrets() -> No
     assert 'CMD ["/app/proxy/.venv/bin/python", "-m", "proxy"]' in active_docker
     assert "uv run" not in active_docker
 
-    for ignore_name in (".dockerignore", ".gcloudignore"):
+    for ignore_name, is_docker in ((".dockerignore", True), (".gcloudignore", False)):
         ignore_path = CLOUDBANK_ROOT / ignore_name
         assert ignore_path.is_file(), f"Missing {ignore_name} in cloudbank/"
         rules = ignore_path.read_text(encoding="utf-8").splitlines()
@@ -556,8 +583,24 @@ def test_dockerfile_and_ignore_files_preserve_layout_and_exclude_secrets() -> No
             ".env.production",
             "proxy/.env",
             "service-account-key.json",
+            "shared/service-account-x.json",
             "application_default_credentials.json",
+            "web/src/credentials-dev.json",
+            "gha-creds-prod.json",
+            "proxy/gha-creds-prod.json",
             "private.pem",
+            "proxy/src/private.pem",
+            "proxy/tls.key",
+            "shared/cert.p12",
+            "shared/cert.pfx",
+            "shared/keystore.jks",
+            "proxy/id_rsa",
+            "proxy/deploy_rsa",
+            "secrets/oauth.json",
+            "proxy/secrets/oauth.json",
+            "app.log",
+            "proxy/app.log",
+            "web/npm-debug.log",
             ".venv/",
             "proxy/.venv/",
             "node_modules/",
@@ -568,7 +611,9 @@ def test_dockerfile_and_ignore_files_preserve_layout_and_exclude_secrets() -> No
             "tests/",
             "proxy/tests/",
         ):
-            assert _matches_ignore_rules(must_exclude, rules), (
+            assert _matches_ignore_rules(
+                must_exclude, rules, docker_semantics=is_docker
+            ), (
                 f"{ignore_name} failed to exclude sensitive or build-cache path {must_exclude!r}"
             )
 
@@ -586,7 +631,9 @@ def test_dockerfile_and_ignore_files_preserve_layout_and_exclude_secrets() -> No
             "web/index.html",
             "web/vite.config.ts",
         ):
-            assert not _matches_ignore_rules(must_keep, rules), (
+            assert not _matches_ignore_rules(
+                must_keep, rules, docker_semantics=is_docker
+            ), (
                 f"{ignore_name} unexpectedly excluded required build input {must_keep!r}"
             )
 
@@ -677,6 +724,7 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
     captured_env_dir.mkdir()
     captured_iap_settings = tmp_path / "iap_settings.json"
 
+    deployed_marker = tmp_path / "service_deployed.flag"
     fake_gcloud = bin_dir / "gcloud"
     fake_gcloud.write_text(
         "#!/usr/bin/env python3\n"
@@ -685,6 +733,7 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
         f"log_path = pathlib.Path({str(gcloud_log)!r})\n"
         f"env_dir = pathlib.Path({str(captured_env_dir)!r})\n"
         f"iap_out = pathlib.Path({str(captured_iap_settings)!r})\n"
+        f"marker = pathlib.Path({str(deployed_marker)!r})\n"
         "with log_path.open('a', encoding='utf-8') as fh:\n"
         "    fh.write(json.dumps({'args': args, 'ux': os.environ.get('CLOUDSDK_CORE_INTERACTIVE_UX_STYLE')}) + '\\n')\n"
         "for a in args:\n"
@@ -695,7 +744,11 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
         "    print('123456789012')\n"
         "elif args[:3] == ['artifacts', 'repositories', 'describe']:\n"
         "    sys.exit(1)\n"
+        "elif args[:2] == ['run', 'deploy']:\n"
+        "    marker.write_text('1', encoding='utf-8')\n"
         "elif args[:3] == ['run', 'services', 'describe']:\n"
+        "    if not marker.exists():\n"
+        "        sys.exit(1)\n"
         "    urls = json.loads(os.environ.get('FAKE_CLOUD_RUN_URLS', '[]'))\n"
         "    print(json.dumps({\n"
         "        'status': {'url': urls[0] if urls else 'https://cloudbank-123456789012.europe-west1.run.app'},\n"
@@ -770,7 +823,18 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
                 "--yes",
             ],
             {},
-            "default Compute Engine service account",
+            "default Compute Engine or App Engine service account",
+        ),
+        (
+            [
+                "--service-account",
+                "test-bank-proj@appspot.gserviceaccount.com",
+                "--iap-domains",
+                "example.com",
+                "--yes",
+            ],
+            {},
+            "default Compute Engine or App Engine service account",
         ),
         (
             ["--service-account", valid_sa, "--iap-domains", "example.com", "--yes"],
@@ -921,6 +985,16 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
     ):
         assert expected_flag in deploy_call
 
+    project_iam_roles = [
+        next(a.split("=", 1)[1] for a in c["args"] if a.startswith("--role="))
+        for c in calls
+        if c["args"][:2] == ["projects", "add-iam-policy-binding"]
+    ]
+    assert project_iam_roles == [
+        "projects/test-bank-proj/roles/cxasSessionRunner",
+        "roles/serviceusage.serviceUsageConsumer",
+    ]
+
     assert any(
         c["args"][:3] == ["run", "services", "update"] for c in calls
     )
@@ -929,12 +1003,14 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
         and "--member=serviceAccount:service-123456789012@gcp-sa-iap.iam.gserviceaccount.com"
         in c["args"]
         and "--role=roles/run.invoker" in c["args"]
+        and "--condition=None" in c["args"]
         for c in calls
     )
     iap_members_bound = [
         next(a.split("=", 1)[1] for a in c["args"] if a.startswith("--member="))
         for c in calls
         if c["args"][:3] == ["iap", "web", "add-iam-policy-binding"]
+        and "--condition=None" in c["args"]
     ]
     assert iap_members_bound == ["user:alice@example.com", "domain:example.com"]
     assert json.loads(captured_iap_settings.read_text(encoding="utf-8")) == {
@@ -946,7 +1022,38 @@ def test_deploy_cloud_run_sh_guards_confirmation_env_yaml_and_two_step_url_lock(
         }
     }
 
-    # 4. When run.googleapis.com/urls matches the deterministic host alone, services update is skipped!
+    # 4. Redeploy when service already exists pre-populates legacy URL in deploy (single-step, 0 update)!
+    gcloud_log.unlink()
+    for f in captured_env_dir.iterdir():
+        f.unlink()
+    r_redeploy = run_deploy(
+        [
+            "--service-account",
+            valid_sa,
+            "--iap-domains",
+            "example.com",
+            "--yes",
+        ],
+        env_overrides={"FAKE_CLOUD_RUN_URLS": json.dumps(dual_urls)},
+    )
+    assert r_redeploy.returncode == 0, r_redeploy.stderr
+    redeploy_calls = [
+        json.loads(line)
+        for line in gcloud_log.read_text(encoding="utf-8").splitlines()
+    ]
+    assert not any(
+        c["args"][:3] == ["run", "services", "update"] for c in redeploy_calls
+    )
+    assert len(list(captured_env_dir.glob("env_*.yaml"))) == 1
+    redeploy_env = yaml.safe_load(
+        (captured_env_dir / "env_0.yaml").read_text(encoding="utf-8")
+    )
+    assert redeploy_env["PROXY_ALLOWED_HOSTS"] == (
+        "cloudbank-123456789012.europe-west1.run.app,cloudbank-legacy99-ew.a.run.app"
+    )
+
+    # 5. Fresh initial deploy when run.googleapis.com/urls matches deterministic host alone skips update!
+    deployed_marker.unlink()
     gcloud_log.unlink()
     for f in captured_env_dir.iterdir():
         f.unlink()

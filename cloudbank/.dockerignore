@@ -1,7 +1,7 @@
 # Docker build context exclusions for `cloudbank/`.
 # Keep secrets, local cloud configs, caches, virtualenvs, and non-runtime directories out of layers.
 
-# Local configuration & credentials (never bake into images)
+# Local configuration & credentials (never bake into images, including nested paths)
 gecx-config.json
 **/gecx-config.json
 .env
@@ -9,16 +9,27 @@ gecx-config.json
 .env*
 **/.env*
 *.pem
+**/*.pem
 *.key
+**/*.key
 *.p12
+**/*.p12
 *.pfx
+**/*.pfx
 *.jks
+**/*.jks
 id_rsa*
+**/id_rsa*
 *_rsa
+**/*_rsa
 service-account*.json
+**/service-account*.json
 *credentials*.json
+**/*credentials*.json
 gha-creds-*.json
+**/gha-creds-*.json
 secrets/
+**/secrets/
 
 # VCS & editor metadata
 .git
@@ -30,22 +41,30 @@ secrets/
 .claude/
 .gemini/
 *.swp
+**/*.swp
 *.swo
+**/*.swo
 *~
+**/*~
 .DS_Store
+**/.DS_Store
 
 # Python virtualenvs & caches
 .venv/
 **/.venv/
 venv/
+**/venv/
 env/
+**/env/
 **/__pycache__/
 **/*.py[cod]
 **/.pytest_cache/
 **/.ruff_cache/
 **/.mypy_cache/
 .coverage
+**/.coverage
 .coverage.*
+**/.coverage.*
 
 # Node / Vite local build & test outputs
 node_modules/
@@ -57,7 +76,9 @@ web/coverage/
 web/playwright-report/
 web/test-results/
 *.log
+**/*.log
 npm-debug.log*
+**/npm-debug.log*
 
 # Non-containerized CXAS bundle, evaluations, CLI scripts, and offline pytest suites
 /cxas_app/

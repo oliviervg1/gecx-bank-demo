@@ -10,16 +10,27 @@ gecx-config.json
 .env*
 **/.env*
 *.pem
+**/*.pem
 *.key
+**/*.key
 *.p12
+**/*.p12
 *.pfx
+**/*.pfx
 *.jks
+**/*.jks
 id_rsa*
+**/id_rsa*
 *_rsa
+**/*_rsa
 service-account*.json
+**/service-account*.json
 *credentials*.json
+**/*credentials*.json
 gha-creds-*.json
+**/gha-creds-*.json
 secrets/
+**/secrets/
 
 # VCS & editor metadata
 .git
