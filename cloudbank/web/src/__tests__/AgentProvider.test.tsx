@@ -69,14 +69,25 @@ function installWebSocketSpy() {
 }
 
 function Probe() {
-  const { phase, connState, errorMessage, reconnect, disconnect, submitText } = useAgent()
+  const {
+    phase,
+    connState,
+    authExpired,
+    errorMessage,
+    reconnect,
+    reloadPage,
+    disconnect,
+    submitText,
+  } = useAgent()
   const { setPersona } = usePersona()
   return (
     <div>
       <span data-testid="phase">{phase}</span>
       <span data-testid="conn">{connState}</span>
+      <span data-testid="auth-expired">{authExpired ? 'true' : 'false'}</span>
       <span data-testid="error">{errorMessage ?? ''}</span>
       <button onClick={reconnect}>reconnect</button>
+      <button onClick={() => reloadPage?.()}>reload-page</button>
       <button onClick={() => disconnect()}>disconnect</button>
       <button onClick={() => setPersona('david')}>switch-david</button>
       <button onClick={() => submitText('Ping')}>send-text</button>
@@ -84,11 +95,11 @@ function Probe() {
   )
 }
 
-function renderWithProviders(strict = false) {
+function renderWithProviders(strict = false, onReloadPage?: () => void) {
   const tree = (
     <PersonaProvider initialDemoDate="2026-11-24">
       <BankingViewStateProvider>
-        <AgentProvider>
+        <AgentProvider onReloadPage={onReloadPage}>
           <Probe />
         </AgentProvider>
       </BankingViewStateProvider>
@@ -297,4 +308,65 @@ describe('AgentProvider (sessionMachine integration)', () => {
       spy.restore()
     }
   })
+
+  it.each([
+    ['401 Unauthorized', { status: 401, type: 'basic' }],
+    ['403 Forbidden', { status: 403, type: 'basic' }],
+    ['opaqueredirect', { status: 0, type: 'opaqueredirect' }],
+  ])(
+    'probes /health on pre-ready WS close and halts reconnects with reload prompt on %s',
+    async (_label, probeResp) => {
+      const spy = installWebSocketSpy()
+      const origFetch = globalThis.fetch
+      const reloadSpy = vi.fn()
+      const fetchMock = vi.fn().mockResolvedValue(probeResp as Response)
+      globalThis.fetch = fetchMock as unknown as typeof fetch
+      vi.useFakeTimers()
+      try {
+        renderWithProviders(false, reloadSpy)
+        act(() => {
+          spy.instances[0]!.openFromServer()
+          spy.instances[0]!.deliver({ type: 'ready', sessionId: 'live-iap' })
+        })
+
+        // Simulate GoAway -> resume socket closes before ready because IAP session expired
+        act(() => {
+          spy.instances[0]!.deliver({ type: 'go_away', sessionId: 'live-iap' })
+        })
+        expect(spy.instances).toHaveLength(2)
+
+        await act(async () => {
+          spy.instances[1]!.closeFromServer()
+          await Promise.resolve()
+        })
+
+        expect(fetchMock).toHaveBeenCalledWith(
+          '/health',
+          expect.objectContaining({
+            method: 'GET',
+            headers: { 'X-Requested-With': 'XMLHttpRequest' },
+            credentials: 'same-origin',
+            redirect: 'manual',
+          }),
+        )
+        expect(screen.getByTestId('phase').textContent).toBe('error')
+        expect(screen.getByTestId('auth-expired').textContent).toBe('true')
+        expect(screen.getByTestId('error').textContent).toContain('Reload the page')
+        expect(screen.getByTestId('error').textContent).not.toContain('localhost proxy')
+
+        // Advancing timers MUST NOT trigger any further reconnect attempts
+        act(() => {
+          vi.advanceTimersByTime(5_000)
+        })
+        expect(spy.instances).toHaveLength(2)
+
+        fireEvent.click(screen.getByText('reload-page'))
+        expect(reloadSpy).toHaveBeenCalledTimes(1)
+      } finally {
+        vi.useRealTimers()
+        globalThis.fetch = origFetch
+        spy.restore()
+      }
+    },
+  )
 })

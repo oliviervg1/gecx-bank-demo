@@ -50,10 +50,14 @@ os.environ.setdefault(
             [
                 f"http://127.0.0.1:{_E2E_WEB_PORT}",
                 f"http://localhost:{_E2E_WEB_PORT}",
+                f"http://127.0.0.1:{_E2E_PROXY_PORT}",
+                f"http://localhost:{_E2E_PROXY_PORT}",
                 "http://127.0.0.1:4173",
                 "http://localhost:4173",
                 "http://127.0.0.1:5173",
                 "http://localhost:5173",
+                "http://127.0.0.1:8765",
+                "http://localhost:8765",
             ]
         )
     ),

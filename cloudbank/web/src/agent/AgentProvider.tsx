@@ -57,6 +57,7 @@ export interface AgentContextValue {
   agentText: string | null
   errorMessage: string | null
   micDenied: boolean
+  authExpired?: boolean
   pushToTalk: boolean
   spacebarShortcutEnabled?: boolean
   setSpacebarShortcutEnabled?: (enabled: boolean) => void
@@ -66,6 +67,7 @@ export interface AgentContextValue {
   stopMic: () => void
   submitText: (text: string) => void
   reconnect: () => void
+  reloadPage?: () => void
   disconnect: (opts?: { clearTurns?: boolean }) => void
 }
 
@@ -142,6 +144,7 @@ function createSessionRuntime(
   let player: AudioPlayer | null = null
   let watchdogTimer: number | null = null
   let unmountTimer: number | null = null
+  let healthProbeAbort: AbortController | null = null
   let isMounted = false
 
   // FIFO event queue eliminates re-entrant dispatch interleaving when synchronous
@@ -181,6 +184,46 @@ function createSessionRuntime(
       clearTimeout(pttIdleReleaseTimer)
       pttIdleReleaseTimer = null
     }
+  }
+
+  function clearHealthProbe() {
+    if (healthProbeAbort !== null) {
+      healthProbeAbort.abort()
+      healthProbeAbort = null
+    }
+  }
+
+  function probeAuthSessionExpiry() {
+    if (typeof fetch !== 'function') return
+    clearHealthProbe()
+    const ctrl = new AbortController()
+    healthProbeAbort = ctrl
+    void fetch('/health', {
+      method: 'GET',
+      headers: { 'X-Requested-With': 'XMLHttpRequest' },
+      credentials: 'same-origin',
+      redirect: 'manual',
+      cache: 'no-store',
+      signal: ctrl.signal,
+    })
+      .then((resp) => {
+        if (healthProbeAbort === ctrl) {
+          healthProbeAbort = null
+        }
+        if (ctrl.signal.aborted || !isMounted) return
+        if (
+          resp.status === 401 ||
+          resp.status === 403 ||
+          resp.type === 'opaqueredirect'
+        ) {
+          dispatch({ type: 'AUTH_SESSION_EXPIRED' })
+        }
+      })
+      .catch(() => {
+        if (healthProbeAbort === ctrl) {
+          healthProbeAbort = null
+        }
+      })
   }
 
   function schedulePttIdleHardwareRelease() {
@@ -334,6 +377,7 @@ function createSessionRuntime(
         const resumeId = effect.sessionId
         const lastUiSeq = effect.lastUiSeq
         let lastErrorReason: string | undefined
+        let didReceiveReady = false
 
         let socket: WebSocket
         try {
@@ -342,7 +386,7 @@ function createSessionRuntime(
           dispatch({
             type: 'WS_CLOSED',
             epoch,
-            reason: 'Unable to open WebSocket to localhost proxy.',
+            reason: 'Unable to open concierge connection.',
           })
           return
         }
@@ -364,8 +408,11 @@ function createSessionRuntime(
             dispatch({
               type: 'WS_CLOSED',
               epoch,
-              reason: 'Connection timed out while connecting to the localhost proxy.',
+              reason: 'Connection timed out while connecting to the concierge service.',
             })
+            if (!didReceiveReady && isMounted) {
+              probeAuthSessionExpiry()
+            }
           }
         }, WS_CONNECT_TIMEOUT_MS)
 
@@ -388,13 +435,15 @@ function createSessionRuntime(
             return
           }
           if (msg.type === 'ready') {
+            didReceiveReady = true
             clearConnectTimeout()
+            clearHealthProbe()
           }
           dispatch({ type: 'SERVER_MESSAGE', epoch, msg })
         }
 
         socket.onerror = () => {
-          lastErrorReason = 'Connection error. Check that the localhost proxy is running.'
+          lastErrorReason = 'Connection error. Unable to reach the concierge service.'
         }
 
         socket.onclose = () => {
@@ -403,6 +452,9 @@ function createSessionRuntime(
             ws = null
           }
           dispatch({ type: 'WS_CLOSED', epoch, reason: lastErrorReason })
+          if (!didReceiveReady && isMounted) {
+            probeAuthSessionExpiry()
+          }
         }
         break
       }
@@ -548,6 +600,7 @@ function createSessionRuntime(
     clearReconnectTimer()
     clearWatchdog()
     clearPttIdleReleaseTimer()
+    clearHealthProbe()
     closeActiveSocket()
     abortAndStopCapture()
     player?.close()
@@ -642,7 +695,13 @@ function latestTurnText(turns: ConversationTurn[], role: 'user' | 'assistant'): 
   return null
 }
 
-export function AgentProvider({ children }: { children: ReactNode }) {
+export function AgentProvider({
+  children,
+  onReloadPage,
+}: {
+  children: ReactNode
+  onReloadPage?: () => void
+}) {
   const { persona, demoDate } = usePersona()
   const { applyServerUiState, resetUiState } = useBankingViewState()
   const [spacebarShortcutEnabled, setSpacebarShortcutEnabled] = useState(true)
@@ -693,6 +752,14 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     runtime.dispatch({ type: 'CONNECT_REQUESTED' })
   }, [runtime])
 
+  const reloadPage = useCallback(() => {
+    if (onReloadPage) {
+      onReloadPage()
+      return
+    }
+    window.location.reload()
+  }, [onReloadPage])
+
   const disconnect = useCallback(
     (opts?: { clearTurns?: boolean }) => {
       runtime.dispatch({ type: 'DISCONNECT_REQUESTED', clearTurns: opts?.clearTurns })
@@ -716,6 +783,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       agentText: latestTurnText(machineState.turns, 'assistant'),
       errorMessage: machineState.errorMessage,
       micDenied: machineState.micDenied,
+      authExpired: machineState.authExpired,
       pushToTalk: runtime.pushToTalk,
       spacebarShortcutEnabled,
       setSpacebarShortcutEnabled,
@@ -725,6 +793,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
       stopMic,
       submitText,
       reconnect,
+      reloadPage,
       disconnect,
     }
   }, [
@@ -736,6 +805,7 @@ export function AgentProvider({ children }: { children: ReactNode }) {
     stopMic,
     submitText,
     reconnect,
+    reloadPage,
     disconnect,
   ])
 

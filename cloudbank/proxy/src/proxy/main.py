@@ -1,23 +1,37 @@
-"""FastAPI entrypoint for the hardened localhost BidiRunSession proxy.
+"""FastAPI entrypoint for the hardened Cloudbank BidiRunSession proxy.
 
-Security posture: this proxy holds local Application Default Credentials (ADC)
-and opens CX Agent Studio (GECX) BidiRunSession streams with them. It is
-intended strictly for localhost development (127.0.0.1) and MUST NOT be bound
-to 0.0.0.0 or exposed remotely without authentication.
+Security posture: this proxy holds upstream Google Cloud credentials (local
+Application Default Credentials in workstation development, or a dedicated
+least-privilege service account in Cloud Run) and opens CX Agent Studio (GECX)
+BidiRunSession streams on behalf of the browser.
+
+Supported deployment modes:
+1. Localhost workstation mode (`127.0.0.1:8765`, Vite dev/preview on `5173`/`4173`).
+2. Single-origin Cloud Run Direct IAP mode (`PROXY_IAP_AUDIENCE` + `PROXY_STATIC_DIR`),
+   cryptographically verifying `x-goog-iap-jwt-assertion` on every non-`/health`
+   HTTP request and WebSocket upgrade before `ws.accept()`.
 
 Defense-in-depth controls enforced here:
-- Disabled OpenAPI/Swagger/ReDoc documentation endpoints.
-- Standalone ASGI Host-header validation (emitting spec-compliant WebSocket
-  rejection frames rather than HTTP response messages) and loopback client peer
-  checks, failing closed when PROXY_ALLOW_REMOTE=1 or a non-loopback PROXY_HOST
-  is set without a non-empty PROXY_AUTH_TOKEN.
+- Disabled OpenAPI/Swagger/ReDoc documentation endpoints and `redirect_slashes=False`.
+- Standalone ASGI Host-header validation (first) and pure ASGI IAP ES256 JWT
+  verification (second, inside Host middleware), emitting spec-compliant
+  WebSocket rejection responses before `ws.accept()`.
+- Fail-closed startup and peer guards requiring `PROXY_AUTH_TOKEN` or valid
+  `PROXY_IAP_AUDIENCE` on non-loopback binds or `PROXY_ALLOW_REMOTE=1`,
+  requiring `PROXY_IAP_AUDIENCE` whenever `PROXY_STATIC_DIR` is combined with
+  non-loopback/remote access, and enforcing both token and IAP checks if both
+  are configured.
 - Exact-match Origin validation (missing Origin rejected, zero wildcard/suffix
-  fallthrough, exact PROXY_ALLOWED_ORIGINS override).
-- Non-racy asyncio.Semaphore concurrent session cap acquired before ws.accept().
-- Server-owned persona snapshots loaded from cloudbank/shared/personas/*.json,
-  validated against cloudbank/shared/customer_snapshot.schema.json, with
-  post-connect sessionId-to-persona binding, active-session eviction protection,
-  and fresh server-minted UUIDs whenever an unrecognized sessionId is presented.
+  fallthrough, explicit `https://` non-loopback `PROXY_ALLOWED_ORIGINS` and
+  bare-hostname `PROXY_ALLOWED_HOSTS` required in IAP mode).
+- Non-racy `asyncio.Semaphore` global session cap plus per-`iap_sub` concurrent
+  session cap (`PROXY_MAX_SESSIONS_PER_USER`, default `2`) acquired before
+  `ws.accept()`.
+- Server-owned persona snapshots loaded from `cloudbank/shared/personas/*.json`,
+  validated against `cloudbank/shared/customer_snapshot.schema.json`, with
+  post-connect `(persona, iap_sub)` session binding, active-session eviction
+  protection, and fresh server-minted UUIDs whenever an unrecognized or
+  cross-user `sessionId` is presented.
 """
 from __future__ import annotations
 
@@ -32,22 +46,35 @@ import ipaddress
 import json
 import logging
 import math
+import mimetypes
 import os
 import re
 import time
+import urllib.parse
 import uuid
 from collections.abc import AsyncIterator, Mapping
+from dataclasses import dataclass
+from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, cast
 
 import websockets
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse, Response
 from jsonschema.validators import validator_for
 from starlette.datastructures import Headers
 from starlette.responses import PlainTextResponse
 from starlette.types import ASGIApp, Receive, Scope, Send
 
 from .auth import GoogleTokenProvider
+from .iap import (
+    IapAuthError,
+    IapCertUnavailableError,
+    IapPrincipal,
+    IapVerifier,
+    extract_iap_jwt_from_scope,
+    parse_iap_audiences,
+)
 from .protocol import (
     MAX_CLIENT_FRAME_BYTES,
     BinaryFrameError,
@@ -64,6 +91,7 @@ from .relay import Relay
 log = logging.getLogger("proxy")
 
 _tokens = GoogleTokenProvider()
+_iap_verifier = IapVerifier()
 
 DEFAULT_BIND_HOST = "127.0.0.1"
 
@@ -110,12 +138,37 @@ MAX_SNAPSHOT_BYTES = 32 * 1024
 _MAX_UPSTREAM_FRAME_BYTES = 4 * 1024 * 1024
 
 DEFAULT_MAX_SESSIONS = 4
+DEFAULT_MAX_SESSIONS_PER_USER = 2
 DEFAULT_START_TIMEOUT_SECONDS = 10.0
 DEFAULT_MAX_IDLE_SECONDS = 900.0
 DEFAULT_MAX_SESSION_SECONDS = 3600.0
 DEFAULT_KEEPALIVE_SECONDS = 10.0
 MAX_TRACKED_SESSIONS = 256
 SESSION_BINDING_TTL_SECONDS = 3600.0
+
+_EXPLICIT_ASSET_MEDIA_TYPES: Mapping[str, str] = {
+    ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".css": "text/css",
+    ".woff2": "font/woff2",
+    ".woff": "font/woff",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".ico": "image/x-icon",
+    ".json": "application/json",
+    ".wasm": "application/wasm",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class _StaticBundle:
+    static_root: Path
+    index_path: Path
+    assets_root: Path
+    security_headers: Mapping[str, str]
 
 
 def _env_positive_float(name: str, default: float) -> float:
@@ -144,6 +197,12 @@ def _max_concurrent_sessions() -> int:
     return _env_positive_int("PROXY_MAX_SESSIONS", DEFAULT_MAX_SESSIONS)
 
 
+def _max_sessions_per_user() -> int:
+    return _env_positive_int(
+        "PROXY_MAX_SESSIONS_PER_USER", DEFAULT_MAX_SESSIONS_PER_USER
+    )
+
+
 def _start_timeout_seconds() -> float:
     return _env_positive_float(
         "PROXY_START_TIMEOUT_SECONDS", DEFAULT_START_TIMEOUT_SECONDS
@@ -168,9 +227,12 @@ _session_semaphore_limit = _max_concurrent_sessions()
 _session_semaphore = asyncio.Semaphore(_session_semaphore_limit)
 _active_session_count = 0
 
-_session_personas: collections.OrderedDict[str, Persona] = collections.OrderedDict()
+_session_personas: collections.OrderedDict[str, tuple[Persona, str | None]] = (
+    collections.OrderedDict()
+)
 _session_persona_timestamps: dict[str, float] = {}
 _active_session_ids: dict[str, int] = {}
+_active_user_sessions: dict[str, int] = {}
 
 
 def _get_session_semaphore() -> asyncio.Semaphore:
@@ -333,9 +395,10 @@ def _validate_session_id_and_persona(
     requested_session_id: str | None,
     persona: Persona,
     *,
+    iap_sub: str | None = None,
     now: float | None = None,
 ) -> tuple[str, bool]:
-    """Validate optional resumed sessionId and enforce server-bound persona ownership."""
+    """Validate optional resumed sessionId and enforce `(persona, iap_sub)` ownership."""
     ts = time.monotonic() if now is None else now
     _prune_expired_session_bindings(ts)
 
@@ -350,10 +413,16 @@ def _validate_session_id_and_persona(
         )
 
     canonical = requested_session_id.lower()
-    bound_persona = _session_personas.get(canonical)
-    if bound_persona is None:
+    binding = _session_personas.get(canonical)
+    if binding is None:
         # Unrecognized, post-restart, or TTL/LRU-expired UUIDs NEVER resume unseeded
         # or rebind an existing upstream session ID: mint a fresh server-owned UUID.
+        return _mint_fresh_session_id(), False
+
+    bound_persona, bound_sub = binding
+    if bound_sub != iap_sub:
+        # Cross-user mismatch is treated identically to an unrecognized UUID so one
+        # user cannot resume or probe another user's bound persona.
         return _mint_fresh_session_id(), False
 
     if bound_persona != persona:
@@ -369,13 +438,14 @@ def _record_session_binding(
     session_id: str,
     persona: Persona,
     *,
+    iap_sub: str | None = None,
     now: float | None = None,
 ) -> None:
     ts = time.monotonic() if now is None else now
     _prune_expired_session_bindings(ts)
     if session_id in _session_personas:
         _session_personas.move_to_end(session_id)
-    _session_personas[session_id] = persona
+    _session_personas[session_id] = (persona, iap_sub)
     _session_persona_timestamps[session_id] = ts
 
     while len(_session_personas) > MAX_TRACKED_SESSIONS:
@@ -420,7 +490,7 @@ def _allowed_origins() -> frozenset[str]:
         return frozenset(
             item.strip()
             for item in override.split(",")
-            if item.strip() and "\n" not in item and "\r" not in item
+            if item.strip() and "\n" not in item and "\r" not in item and "*" not in item
         )
 
     allowed: set[str] = set(_DEFAULT_LOCAL_ORIGINS)
@@ -444,7 +514,7 @@ def _allowed_origins() -> frozenset[str]:
 
 def _origin_allowed(origin: str | None) -> bool:
     """Require a non-empty Origin header matching an exact allowed origin."""
-    if not origin or "\n" in origin or "\r" in origin:
+    if not origin or "\n" in origin or "\r" in origin or "*" in origin:
         return False
     return origin in _allowed_origins()
 
@@ -456,7 +526,7 @@ def _allowed_hosts() -> frozenset[str]:
         return frozenset(
             item.strip().lower()
             for item in override.split(",")
-            if item.strip() and "\n" not in item and "\r" not in item
+            if item.strip() and "\n" not in item and "\r" not in item and "*" not in item
         )
 
     hosts: set[str] = set(_DEFAULT_LOCAL_HOSTS)
@@ -504,6 +574,38 @@ def _extract_host_header_name(raw_host: str) -> str | None:
     return raw_host.lower()
 
 
+async def _reject_asgi_websocket(
+    scope: Scope,
+    send: Send,
+    *,
+    http_status: int,
+    body: bytes,
+    close_code: int = 1008,
+) -> None:
+    extensions = scope.get("extensions") or {}
+    if "websocket.http.response" in extensions:
+        await send(
+            {
+                "type": "websocket.http.response.start",
+                "status": http_status,
+                "headers": [
+                    (b"content-type", b"text/plain; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"cache-control", b"no-store"),
+                ],
+            }
+        )
+        await send(
+            {
+                "type": "websocket.http.response.body",
+                "body": body,
+                "more_body": False,
+            }
+        )
+    else:
+        await send({"type": "websocket.close", "code": close_code})
+
+
 class _ProxyTrustedHostMiddleware:
     """Standalone ASGI Host-header validator for HTTP and WebSocket scopes."""
 
@@ -519,36 +621,113 @@ class _ProxyTrustedHostMiddleware:
         headers = Headers(scope=scope)
         hostname = _extract_host_header_name(headers.get("host", ""))
         allowed = _allowed_hosts()
-        if hostname is not None and ("*" in allowed or hostname in allowed):
+        if hostname is not None and hostname in allowed:
             await self.app(scope, receive, send)
             return
 
         if scope_type == "websocket":
-            extensions = scope.get("extensions") or {}
-            if "websocket.http.response" in extensions:
-                body = b"Invalid host header"
-                await send(
-                    {
-                        "type": "websocket.http.response.start",
-                        "status": 400,
-                        "headers": [
-                            (b"content-type", b"text/plain; charset=utf-8"),
-                            (b"content-length", str(len(body)).encode("ascii")),
-                        ],
-                    }
-                )
-                await send(
-                    {
-                        "type": "websocket.http.response.body",
-                        "body": body,
-                        "more_body": False,
-                    }
-                )
-            else:
-                await send({"type": "websocket.close", "code": 1008})
+            await _reject_asgi_websocket(
+                scope,
+                send,
+                http_status=400,
+                body=b"Invalid host header",
+                close_code=1008,
+            )
             return
 
         response = PlainTextResponse("Invalid host header", status_code=400)
+        await response(scope, receive, send)
+
+
+class _ProxyIapMiddleware:
+    """Pure ASGI IAP ES256 JWT validator for HTTP and WebSocket scopes."""
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        scope_type = scope["type"]
+        if scope_type not in ("http", "websocket"):
+            await self.app(scope, receive, send)
+            return
+
+        raw_iap = os.environ.get("PROXY_IAP_AUDIENCE")
+        if raw_iap is None or raw_iap == "":
+            await self.app(scope, receive, send)
+            return
+
+        raw_path = scope.get("raw_path")
+        if (
+            scope_type == "http"
+            and scope.get("path") == "/health"
+            and raw_path in (None, b"", b"/health")
+        ):
+            await self.app(scope, receive, send)
+            return
+
+        try:
+            audiences = parse_iap_audiences(raw_iap)
+        except ValueError:
+            log.warning("rejecting request: malformed PROXY_IAP_AUDIENCE configuration")
+            await self._deny(scope_type, scope, receive, send, status=401, body=b"Unauthorized")
+            return
+
+        try:
+            jwt_token = extract_iap_jwt_from_scope(scope)
+            principal = await _iap_verifier.verify_token(jwt_token, audiences)
+        except IapCertUnavailableError as exc:
+            log.warning("rejecting request: IAP public keys unavailable (%s)", exc)
+            await self._deny(
+                scope_type,
+                scope,
+                receive,
+                send,
+                status=503,
+                body=b"IAP verification keys unavailable",
+                ws_close_code=1011,
+            )
+            return
+        except IapAuthError as exc:
+            log.warning("rejecting request with invalid IAP assertion: %s", exc)
+            await self._deny(scope_type, scope, receive, send, status=401, body=b"Unauthorized")
+            return
+
+        if _configured_auth_token() and not _auth_token_valid(Headers(scope=scope)):
+            log.warning("rejecting IAP request missing required proxy auth token")
+            await self._deny(scope_type, scope, receive, send, status=401, body=b"Unauthorized")
+            return
+
+        state_map = scope.setdefault("state", {})
+        if isinstance(state_map, dict):
+            state_map["iap_principal"] = principal
+
+        await self.app(scope, receive, send)
+
+    @staticmethod
+    async def _deny(
+        scope_type: str,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+        *,
+        status: int,
+        body: bytes,
+        ws_close_code: int = 1008,
+    ) -> None:
+        if scope_type == "websocket":
+            await _reject_asgi_websocket(
+                scope,
+                send,
+                http_status=status,
+                body=body,
+                close_code=ws_close_code,
+            )
+            return
+        response = PlainTextResponse(
+            body.decode("utf-8"),
+            status_code=status,
+            headers={"Cache-Control": "no-store"},
+        )
         await response(scope, receive, send)
 
 
@@ -558,6 +737,16 @@ def _remote_peers_allowed() -> bool:
 
 def _configured_auth_token() -> str:
     return os.environ.get("PROXY_AUTH_TOKEN", "").strip()
+
+
+def _has_valid_iap_config() -> bool:
+    raw = os.environ.get("PROXY_IAP_AUDIENCE")
+    if raw is None or raw == "":
+        return False
+    try:
+        return bool(parse_iap_audiences(raw))
+    except ValueError:
+        return False
 
 
 def _is_ip_loopback(host: str) -> bool:
@@ -577,6 +766,19 @@ def _is_ip_loopback(host: str) -> bool:
     return False
 
 
+def _is_disallowed_iap_hostname(host: str) -> bool:
+    lowered = host.strip().lower()
+    if (
+        not lowered
+        or "*" in lowered
+        or _is_ip_loopback(lowered)
+        or lowered.endswith(".localhost")
+        or lowered in ("testserver", "testclient")
+    ):
+        return True
+    return False
+
+
 def _is_loopback_host(host: str) -> bool:
     normalized = host.strip().lower()
     if normalized == "testclient":
@@ -584,21 +786,253 @@ def _is_loopback_host(host: str) -> bool:
     return _is_ip_loopback(normalized)
 
 
+def _validate_iap_origins_and_hosts() -> None:
+    """Enforce explicit `https://` non-loopback origins and bare hostnames in IAP mode."""
+    if os.environ.get("PROXY_ALLOW_TEST_HOSTS", "").strip():
+        raise RuntimeError(
+            "PROXY_ALLOW_TEST_HOSTS must not be set when PROXY_IAP_AUDIENCE is configured"
+        )
+
+    raw_origins = os.environ.get("PROXY_ALLOWED_ORIGINS")
+    if raw_origins is None or not raw_origins.strip():
+        raise RuntimeError(
+            "PROXY_IAP_AUDIENCE requires an explicit non-empty PROXY_ALLOWED_ORIGINS"
+        )
+    origin_parts = raw_origins.split(",")
+    for raw_part in origin_parts:
+        if "\r" in raw_part or "\n" in raw_part:
+            raise RuntimeError("PROXY_ALLOWED_ORIGINS must not contain control characters")
+        origin = raw_part.strip()
+        if not origin or "*" in origin:
+            raise RuntimeError(
+                "PROXY_ALLOWED_ORIGINS in IAP mode must not contain empty or wildcard entries"
+            )
+        parsed = urllib.parse.urlsplit(origin)
+        try:
+            port = parsed.port
+        except ValueError as exc:
+            raise RuntimeError(f"Invalid port in PROXY_ALLOWED_ORIGINS entry {origin!r}") from exc
+        if (
+            parsed.scheme != "https"
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.path != ""
+            or parsed.query != ""
+            or parsed.fragment != ""
+            or parsed.hostname is None
+            or (port is not None and not (1 <= port <= 65535))
+        ):
+            raise RuntimeError(
+                "PROXY_ALLOWED_ORIGINS in IAP mode must contain exact https:// origins only"
+            )
+        origin_host = parsed.hostname.lower()
+        if _is_disallowed_iap_hostname(origin_host) or not _SAFE_HOST_RE.fullmatch(origin_host):
+            raise RuntimeError(
+                f"Disallowed or loopback hostname {origin_host!r} in PROXY_ALLOWED_ORIGINS"
+            )
+
+    raw_hosts = os.environ.get("PROXY_ALLOWED_HOSTS")
+    if raw_hosts is None or not raw_hosts.strip():
+        raise RuntimeError(
+            "PROXY_IAP_AUDIENCE requires an explicit non-empty PROXY_ALLOWED_HOSTS"
+        )
+    for raw_host_part in raw_hosts.split(","):
+        if "\r" in raw_host_part or "\n" in raw_host_part:
+            raise RuntimeError("PROXY_ALLOWED_HOSTS must not contain control characters")
+        host = raw_host_part.strip().lower()
+        if (
+            not host
+            or "*" in host
+            or "://" in host
+            or "/" in host
+            or ":" in host
+            or _is_disallowed_iap_hostname(host)
+            or not _SAFE_HOST_RE.fullmatch(host)
+        ):
+            raise RuntimeError(
+                "PROXY_ALLOWED_HOSTS in IAP mode must contain explicit non-loopback bare hostnames"
+            )
+
+
+class _CspMetaParser(HTMLParser):
+    """Extract `<meta http-equiv="Content-Security-Policy" content="...">` values."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.csp_values: list[str] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if tag.lower() != "meta":
+            return
+        attr_map = {key.lower(): (val or "") for key, val in attrs}
+        if attr_map.get("http-equiv", "").strip().lower() == "content-security-policy":
+            self.csp_values.append(attr_map.get("content", ""))
+
+
+def _extract_and_validate_production_csp(index_html: str) -> str:
+    """Derive hardened HTTP CSP from built `dist/index.html` and append `frame-ancestors 'none'`."""
+    parser = _CspMetaParser()
+    parser.feed(index_html)
+    if not parser.csp_values:
+        raise RuntimeError(
+            'Static index.html is missing <meta http-equiv="Content-Security-Policy">'
+        )
+    if len(parser.csp_values) > 1:
+        raise RuntimeError(
+            "Static index.html contains multiple Content-Security-Policy meta tags"
+        )
+
+    raw_csp = parser.csp_values[0].strip()
+    if not raw_csp or "\r" in raw_csp or "\n" in raw_csp:
+        raise RuntimeError("Static index.html Content-Security-Policy meta content is invalid")
+
+    directives: dict[str, list[str]] = {}
+    ordered_parts: list[str] = []
+    for chunk in raw_csp.split(";"):
+        cleaned = " ".join(chunk.strip().split())
+        if not cleaned:
+            continue
+        tokens = cleaned.split(" ")
+        name = tokens[0].lower()
+        if name in directives:
+            raise RuntimeError(f"Duplicate CSP directive {name!r} in static index.html")
+        values = tokens[1:]
+        directives[name] = values
+        ordered_parts.append(cleaned)
+
+    for required in ("default-src", "script-src", "connect-src"):
+        if required not in directives or not directives[required]:
+            raise RuntimeError(
+                f"Static index.html CSP is missing required directive {required!r}"
+            )
+
+    script_tokens = {tok.lower() for tok in directives["script-src"]}
+    if (
+        "'unsafe-inline'" in script_tokens
+        or "'unsafe-eval'" in script_tokens
+        or "*" in script_tokens
+    ):
+        raise RuntimeError(
+            "Refusing static index.html with unsafe script-src CSP (dev or unhardened build)"
+        )
+
+    connect_tokens = [tok.lower() for tok in directives["connect-src"]]
+    if connect_tokens != ["'self'"]:
+        raise RuntimeError(
+            "Refusing static index.html whose connect-src is not strict same-origin 'self'"
+        )
+
+    for dir_values in directives.values():
+        lowered_vals = {tok.lower() for tok in dir_values}
+        if "ws:" in lowered_vals or "wss:" in lowered_vals:
+            raise RuntimeError("Refusing static index.html containing bare ws: or wss: in CSP")
+
+    if "frame-ancestors" in directives:
+        if [tok.lower() for tok in directives["frame-ancestors"]] != ["'none'"]:
+            raise RuntimeError("Static index.html CSP frame-ancestors must be 'none'")
+    else:
+        ordered_parts.append("frame-ancestors 'none'")
+
+    return "; ".join(ordered_parts)
+
+
+@functools.lru_cache(maxsize=8)
+def _load_cached_static_bundle(
+    resolved_root_str: str, index_mtime_ns: int
+) -> _StaticBundle:
+    del index_mtime_ns
+    static_root = Path(resolved_root_str)
+    raw_index = static_root / "index.html"
+    if raw_index.is_symlink():
+        raise RuntimeError("Static index.html must not be a symlink")
+    try:
+        index_path = raw_index.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("Static index.html does not exist") from exc
+    if not index_path.is_relative_to(static_root) or not index_path.is_file():
+        raise RuntimeError("Static index.html must be a regular file inside PROXY_STATIC_DIR")
+
+    raw_assets = static_root / "assets"
+    if raw_assets.is_symlink():
+        raise RuntimeError("Static assets directory must not be a symlink")
+    try:
+        assets_root = raw_assets.resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError("Static assets directory does not exist inside PROXY_STATIC_DIR") from exc
+    if not assets_root.is_relative_to(static_root) or not assets_root.is_dir():
+        raise RuntimeError("Static assets path must be a directory inside PROXY_STATIC_DIR")
+
+    csp_header = _extract_and_validate_production_csp(
+        index_path.read_text(encoding="utf-8")
+    )
+    security_headers: dict[str, str] = {
+        "Content-Security-Policy": csp_header,
+        "Permissions-Policy": "microphone=(self), camera=(), geolocation=()",
+        "X-Content-Type-Options": "nosniff",
+        "Referrer-Policy": "strict-origin-when-cross-origin",
+        "X-Frame-Options": "DENY",
+    }
+    return _StaticBundle(
+        static_root=static_root,
+        index_path=index_path,
+        assets_root=assets_root,
+        security_headers=security_headers,
+    )
+
+
+def _load_static_bundle(raw_static_dir: str) -> _StaticBundle:
+    try:
+        static_root = Path(raw_static_dir).resolve(strict=True)
+    except OSError as exc:
+        raise RuntimeError(f"PROXY_STATIC_DIR does not exist: {raw_static_dir!r}") from exc
+    if not static_root.is_dir():
+        raise RuntimeError("PROXY_STATIC_DIR must point to a directory")
+    index_candidate = static_root / "index.html"
+    if index_candidate.is_symlink() or not index_candidate.is_file():
+        raise RuntimeError("PROXY_STATIC_DIR is missing a regular index.html file")
+    stat_res = index_candidate.stat()
+    return _load_cached_static_bundle(str(static_root), stat_res.st_mtime_ns)
+
+
 def validate_runtime_security_config(*, bind_host: str | None = None) -> None:
-    """Fail closed if non-loopback binding or PROXY_ALLOW_REMOTE lacks PROXY_AUTH_TOKEN."""
+    """Fail closed if remote/non-loopback/IAP/static security invariants are violated."""
     has_token = bool(_configured_auth_token())
+    raw_iap = os.environ.get("PROXY_IAP_AUDIENCE")
+    has_iap = False
+    if raw_iap is not None and raw_iap != "":
+        try:
+            iap_audiences = parse_iap_audiences(raw_iap)
+        except ValueError as exc:
+            raise RuntimeError(str(exc)) from exc
+        has_iap = bool(iap_audiences)
+        _validate_iap_origins_and_hosts()
+
     effective_host = (
         bind_host
         if bind_host is not None
         else (os.environ.get("PROXY_HOST", DEFAULT_BIND_HOST).strip() or DEFAULT_BIND_HOST)
     )
-    if not _is_ip_loopback(effective_host) and not has_token:
+    non_loopback = not _is_ip_loopback(effective_host)
+    remote_allowed = _remote_peers_allowed()
+
+    raw_static_dir = os.environ.get("PROXY_STATIC_DIR", "").strip()
+    if raw_static_dir:
+        if (non_loopback or remote_allowed) and not has_iap:
+            raise RuntimeError(
+                "PROXY_STATIC_DIR with non-loopback PROXY_HOST or PROXY_ALLOW_REMOTE=1 "
+                "requires a valid PROXY_IAP_AUDIENCE"
+            )
+        _load_static_bundle(raw_static_dir)
+
+    if non_loopback and not (has_token or has_iap):
         raise RuntimeError(
-            "Refusing to bind non-loopback PROXY_HOST without a non-empty PROXY_AUTH_TOKEN"
+            "Refusing to bind non-loopback PROXY_HOST without a non-empty "
+            "PROXY_AUTH_TOKEN or valid PROXY_IAP_AUDIENCE"
         )
-    if _remote_peers_allowed() and not has_token:
+    if remote_allowed and not (has_token or has_iap):
         raise RuntimeError(
-            "PROXY_ALLOW_REMOTE=1 requires a non-empty PROXY_AUTH_TOKEN"
+            "PROXY_ALLOW_REMOTE=1 requires a non-empty PROXY_AUTH_TOKEN "
+            "or valid PROXY_IAP_AUDIENCE"
         )
 
 
@@ -606,15 +1040,32 @@ def _peer_allowed(ws: WebSocket) -> bool:
     effective_bind = (
         os.environ.get("PROXY_HOST", DEFAULT_BIND_HOST).strip() or DEFAULT_BIND_HOST
     )
-    if not _is_ip_loopback(effective_bind) and not _configured_auth_token():
-        return False
+    has_token = bool(_configured_auth_token())
+    has_iap = _has_valid_iap_config()
+    has_static = bool(os.environ.get("PROXY_STATIC_DIR", "").strip())
+
+    if not _is_ip_loopback(effective_bind):
+        if has_static and not has_iap:
+            return False
+        if not (has_token or has_iap):
+            return False
     if _remote_peers_allowed():
-        if not _configured_auth_token():
+        if has_static and not has_iap:
+            return False
+        if not (has_token or has_iap):
             return False
         return True
     if ws.client is None or not ws.client.host:
         return False
     return _is_loopback_host(ws.client.host)
+
+
+def _http_static_peer_allowed(request: Request) -> bool:
+    if _remote_peers_allowed() and _has_valid_iap_config():
+        return True
+    if request.client is None or not request.client.host:
+        return False
+    return _is_loopback_host(request.client.host)
 
 
 def _auth_token_valid(headers: Mapping[str, str]) -> bool:
@@ -696,16 +1147,6 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
     yield
 
 
-app = FastAPI(
-    title="Cloudbank BidiRunSession proxy",
-    lifespan=_lifespan,
-    docs_url=None,
-    redoc_url=None,
-    openapi_url=None,
-)
-app.add_middleware(_ProxyTrustedHostMiddleware)
-
-
 async def _receive_ws_text(ws: WebSocket) -> str:
     """Receive one UTF-8 text WebSocket frame, rejecting binary frames cleanly."""
     msg = await ws.receive()
@@ -738,13 +1179,86 @@ async def _fail(
         await ws.close(code=code)
 
 
-@app.get("/health")
-def health() -> dict[str, str]:
-    return {"status": "ok"}
+def _resolve_asset_media_type(asset_file: Path) -> str:
+    ext = asset_file.suffix.lower()
+    explicit = _EXPLICIT_ASSET_MEDIA_TYPES.get(ext)
+    if explicit is not None:
+        return explicit
+    guessed, _ = mimetypes.guess_type(asset_file.name)
+    return guessed or "application/octet-stream"
 
 
-@app.websocket("/ws/agent")
-async def ws_agent(ws: WebSocket) -> None:
+def _static_not_found(bundle: _StaticBundle) -> PlainTextResponse:
+    return PlainTextResponse(
+        "Not Found",
+        status_code=404,
+        headers={**bundle.security_headers, "Cache-Control": "no-store"},
+    )
+
+
+def _register_static_spa_routes(fastapi_app: FastAPI, static_dir_raw: str) -> None:
+    @fastapi_app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    def serve_spa_index(request: Request) -> Response:
+        if not _http_static_peer_allowed(request):
+            return PlainTextResponse(
+                "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
+            )
+        active_dir = os.environ.get("PROXY_STATIC_DIR", "").strip() or static_dir_raw
+        bundle = _load_static_bundle(active_dir)
+        return FileResponse(
+            bundle.index_path,
+            media_type="text/html",
+            headers={**bundle.security_headers, "Cache-Control": "no-cache"},
+        )
+
+    @fastapi_app.api_route(
+        "/assets/{asset_path:path}", methods=["GET", "HEAD"], include_in_schema=False
+    )
+    def serve_spa_asset(asset_path: str, request: Request) -> Response:
+        if not _http_static_peer_allowed(request):
+            return PlainTextResponse(
+                "Forbidden", status_code=403, headers={"Cache-Control": "no-store"}
+            )
+        active_dir = os.environ.get("PROXY_STATIC_DIR", "").strip() or static_dir_raw
+        bundle = _load_static_bundle(active_dir)
+
+        if (
+            not asset_path
+            or "\x00" in asset_path
+            or "\\" in asset_path
+            or asset_path.startswith("/")
+        ):
+            return _static_not_found(bundle)
+
+        segments = asset_path.split("/")
+        if any(seg in ("", ".", "..") for seg in segments):
+            return _static_not_found(bundle)
+
+        cursor = bundle.assets_root
+        for seg in segments:
+            cursor = cursor / seg
+            if cursor.is_symlink():
+                return _static_not_found(bundle)
+
+        try:
+            resolved = cursor.resolve(strict=True)
+        except OSError:
+            return _static_not_found(bundle)
+
+        if not resolved.is_relative_to(bundle.assets_root) or not resolved.is_file():
+            return _static_not_found(bundle)
+
+        return FileResponse(
+            resolved,
+            media_type=_resolve_asset_media_type(resolved),
+            headers={
+                **bundle.security_headers,
+                "Cache-Control": "public, max-age=31536000, immutable",
+            },
+        )
+
+
+async def _ws_agent_handler(ws: WebSocket) -> None:
     global _active_session_count
 
     if not _peer_allowed(ws):
@@ -764,6 +1278,14 @@ async def ws_agent(ws: WebSocket) -> None:
         await ws.close(code=1008)
         return
 
+    principal: IapPrincipal | None = getattr(ws.state, "iap_principal", None)
+    raw_iap = os.environ.get("PROXY_IAP_AUDIENCE")
+    if raw_iap is not None and raw_iap != "" and principal is None:
+        log.warning("rejecting websocket missing verified IAP principal")
+        await ws.close(code=1008)
+        return
+    iap_sub = principal.sub if principal is not None else None
+
     sem = _get_session_semaphore()
     if sem.locked():
         log.warning("rejecting websocket: concurrent session cap reached")
@@ -771,17 +1293,45 @@ async def ws_agent(ws: WebSocket) -> None:
         await _fail(ws, "server busy: too many active sessions")
         return
 
+    if iap_sub is not None and _active_user_sessions.get(iap_sub, 0) >= _max_sessions_per_user():
+        log.warning(
+            "rejecting websocket: per-user session cap reached for sub=%s", iap_sub
+        )
+        await ws.accept()
+        await _fail(ws, "server busy: too many active sessions")
+        return
+
     await sem.acquire()
+    if iap_sub is not None and _active_user_sessions.get(iap_sub, 0) >= _max_sessions_per_user():
+        sem.release()
+        log.warning(
+            "rejecting websocket: per-user session cap reached for sub=%s", iap_sub
+        )
+        await ws.accept()
+        await _fail(ws, "server busy: too many active sessions")
+        return
+
     _active_session_count += 1
+    if iap_sub is not None:
+        _active_user_sessions[iap_sub] = _active_user_sessions.get(iap_sub, 0) + 1
     try:
         await ws.accept()
-        await _run_session(ws)
+        if iap_sub is not None:
+            await _run_session(ws, iap_sub=iap_sub)
+        else:
+            await _run_session(ws)
     finally:
+        if iap_sub is not None:
+            rem_user = _active_user_sessions.get(iap_sub, 0) - 1
+            if rem_user <= 0:
+                _active_user_sessions.pop(iap_sub, None)
+            else:
+                _active_user_sessions[iap_sub] = rem_user
         _active_session_count -= 1
         sem.release()
 
 
-async def _run_session(ws: WebSocket) -> None:
+async def _run_session(ws: WebSocket, *, iap_sub: str | None = None) -> None:
     try:
         async with asyncio.timeout(_start_timeout_seconds()):
             start_raw = await _receive_ws_text(ws)
@@ -813,7 +1363,7 @@ async def _run_session(ws: WebSocket) -> None:
 
     try:
         resolved_session_id, is_resume = _validate_session_id_and_persona(
-            start.sessionId, start.persona
+            start.sessionId, start.persona, iap_sub=iap_sub
         )
         built_variables = build_session_variables(start)
     except VariableValidationError as exc:
@@ -855,19 +1405,30 @@ async def _run_session(ws: WebSocket) -> None:
         upstream_headers["x-goog-user-project"] = project_id
 
     relay: Relay | None = None
-    log.info(
-        "opening upstream WS for location=%s session=%s resume=%s",
-        location,
-        resolved_session_id,
-        is_resume,
-    )
+    if iap_sub is not None:
+        log.info(
+            "opening upstream WS for location=%s session=%s resume=%s sub=%s",
+            location,
+            resolved_session_id,
+            is_resume,
+            iap_sub,
+        )
+    else:
+        log.info(
+            "opening upstream WS for location=%s session=%s resume=%s",
+            location,
+            resolved_session_id,
+            is_resume,
+        )
     try:
         async with websockets.connect(
             upstream_url,
             additional_headers=upstream_headers,
             max_size=_MAX_UPSTREAM_FRAME_BYTES,
         ) as upstream:
-            _record_session_binding(resolved_session_id, start.persona)
+            _record_session_binding(
+                resolved_session_id, start.persona, iap_sub=iap_sub
+            )
             _mark_session_active(resolved_session_id)
             try:
                 relay = Relay(
@@ -907,6 +1468,41 @@ async def _run_session(ws: WebSocket) -> None:
     except (OSError, websockets.exceptions.InvalidURI, TimeoutError):
         log.exception("could not reach upstream")
         await _fail(ws, "could not reach upstream", code=1011)
+
+
+def create_app(*, static_dir: str | None = None) -> FastAPI:
+    """Construct the FastAPI proxy application with Host -> IAP middleware ordering."""
+    fastapi_app = FastAPI(
+        title="Cloudbank BidiRunSession proxy",
+        lifespan=_lifespan,
+        docs_url=None,
+        redoc_url=None,
+        openapi_url=None,
+        redirect_slashes=False,
+    )
+    # Starlette's `add_middleware` wraps LIFO: `_ProxyTrustedHostMiddleware` added
+    # second is outermost (runs 1st), and `_ProxyIapMiddleware` runs 2nd.
+    fastapi_app.add_middleware(_ProxyIapMiddleware)
+    fastapi_app.add_middleware(_ProxyTrustedHostMiddleware)
+
+    @fastapi_app.api_route("/health", methods=["GET", "HEAD"])
+    def health() -> dict[str, str]:
+        return {"status": "ok"}
+
+    fastapi_app.add_api_websocket_route("/ws/agent", _ws_agent_handler)
+
+    effective_static_dir = (
+        static_dir
+        if static_dir is not None
+        else os.environ.get("PROXY_STATIC_DIR", "").strip()
+    )
+    if effective_static_dir:
+        _register_static_spa_routes(fastapi_app, effective_static_dir)
+
+    return fastapi_app
+
+
+app = create_app()
 
 
 class _FastApiBrowserAdapter:

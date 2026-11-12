@@ -365,4 +365,83 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
     await expect(page.getByTestId('mobile-concierge-drawer')).toBeVisible()
     await expectZeroAxeViolations(page, 'Mobile View (?layout=mobile) - Concierge Drawer')
   })
+
+  test('serves production dist/ directly from proxy.main:app (PROXY_STATIC_DIR) with strict CSP headers, AudioWorklet voice capture, WS turn, and sandboxed search iframe', async ({
+    page,
+    request,
+  }) => {
+    const proxyPort = Number.parseInt(process.env.CLOUDBANK_E2E_PROXY_PORT ?? '8765', 10) || 8765
+    const proxyOrigin = `http://127.0.0.1:${proxyPort}`
+
+    const cspViolations: string[] = []
+    const cspConsoleErrors: string[] = []
+    await page.exposeFunction('__recordCspViolation', (detail: string) => {
+      cspViolations.push(detail)
+    })
+    await page.addInitScript(() => {
+      document.addEventListener('securitypolicyviolation', (ev) => {
+        const report = (
+          window as Window & { __recordCspViolation?: (detail: string) => void }
+        ).__recordCspViolation
+        report?.(`${ev.effectiveDirective}: ${ev.blockedURI}`)
+      })
+    })
+    page.on('console', (msg) => {
+      if (msg.type() === 'error' && /Content Security Policy/i.test(msg.text())) {
+        cspConsoleErrors.push(msg.text())
+      }
+    })
+
+    // 1. Verify disabled OpenAPI routes and missing assets return 404 (never SPA index.html)
+    const docsResp = await request.get(`${proxyOrigin}/docs`)
+    expect(docsResp.status()).toBe(404)
+    const missingAssetResp = await request.get(`${proxyOrigin}/assets/missing-chunk.js`)
+    expect(missingAssetResp.status()).toBe(404)
+
+    // 2. Load SPA directly from proxy.main:app and verify response security headers
+    const rootResp = await page.goto(`${proxyOrigin}/`)
+    expect(rootResp).not.toBeNull()
+    expect(rootResp?.status()).toBe(200)
+    const headers = rootResp?.headers() ?? {}
+    expect(headers['cache-control']).toBe('no-cache')
+    expect(headers['content-security-policy']).toContain("script-src 'self'")
+    expect(headers['content-security-policy']).toContain("connect-src 'self'")
+    expect(headers['content-security-policy']).toContain("frame-ancestors 'none'")
+    expect(headers['permissions-policy']).toBe('microphone=(self), camera=(), geolocation=()')
+    expect(headers['x-content-type-options']).toBe('nosniff')
+    expect(headers['referrer-policy']).toBe('strict-origin-when-cross-origin')
+    expect(headers['x-frame-options']).toBe('DENY')
+
+    await expect(page).toHaveTitle('Cloudbank — Home')
+    const pill = page.locator('[data-concierge-pill="true"]')
+    await expect(pill).toContainText('Hold to talk')
+
+    // 3. Exercise AudioWorklet load + voice utterance over same-origin WebSocket under nosniff + CSP
+    await pill.click()
+    await expect(pill).toHaveAttribute('aria-pressed', 'true')
+    await expect(pill).toContainText('Release to send')
+    await pill.click()
+    await expect(pill).toHaveAttribute('aria-pressed', 'false')
+    await expect(pill).toContainText('Hold to talk', { timeout: 10_000 })
+    await expect(page.getByTestId('conversation-stream')).toContainText('£4,250.75')
+
+    // 4. Exercise WS text turn + sandboxed Google Search suggestion srcDoc iframe rendering
+    const input = page.getByLabel('Ask your Cloudbank concierge')
+    await input.fill('Which recurring subscriptions am I paying for, and how do I cancel Netflix?')
+    await page.getByRole('button', { name: 'Send message' }).click()
+
+    await expect(page.getByRole('heading', { name: 'Spending › Subscriptions' })).toBeVisible()
+    const searchBlock = page.getByTestId('search-suggestions-block')
+    await expect(searchBlock).toBeVisible()
+    const suggestionIframe = searchBlock.locator(
+      'iframe[title="Google Search web result suggestion 1"]',
+    )
+    await expect(suggestionIframe).toBeVisible()
+    await expect(
+      suggestionIframe.contentFrame().getByRole('link', { name: 'Cancel Netflix subscription UK' }),
+    ).toBeVisible()
+
+    expect(cspViolations).toEqual([])
+    expect(cspConsoleErrors).toEqual([])
+  })
 })

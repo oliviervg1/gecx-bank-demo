@@ -1,8 +1,10 @@
+import { fileURLToPath } from 'node:url'
 import { defineConfig, devices } from '@playwright/test'
 
 const isCI = Boolean(process.env.CI)
 const proxyPort = Number.parseInt(process.env.CLOUDBANK_E2E_PROXY_PORT ?? '8765', 10) || 8765
 const webPort = Number.parseInt(process.env.CLOUDBANK_E2E_WEB_PORT ?? '4173', 10) || 4173
+const distDir = fileURLToPath(new URL('./dist', import.meta.url))
 
 export default defineConfig({
   testDir: './e2e',
@@ -32,7 +34,8 @@ export default defineConfig({
   ],
   webServer: [
     {
-      command: 'uv --directory ../proxy run --locked python ../web/e2e/fake_bidi_server.py',
+      command:
+        "sh -c '[ -f dist/index.html ] || npm run build; exec uv --directory ../proxy run --locked python ../web/e2e/fake_bidi_server.py'",
       url: `http://127.0.0.1:${proxyPort}/health`,
       reuseExistingServer: false,
       timeout: 30_000,
@@ -40,6 +43,7 @@ export default defineConfig({
         ...process.env,
         CLOUDBANK_E2E_PROXY_PORT: String(proxyPort),
         CLOUDBANK_E2E_WEB_PORT: String(webPort),
+        PROXY_STATIC_DIR: distDir,
       },
     },
     {

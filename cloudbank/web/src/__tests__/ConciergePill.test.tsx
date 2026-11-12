@@ -124,6 +124,23 @@ describe('ConciergePill', () => {
     expect(v.reconnect).toHaveBeenCalledTimes(1)
   })
 
+  it('shows "Reload page" and calls reloadPage when authExpired is true', () => {
+    const reloadPage = vi.fn()
+    const v = makeAgent({
+      pushToTalk: true,
+      phase: 'error',
+      connState: 'error',
+      authExpired: true,
+      reloadPage,
+    })
+    render(withAgent(v))
+    const pill = screen.getByRole('button', { name: 'Reload page' })
+    expect(pill).toHaveAttribute('title', 'Reload the page to sign in again')
+    fireEvent.click(pill)
+    expect(reloadPage).toHaveBeenCalledTimes(1)
+    expect(v.reconnect).not.toHaveBeenCalled()
+  })
+
   it('uses plain executive tooltip copy instead of leaking raw errorMessage on hover', () => {
     const { rerender } = render(
       withAgent(

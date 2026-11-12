@@ -30,8 +30,14 @@ function visualFor(
   phase: SessionPhase,
   micState: MicState,
   micDenied: boolean,
+  authExpired: boolean,
   pushToTalk: boolean,
-  actions: { startMic: () => void; stopMic: () => void; reconnect: () => void },
+  actions: {
+    startMic: () => void
+    stopMic: () => void
+    reconnect: () => void
+    reloadPage: () => void
+  },
 ): Visual {
   if (phase === 'connecting') {
     return {
@@ -65,11 +71,11 @@ function visualFor(
   }
   if (phase === 'error') {
     return {
-      label: 'Reconnect',
+      label: authExpired ? 'Reload page' : 'Reconnect',
       icon: <RefreshCw size={16} aria-hidden="true" />,
       className:
         'bg-white border border-brand-border-strong text-brand-text hover:border-brand-green',
-      onClick: actions.reconnect,
+      onClick: authExpired ? actions.reloadPage : actions.reconnect,
     }
   }
   if (phase === 'capturing') {
@@ -139,6 +145,7 @@ function tooltipFor(
   phase: SessionPhase,
   micState: MicState,
   micDenied: boolean,
+  authExpired: boolean,
   pushToTalk: boolean,
   spacebarEnabled: boolean,
 ): string | undefined {
@@ -148,7 +155,9 @@ function tooltipFor(
       : 'Allow microphone access in your browser to talk'
   }
   if (phase === 'error') {
-    return 'Select Reconnect to start a new concierge session'
+    return authExpired
+      ? 'Reload the page to sign in again'
+      : 'Select Reconnect to start a new concierge session'
   }
   if (phase === 'paused') {
     return pushToTalk
@@ -186,12 +195,20 @@ export function ConciergePill() {
     enableSpacebar: spacebarEnabled,
   })
 
-  const v = visualFor(phase, agent.micState, micDenied, agent.pushToTalk, {
+  const authExpired = Boolean(agent.authExpired)
+  const v = visualFor(phase, agent.micState, micDenied, authExpired, agent.pushToTalk, {
     startMic: () => {
       void agent.startMic()
     },
     stopMic: agent.stopMic,
     reconnect: agent.reconnect,
+    reloadPage: () => {
+      if (agent.reloadPage) {
+        agent.reloadPage()
+        return
+      }
+      window.location.reload()
+    },
   })
 
   const { onClick: holdClick, ...pointerHoldProps } = hold
@@ -215,7 +232,14 @@ export function ConciergePill() {
         effectiveOnClick?.(e)
       }}
       style={holdable ? { touchAction: 'none' } : undefined}
-      title={tooltipFor(phase, agent.micState, micDenied, agent.pushToTalk, spacebarEnabled)}
+      title={tooltipFor(
+        phase,
+        agent.micState,
+        micDenied,
+        authExpired,
+        agent.pushToTalk,
+        spacebarEnabled,
+      )}
       {...(holdable ? pointerHoldProps : {})}
       className={
         'min-h-9 inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-full ' +
