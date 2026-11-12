@@ -1,0 +1,174 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Cloudbank · Retail Banking Concierge Walkthrough</title>
+  <style>
+    :root {
+      --bg: #f7f6f2;
+      --surface: #ffffff;
+      --border: #e5e3dc;
+      --ink: #141413;
+      --muted: #66645e;
+      --accent: #0a4d35;
+      --accent-hover: #083d2a;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: var(--bg);
+      color: var(--ink);
+      font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    header {
+      border-bottom: 1px solid var(--border);
+      background: var(--surface);
+    }
+    .bar {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 10px;
+    }
+    .brand-title {
+      margin: 0;
+      font-size: 16px;
+      font-weight: 600;
+      letter-spacing: -0.01em;
+    }
+    .brand-sub {
+      font-size: 13px;
+      color: var(--muted);
+    }
+    .actions {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 14px;
+      font-size: 13px;
+      font-weight: 500;
+      text-decoration: none;
+      border-radius: 6px;
+      border: 1px solid var(--border);
+      color: var(--ink);
+      background: var(--surface);
+      transition: background-color 150ms ease, border-color 150ms ease, transform 150ms ease;
+    }
+    .btn:hover {
+      background: var(--bg);
+      transform: translateY(-1px);
+    }
+    .btn-primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #ffffff;
+    }
+    .btn-primary:hover {
+      background: var(--accent-hover);
+      border-color: var(--accent-hover);
+    }
+    a:focus-visible,
+    .btn:focus-visible,
+    video:focus-visible {
+      outline: 2px solid var(--accent);
+      outline-offset: 2px;
+    }
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        animation-duration: 0.01ms !important;
+        transition-duration: 0.01ms !important;
+      }
+      .btn,
+      .btn:hover {
+        transform: none;
+        transition: none;
+      }
+    }
+    main {
+      max-width: 1120px;
+      margin: 32px auto 56px;
+      padding: 0 24px;
+    }
+    .player-surface {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    video {
+      display: block;
+      width: 100%;
+      height: auto;
+      aspect-ratio: 16 / 9;
+      background: #141413;
+    }
+    .caption {
+      padding: 18px 22px;
+      border-top: 1px solid var(--border);
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      gap: 16px;
+      flex-wrap: wrap;
+    }
+    .caption p {
+      margin: 0;
+      font-size: 14px;
+      line-height: 1.5;
+      color: var(--muted);
+      max-width: 780px;
+    }
+    .meta {
+      font-size: 12px;
+      color: var(--muted);
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="bar">
+      <div class="brand">
+        <h1 class="brand-title">Cloudbank</h1>
+        <span class="brand-sub">Multi-Product Retail Banking Concierge · CX Agent Studio</span>
+      </div>
+      <div class="actions">
+        <a class="btn" href="https://github.com/oliviervg1/gecx-bank-demo" target="_blank" rel="noopener noreferrer">Source Repository</a>
+        <a class="btn btn-primary" href="./cloudbank_executive_promo.mp4" download="cloudbank_executive_promo.mp4">Download MP4 (1080p)</a>
+      </div>
+    </div>
+  </header>
+  <main>
+    <div class="player-surface">
+      <video controls playsinline preload="metadata" poster="./poster.png">
+        <source src="./cloudbank_executive_promo.mp4" type="video/mp4" />
+        <track kind="captions" src="./captions.en-gb.vtt" srclang="en-GB" label="English (UK)" default />
+        Your browser does not support HTML5 video. Use the Download MP4 button above.
+      </video>
+      <div class="caption">
+        <p>End-to-end walkthrough across Everyday Banking, Savings, and Mortgages with live voice and chat interactions on mobile, web, and telephone.</p>
+        <span class="meta">1920×1080 · 2:40 · 22.9 MB</span>
+      </div>
+    </div>
+  </main>
+</body>
+</html>
