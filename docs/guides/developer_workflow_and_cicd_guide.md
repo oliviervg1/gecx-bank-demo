@@ -137,16 +137,16 @@ To host a shared demo without a Global External Application Load Balancer, `clou
 
 ### Required Google Cloud APIs & Runtime Service Account Permissions
 
-Before running `deploy_cloud_run.sh` in your target project (`--project` or `gcp_project_id` in gitignored `cloudbank/gecx-config.json`), enable these Google Cloud APIs:
+`deploy_cloud_run.sh` deploys the Cloud Run service and targets the CXAS application (`CLOUDBANK_GCP_PROJECT_ID`) in the same Google Cloud project (`--project` or `gcp_project_id` in gitignored `cloudbank/gecx-config.json`). Before running `deploy_cloud_run.sh` in that project, enable these Google Cloud APIs:
 1. Cloud Run Admin API (`run.googleapis.com`)
 2. Cloud Build API (`cloudbuild.googleapis.com`)
 3. Artifact Registry API (`artifactregistry.googleapis.com`)
 4. Cloud Identity-Aware Proxy API (`iap.googleapis.com`)
 5. Service Usage API (`serviceusage.googleapis.com`)
-6. CX Agent Studio API (`ces.googleapis.com`, enabled in the CXAS project hosting `deployed_app_id`)
+6. CX Agent Studio API (`ces.googleapis.com`)
 7. Secret Manager API (`secretmanager.googleapis.com`, required only when passing `--iap-oauth-client-id` and `--iap-oauth-secret-name` for external users outside your Google Workspace organization)
 
-Create a dedicated least-privilege runtime service account (`deploy_cloud_run.sh` refuses default Compute Engine `-compute@developer.gserviceaccount.com` and App Engine `@appspot.gserviceaccount.com` service accounts). Because `cloudbank/proxy` sends `x-goog-user-project`, the runtime service account requires `roles/serviceusage.serviceUsageConsumer` on the Cloud Run project plus the CX Agent Studio session role in the CXAS project (optionally granted by passing `--cxas-role`, for example `--cxas-role roles/ces.client`).
+Create a dedicated least-privilege runtime service account in that project (`deploy_cloud_run.sh` refuses default Compute Engine `-compute@developer.gserviceaccount.com` and App Engine `@appspot.gserviceaccount.com` service accounts). Because `cloudbank/proxy` sends `x-goog-user-project`, the runtime service account requires `roles/serviceusage.serviceUsageConsumer` plus the CX Agent Studio session role on the project (`deploy_cloud_run.sh` grants `roles/serviceusage.serviceUsageConsumer` automatically and binds `--cxas-role`, for example `--cxas-role roles/ces.client`, on `--project` when passed; if you later point `CLOUDBANK_GCP_PROJECT_ID` at a separate CXAS project manually, grant the CXAS session role in that project by hand).
 
 ### Running `deploy_cloud_run.sh`
 
@@ -158,12 +158,12 @@ Create a dedicated least-privilege runtime service account (`deploy_cloud_run.sh
   --iap-members user:alice@example.com,group:banking-demo@example.com \
   --yes
 
-# Optional: apply a custom OAuth client from Secret Manager for external identities
+# Optional: apply a custom OAuth client from Secret Manager (pass a bare secret name; the script always reads version 'latest' in --project)
 ./cloudbank/scripts/deploy_cloud_run.sh \
   --service-account cloudbank-proxy@<your-gcp-project-id>.iam.gserviceaccount.com \
   --iap-members user:external-reviewer@example.com \
   --iap-oauth-client-id <oauth-client-id>.apps.googleusercontent.com \
-  --iap-oauth-secret-name projects/<your-gcp-project-id>/secrets/<secret-name>/versions/latest \
+  --iap-oauth-secret-name <secret-name> \
   --yes
 ```
 
