@@ -57,3 +57,8 @@ class AudioContextStub {
   }
 }
 ;(globalThis as unknown as { AudioContext: typeof AudioContextStub }).AudioContext = AudioContextStub
+
+// Stub fetch in the offline unit-test tier so happy-dom never attempts real TCP
+// connections to localhost:3000 during pre-ready WebSocket /health probes.
+;(globalThis as unknown as { fetch: typeof fetch }).fetch = (() =>
+  Promise.resolve({ status: 200, ok: true, type: 'basic' } as Response)) as unknown as typeof fetch

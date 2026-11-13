@@ -12,11 +12,12 @@ cloudbank/                      # Cloudbank application workspace
 ├── cxas_app/Cloudbank/         # CXAS bundle (app.json, global_instruction.txt, guardrails, 4 agents, tools)
 ├── cxas_shared/                # Canonical callbacks (capture_utterance, release_line) and controller_common.py
 ├── evals/                      # Multi-segment NAIVE golden evaluations and SimulationEvals
-├── proxy/                      # Hardened localhost FastAPI BidiRunSession WebSocket proxy
-├── scripts/                    # Lifecycle (manage_app.py), sync_shared.py, audit_agent.py, run_golden_evals.py
+├── proxy/                      # Hardened FastAPI BidiRunSession WebSocket and static SPA proxy
+├── scripts/                    # Lifecycle (manage_app.py), deploy_cloud_run.sh, sync_shared.py, audit, goldens
 ├── shared/                     # personas/*.json, schemas, parity_vectors.json, official_help_hosts & composite_v2_tags
 ├── tests/                      # Offline pytest suite (bundle integrity, controllers, state matrix, callbacks, parity)
 ├── web/                        # Vite + React 19 + Tailwind v4 banking app, Concierge UI, and Playwright E2E suite
+├── Dockerfile                  # Single-origin multi-stage container for Cloud Run Direct IAP
 ├── cxaslint.yaml               # Zero-warning CXAS structural and evaluation lint policy
 ├── gecx-config.example.json    # Committed config template (copy to gitignored gecx-config.json for live cloud use)
 ├── pyproject.toml              # Python environment for agent tests and CXAS tooling (PEP 735 dev group, PyPI pinned)
@@ -99,11 +100,11 @@ Controllers increment `ui_view_state.seq` monotonically and never rely on browse
 
 ## Proxy Security
 
-`cloudbank/proxy` holds local Application Default Credentials (`ADC`) and is designed strictly for localhost development (`127.0.0.1:8765`). Never bind it to `0.0.0.0` on an untrusted network or deploy it remotely without end-user authentication:
+`cloudbank/proxy` supports two explicit operating modes and fails closed on unauthenticated remote exposure:
 
-- Launch via `uv run --locked python -m proxy` (which sets `proxy_headers=False` and `ws_max_size=1048576`) or `uvicorn proxy.main:app --reload --host 127.0.0.1 --port 8765 --ws-max-size 1048576` (`VITE_PROXY_TARGET` overrides Vite's server-side `ws://127.0.0.1:8765` upstream target).
-- Enforces loopback client peer addresses (`127.0.0.1`, `::1`), fails closed at startup if `PROXY_ALLOW_REMOTE=1` or non-loopback `PROXY_HOST` lacks `PROXY_AUTH_TOKEN` (with Vite injecting `x-proxy-token` server-side when set), validates HTTP/WebSocket `Host` headers cleanly in an ASGI middleware and exact `Origin` (`PROXY_ALLOWED_ORIGINS` with zero wildcard suffix fallthrough), disables OpenAPI routes, caps concurrent sessions (`PROXY_MAX_SESSIONS`), rejects binary frames with `1003`, caps PCM16 audio frames at `64 KB` (`87,384` base64 chars) and disconnects after `5` malformed frames (`1008`), streams a 10-second `16 kHz` `LINEAR16` silence keepalive, resets `PROXY_MAX_IDLE_SECONDS` (`900 s`) strictly on `ClientText`, non-empty speech transcripts, or `sessionOutput` events, and enforces `PROXY_MAX_SESSION_SECONDS` (`3600 s`).
-- In Cloud Shell (`WEB_HOST`) or GitHub Codespaces (`CODESPACE_NAME`), keep **both** port `8765` (proxy) and port `5173` (Vite) private/authenticated because Vite forwards `/ws/agent` over loopback.
+- **Localhost workstation mode (`127.0.0.1:8765`, developer `ADC`):** Launch via `uv run --locked python -m proxy` (which sets `proxy_headers=False` and `ws_max_size=1048576` and honors `PORT` fallback only when `K_SERVICE` is non-empty and `PROXY_PORT` is unset) or `uvicorn proxy.main:app --reload --host 127.0.0.1 --port 8765 --ws-max-size 1048576` (`VITE_PROXY_TARGET` overrides Vite's server-side `ws://127.0.0.1:8765` upstream target). Never bind local `ADC` mode to `0.0.0.0` on an untrusted network; in Cloud Shell (`WEB_HOST`) or GitHub Codespaces (`CODESPACE_NAME`), keep **both** port `8765` (proxy) and port `5173` (Vite) private/authenticated because Vite forwards `/ws/agent` over loopback.
+- **Single-origin Cloud Run Direct IAP mode (`PROXY_IAP_AUDIENCE` + `PROXY_STATIC_DIR`, dedicated service account):** Deployed via `cloudbank/Dockerfile` and `./cloudbank/scripts/deploy_cloud_run.sh` (`--no-allow-unauthenticated --iap --session-affinity --max-instances=1 --concurrency=80 --timeout=3600`, explicit `--service-account` refusing default Compute/App Engine SAs, required `--iap-members` / `--iap-domains` refusing `allUsers` and `allAuthenticatedUsers`, refusing `PROXY_AUTH_TOKEN`). Pure ASGI `_ProxyIapMiddleware` (ordered inside `_ProxyTrustedHostMiddleware`, exempting only exact HTTP `/health`) verifies `x-goog-iap-jwt-assertion` (`ES256` pinned before `google.auth.jwt.decode`, `<= 8192` chars, single-flight cached keys with 24h stale bound), binds sessions to `(persona, iap_sub)` with `PROXY_MAX_SESSIONS_PER_USER` (`2` default, logging `sub` only), and serves `/` and `/assets/*` (`GET`/`HEAD`) with a startup-validated HTTP Content Security Policy (`frame-ancestors 'none'`) and `X-Content-Type-Options: nosniff`.
+- **Shared runtime invariants:** Enforces loopback peers unless `PROXY_ALLOW_REMOTE=1` is paired with `PROXY_AUTH_TOKEN` or valid `PROXY_IAP_AUDIENCE` (requiring `PROXY_IAP_AUDIENCE` whenever `PROXY_STATIC_DIR` is used on non-loopback/remote, and enforcing both when both are set), validates ASGI `Host` (zero `*` wildcards) and exact `Origin` (`PROXY_ALLOWED_ORIGINS`), disables OpenAPI routes with `redirect_slashes=False`, caps concurrent sessions (`PROXY_MAX_SESSIONS`), rejects binary frames (`1003`), caps PCM16 audio frames at `64 KB` (`87,384` base64 chars) and disconnects after `5` malformed frames (`1008`), streams a 10-second `16 kHz` `LINEAR16` silence keepalive, resets `PROXY_MAX_IDLE_SECONDS` (`900 s`) strictly on `ClientText`, non-empty speech transcripts, or `sessionOutput` events, and enforces `PROXY_MAX_SESSION_SECONDS` (`3600 s` default, `3300 s` in Cloud Run).
 
 ## Deploying & Syncing Evaluations (`cloudbank/push.sh`)
 

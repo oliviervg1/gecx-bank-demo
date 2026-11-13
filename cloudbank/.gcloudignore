@@ -1,0 +1,87 @@
+# Cloud Build staging tarball exclusions for `gcloud builds submit` from `cloudbank/`.
+# Note: `.gcloudignore` (not `.dockerignore` or repo-root `.gitignore`) governs what
+# `gcloud builds submit` uploads to Google Cloud Storage. Keep `Dockerfile` included!
+
+# Local configuration & credentials (never upload to Cloud Build staging buckets)
+gecx-config.json
+**/gecx-config.json
+.env
+.env.*
+.env*
+**/.env*
+*.pem
+**/*.pem
+*.key
+**/*.key
+*.p12
+**/*.p12
+*.pfx
+**/*.pfx
+*.jks
+**/*.jks
+id_rsa*
+**/id_rsa*
+*_rsa
+**/*_rsa
+service-account*.json
+**/service-account*.json
+*credentials*.json
+**/*credentials*.json
+gha-creds-*.json
+**/gha-creds-*.json
+secrets/
+**/secrets/
+
+# VCS & editor metadata
+.git
+.gitignore
+.gcloudignore
+.idea/
+.vscode/
+.claude/
+.gemini/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Python virtualenvs & caches
+.venv/
+**/.venv/
+venv/
+env/
+**/__pycache__/
+**/*.py[cod]
+**/.pytest_cache/
+**/.ruff_cache/
+**/.mypy_cache/
+.coverage
+.coverage.*
+
+# Node / Vite local build & test outputs
+node_modules/
+**/node_modules/
+web/dist/
+web/.tsbuild/
+web/*.tsbuildinfo
+web/coverage/
+web/playwright-report/
+web/test-results/
+*.log
+npm-debug.log*
+
+# Non-containerized CXAS bundle, evaluations, CLI scripts, and offline pytest suites
+/cxas_app/
+/cxas_shared/
+/evals/
+/scripts/
+/tests/
+/proxy/tests/
+/README.md
+/proxy/README.md
+/cxaslint.yaml
+/pyproject.toml
+/uv.lock
+/push.sh
+/tmp/
+/.tmp/

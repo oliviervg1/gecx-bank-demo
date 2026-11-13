@@ -61,16 +61,22 @@ def _isolated_proxy_state(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     main._session_personas.clear()
     main._session_persona_timestamps.clear()
     main._active_session_ids.clear()
+    main._active_user_sessions.clear()
     main._active_session_count = 0
     main._get_session_semaphore()
+    main._iap_verifier.clear_cache()
+    main._load_cached_static_bundle.cache_clear()
     relay._official_help_allowlist.cache_clear()
     relay._composite_tag_words.cache_clear()
     yield
     main._session_personas.clear()
     main._session_persona_timestamps.clear()
     main._active_session_ids.clear()
+    main._active_user_sessions.clear()
     main._active_session_count = 0
     main._get_session_semaphore()
+    main._iap_verifier.clear_cache()
+    main._load_cached_static_bundle.cache_clear()
     relay._official_help_allowlist.cache_clear()
     relay._composite_tag_words.cache_clear()
 

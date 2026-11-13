@@ -1,4 +1,4 @@
-"""CLI entrypoint launching the localhost BidiRunSession proxy via Uvicorn."""
+"""CLI entrypoint launching the Cloudbank BidiRunSession proxy via Uvicorn."""
 from __future__ import annotations
 
 import logging
@@ -23,10 +23,19 @@ def _parse_port(raw: str | None) -> int:
     return port if 1 <= port <= 65535 else DEFAULT_PORT
 
 
+def _resolve_port() -> int:
+    proxy_port = os.environ.get("PROXY_PORT")
+    if proxy_port is not None and proxy_port.strip() != "":
+        return _parse_port(proxy_port.strip())
+    if os.environ.get("K_SERVICE", "").strip():
+        return _parse_port(os.environ.get("PORT"))
+    return DEFAULT_PORT
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO)
     host = os.environ.get("PROXY_HOST", DEFAULT_HOST).strip() or DEFAULT_HOST
-    port = _parse_port(os.environ.get("PROXY_PORT"))
+    port = _resolve_port()
     validate_runtime_security_config(bind_host=host)
     uvicorn.run(
         "proxy.main:app",

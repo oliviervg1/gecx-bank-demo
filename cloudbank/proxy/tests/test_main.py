@@ -4,9 +4,12 @@ from __future__ import annotations
 import asyncio
 import base64
 import copy
+import hashlib
+import hmac
 import http
 import json
 import logging
+import time
 import uuid
 from pathlib import Path
 from typing import Any
@@ -17,6 +20,8 @@ import websockets.asyncio.server
 import websockets.datastructures
 import websockets.exceptions
 import websockets.http11
+from cryptography.hazmat.primitives import hashes, serialization
+from cryptography.hazmat.primitives.asymmetric import ec, padding, rsa, utils
 from fastapi.testclient import TestClient
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 from starlette.routing import WebSocketRoute
@@ -25,7 +30,7 @@ from starlette.websockets import WebSocketDisconnect
 
 from conftest import DEFAULT_ORIGIN
 from proxy import __main__ as cli_entry
-from proxy import main
+from proxy import iap, main
 from proxy.main import app, build_session_variables, validate_persona_snapshot
 from proxy.protocol import MAX_CLIENT_FRAME_BYTES, ClientStart
 
@@ -566,7 +571,7 @@ def test_session_binding_resume_and_persona_swap_rejection(
         captured_upstream_frames[1]["realtimeInput"]["variables"]["first_name"]
         == "Chloe"
     )
-    assert main._session_personas[sid] == "chloe"
+    assert main._session_personas[sid] == ("chloe", None)
 
     # 3. Resuming the bound sessionId with a DIFFERENT persona is rejected cleanly
     captured_upstream_frames.clear()
@@ -1274,3 +1279,935 @@ def test_cli_entrypoint_binds_loopback_8765_and_refuses_unauthenticated_remote_b
     assert cli_entry._parse_port("8080") == 8080
     assert cli_entry._parse_port("invalid") == 8765
     assert cli_entry._parse_port("70000") == 8765
+
+
+def test_cli_port_fallback_honors_port_only_when_k_service_is_set(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("PROXY_HOST", raising=False)
+    monkeypatch.delenv("PROXY_PORT", raising=False)
+    monkeypatch.delenv("PROXY_ALLOW_REMOTE", raising=False)
+    monkeypatch.delenv("PROXY_AUTH_TOKEN", raising=False)
+    monkeypatch.delenv("PROXY_IAP_AUDIENCE", raising=False)
+    monkeypatch.delenv("K_SERVICE", raising=False)
+
+    # 1. Ambient PORT in local shell MUST NOT move the proxy off 8765 when K_SERVICE is unset
+    monkeypatch.setenv("PORT", "8080")
+    with patch("proxy.__main__.uvicorn.run") as local_run:
+        cli_entry.main()
+    local_run.assert_called_once_with(
+        "proxy.main:app",
+        host="127.0.0.1",
+        port=8765,
+        ws_max_size=1_048_576,
+        proxy_headers=False,
+    )
+
+    # 2. In Cloud Run (K_SERVICE non-empty) with PROXY_PORT unset, PORT is honoured
+    monkeypatch.setenv("K_SERVICE", "cloudbank")
+    with patch("proxy.__main__.uvicorn.run") as cr_run:
+        cli_entry.main()
+    cr_run.assert_called_once_with(
+        "proxy.main:app",
+        host="127.0.0.1",
+        port=8080,
+        ws_max_size=1_048_576,
+        proxy_headers=False,
+    )
+
+    # 3. Explicit PROXY_PORT always takes precedence over PORT even when K_SERVICE is set
+    monkeypatch.setenv("PROXY_PORT", "9090")
+    with patch("proxy.__main__.uvicorn.run") as explicit_run:
+        cli_entry.main()
+    explicit_run.assert_called_once_with(
+        "proxy.main:app",
+        host="127.0.0.1",
+        port=9090,
+        ws_max_size=1_048_576,
+        proxy_headers=False,
+    )
+
+
+# -- Cloud Run Direct IAP Verifier, Middleware, Session Binding & Static SPA --
+
+_TEST_IAP_AUDIENCE = "/projects/123456789012/locations/europe-west1/services/cloudbank"
+_TEST_IAP_HOST = "cloudbank-123456789012.europe-west1.run.app"
+_TEST_IAP_ORIGIN = f"https://{_TEST_IAP_HOST}"
+
+_PRODUCTION_INDEX_HTML = (
+    "<!doctype html>\n"
+    '<html lang="en-GB"><head><meta charset="UTF-8" />'
+    '<meta http-equiv="Content-Security-Policy" content="'
+    "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
+    "img-src 'self' data:; font-src 'self' data:; worker-src 'self' blob:; "
+    "frame-src 'self'; child-src 'self' blob:; connect-src 'self'; "
+    "object-src 'none'; base-uri 'self'; form-action 'self'"
+    '" /><title>Cloudbank</title></head><body><div id="root"></div></body></html>\n'
+)
+
+
+def _b64url(data: bytes) -> str:
+    return base64.urlsafe_b64encode(data).rstrip(b"=").decode("ascii")
+
+
+def _generate_p256_keypair() -> tuple[ec.EllipticCurvePrivateKey, str]:
+    priv = ec.generate_private_key(ec.SECP256R1())
+    pub_pem = (
+        priv.public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("ascii")
+    )
+    return priv, pub_pem
+
+
+def _sign_es256_jwt(
+    private_key: ec.EllipticCurvePrivateKey,
+    *,
+    kid: str = "kid-1",
+    alg: str | None = "ES256",
+    aud: Any = _TEST_IAP_AUDIENCE,
+    iss: Any = "https://cloud.google.com/iap",
+    sub: Any = "accounts.google.com:100001",
+    email: Any = "alice@example.com",
+    iat: Any | None = None,
+    exp: Any | None = None,
+    extra_claims: dict[str, Any] | None = None,
+) -> str:
+    now = int(time.time())
+    header: dict[str, Any] = {"typ": "JWT"}
+    if alg is not None:
+        header["alg"] = alg
+    if kid != "__OMIT__":
+        header["kid"] = kid
+
+    payload: dict[str, Any] = {
+        "iss": iss,
+        "aud": aud,
+        "iat": (now - 5) if iat is None else iat,
+        "exp": (now + 300) if exp is None else exp,
+    }
+    if sub != "__OMIT__":
+        payload["sub"] = sub
+    if email != "__OMIT__":
+        payload["email"] = email
+    if extra_claims:
+        payload.update(extra_claims)
+
+    signing_input = (
+        f"{_b64url(json.dumps(header, separators=(',', ':')).encode('utf-8'))}."
+        f"{_b64url(json.dumps(payload, separators=(',', ':')).encode('utf-8'))}"
+    )
+    der_sig = private_key.sign(signing_input.encode("ascii"), ec.ECDSA(hashes.SHA256()))
+    r_int, s_int = utils.decode_dss_signature(der_sig)
+    raw_sig = r_int.to_bytes(32, "big") + s_int.to_bytes(32, "big")
+    return f"{signing_input}.{_b64url(raw_sig)}"
+
+
+def _set_valid_iap_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("PROXY_IAP_AUDIENCE", _TEST_IAP_AUDIENCE)
+    monkeypatch.setenv("PROXY_ALLOWED_HOSTS", _TEST_IAP_HOST)
+    monkeypatch.setenv("PROXY_ALLOWED_ORIGINS", _TEST_IAP_ORIGIN)
+    monkeypatch.setenv("PROXY_ALLOW_REMOTE", "1")
+    monkeypatch.delenv("PROXY_ALLOW_TEST_HOSTS", raising=False)
+    monkeypatch.delenv("PROXY_AUTH_TOKEN", raising=False)
+
+
+@pytest.mark.asyncio
+async def test_iap_jwt_es256_alg_pinning_header_caps_claims_and_no_ws_accept_on_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    priv_ec, pem_ec = _generate_p256_keypair()
+    priv_rsa = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem_rsa = (
+        priv_rsa.public_key()
+        .public_bytes(
+            serialization.Encoding.PEM,
+            serialization.PublicFormat.SubjectPublicKeyInfo,
+        )
+        .decode("ascii")
+    )
+
+    async def fake_certs() -> dict[str, str]:
+        return {"kid-1": pem_ec, "kid-rsa": pem_rsa}
+
+    verifier = iap.IapVerifier(cert_fetcher=fake_certs)
+    monkeypatch.setattr(main, "_iap_verifier", verifier)
+    _set_valid_iap_env(monkeypatch)
+    main.validate_runtime_security_config()
+
+    valid_tok = _sign_es256_jwt(priv_ec)
+    principal = await verifier.verify_token(valid_tok, (_TEST_IAP_AUDIENCE,))
+    assert principal == iap.IapPrincipal(sub="accounts.google.com:100001")
+    assert not hasattr(principal, "email")
+
+    # Build RS256, HS256 (signed with public PEM), and alg=none tokens
+    now = int(time.time())
+    base_claims = {
+        "iss": "https://cloud.google.com/iap",
+        "aud": _TEST_IAP_AUDIENCE,
+        "sub": "accounts.google.com:100001",
+        "email": "alice@example.com",
+        "iat": now - 5,
+        "exp": now + 300,
+    }
+    pld_b64 = _b64url(json.dumps(base_claims).encode("utf-8"))
+
+    rs_hdr = _b64url(json.dumps({"alg": "RS256", "kid": "kid-rsa", "typ": "JWT"}).encode())
+    rs_sig = priv_rsa.sign(
+        f"{rs_hdr}.{pld_b64}".encode("ascii"),
+        padding.PKCS1v15(),
+        hashes.SHA256(),
+    )
+    rs256_tok = f"{rs_hdr}.{pld_b64}.{_b64url(rs_sig)}"
+
+    hs_hdr = _b64url(json.dumps({"alg": "HS256", "kid": "kid-1", "typ": "JWT"}).encode())
+    hs_sig = hmac.new(
+        pem_ec.encode("ascii"), f"{hs_hdr}.{pld_b64}".encode("ascii"), hashlib.sha256
+    ).digest()
+    hs256_tok = f"{hs_hdr}.{pld_b64}.{_b64url(hs_sig)}"
+
+    none_hdr = _b64url(json.dumps({"alg": "none", "kid": "kid-1", "typ": "JWT"}).encode())
+    none_tok = f"{none_hdr}.{pld_b64}."
+
+    oversized_tok = _sign_es256_jwt(
+        priv_ec, extra_claims={"pad": "x" * iap.MAX_IAP_JWT_LENGTH}
+    )
+    assert len(oversized_tok) > iap.MAX_IAP_JWT_LENGTH
+
+    invalid_tokens = [
+        rs256_tok,
+        hs256_tok,
+        none_tok,
+        oversized_tok,
+        _sign_es256_jwt(priv_ec, alg=None),
+        _sign_es256_jwt(priv_ec, kid=""),
+        _sign_es256_jwt(priv_ec, kid="__OMIT__"),
+        _sign_es256_jwt(priv_ec, aud="/projects/999/locations/eu/services/other"),
+        _sign_es256_jwt(priv_ec, aud=[_TEST_IAP_AUDIENCE]),
+        _sign_es256_jwt(priv_ec, iss="https://accounts.google.com"),
+        _sign_es256_jwt(priv_ec, exp=now - 120),
+        _sign_es256_jwt(priv_ec, iat=now + 120),
+        _sign_es256_jwt(priv_ec, exp=10**400),
+        _sign_es256_jwt(priv_ec, exp=1e308),
+        _sign_es256_jwt(priv_ec, iat=now - 5, exp=now + 7200),
+        _sign_es256_jwt(priv_ec, iat=now + 10, exp=now + 5),
+        _sign_es256_jwt(priv_ec, extra_claims={"nbf": 10**400}),
+        _sign_es256_jwt(priv_ec, extra_claims={"nbf": now + 120}),
+        _sign_es256_jwt(priv_ec, sub=""),
+        _sign_es256_jwt(priv_ec, sub="   "),
+        _sign_es256_jwt(priv_ec, sub="__OMIT__"),
+        _sign_es256_jwt(priv_ec, email=""),
+        _sign_es256_jwt(priv_ec, email="__OMIT__"),
+        f"{valid_tok},{valid_tok}",
+        "not-a-jwt",
+    ]
+
+    for bad_tok in invalid_tokens:
+        with pytest.raises(iap.IapAuthError):
+            await verifier.verify_token(bad_tok, (_TEST_IAP_AUDIENCE,))
+
+    async def invoke_asgi(
+        scope_type: str,
+        path: str,
+        extra_headers: list[tuple[bytes, bytes]],
+        *,
+        extensions: dict[str, Any] | None = None,
+        raw_path: bytes | None = None,
+    ) -> list[dict[str, Any]]:
+        sent: list[dict[str, Any]] = []
+        inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        if scope_type == "websocket":
+            await inbox.put({"type": "websocket.connect"})
+        else:
+            await inbox.put({"type": "http.request", "body": b"", "more_body": False})
+
+        scope: dict[str, Any] = {
+            "type": scope_type,
+            "asgi": {"version": "3.0"},
+            "scheme": "wss" if scope_type == "websocket" else "https",
+            "method": "GET",
+            "path": path,
+            "raw_path": path.encode("ascii") if raw_path is None else raw_path,
+            "query_string": b"",
+            "headers": [
+                (b"host", _TEST_IAP_HOST.encode("ascii")),
+                (b"origin", _TEST_IAP_ORIGIN.encode("ascii")),
+                *extra_headers,
+            ],
+            "client": ("169.254.8.1", 51000),
+            "subprotocols": [],
+        }
+        if extensions is not None:
+            scope["extensions"] = extensions
+
+        async def receive() -> Message:
+            return await inbox.get()
+
+        async def send(msg: Message) -> None:
+            sent.append(dict(msg))
+
+        await app(scope, receive, send)
+        return sent
+
+    # Duplicate x-goog-iap-jwt-assertion headers MUST fail closed on both HTTP and WS
+    dup_hdrs = [
+        (b"x-goog-iap-jwt-assertion", valid_tok.encode("ascii")),
+        (b"x-goog-iap-jwt-assertion", valid_tok.encode("ascii")),
+    ]
+    http_dup = await invoke_asgi("http", "/unknown", dup_hdrs)
+    assert http_dup[0]["status"] == 401
+
+    ws_dup_ext = await invoke_asgi(
+        "websocket",
+        "/ws/agent",
+        dup_hdrs,
+        extensions={"websocket.http.response": {}},
+    )
+    assert not any(e["type"] == "websocket.accept" for e in ws_dup_ext)
+    assert ws_dup_ext[0]["type"] == "websocket.http.response.start"
+    assert ws_dup_ext[0]["status"] == 401
+
+    ws_bad_no_ext = await invoke_asgi(
+        "websocket",
+        "/ws/agent",
+        [(b"x-goog-iap-jwt-assertion", rs256_tok.encode("ascii"))],
+    )
+    assert not any(e["type"] == "websocket.accept" for e in ws_bad_no_ext)
+    assert ws_bad_no_ext == [{"type": "websocket.close", "code": 1008}]
+
+    # Huge signed exp=10**400 over HTTP returns 401 (never 500 OverflowError)
+    huge_exp_tok = _sign_es256_jwt(priv_ec, exp=10**400)
+    http_huge_exp = client.get(
+        "/unknown",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "x-goog-iap-jwt-assertion": huge_exp_tok,
+        },
+    )
+    assert http_huge_exp.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_iap_cert_cache_single_flight_unknown_kid_rotation_and_503_on_no_keys(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    priv_1, pem_1 = _generate_p256_keypair()
+    priv_2, pem_2 = _generate_p256_keypair()
+    fake_now = [1000.0]
+    fetch_calls = 0
+    mode = "fail_cold"
+    gate = asyncio.Event()
+
+    async def controlled_fetcher() -> dict[str, str]:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        if mode == "fail_cold":
+            raise OSError("network unreachable")
+        if mode == "initial":
+            return {"kid-1": pem_1}
+        if mode == "rotate_single_flight":
+            await gate.wait()
+            return {"kid-1": pem_1, "kid-2": pem_2}
+        if mode == "empty_bad_payload":
+            return {}
+        raise OSError("refresh outage")
+
+    verifier = iap.IapVerifier(
+        cert_fetcher=controlled_fetcher,
+        cache_ttl_seconds=3600.0,
+        min_refresh_interval_seconds=30.0,
+        max_stale_seconds=86400.0,
+        monotonic_clock=lambda: fake_now[0],
+    )
+    monkeypatch.setattr(main, "_iap_verifier", verifier)
+    _set_valid_iap_env(monkeypatch)
+
+    tok_k1 = _sign_es256_jwt(priv_1, kid="kid-1")
+    tok_k2 = _sign_es256_jwt(priv_2, kid="kid-2")
+    tok_k3 = _sign_es256_jwt(priv_2, kid="kid-3")
+
+    # 1. Cold-start fetch failure across 20 concurrent calls is single-flight (EXACTLY 1 fetch!)
+    cold_gate = asyncio.Event()
+    fetch_calls = 0
+
+    async def slow_failing_cold_fetcher() -> dict[str, str]:
+        nonlocal fetch_calls
+        fetch_calls += 1
+        await cold_gate.wait()
+        raise OSError("network unreachable")
+
+    verifier._cert_fetcher = slow_failing_cold_fetcher
+    cold_tasks = [
+        asyncio.create_task(verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,)))
+        for _ in range(20)
+    ]
+    await asyncio.sleep(0.02)
+    cold_gate.set()
+    cold_outcomes = await asyncio.gather(*cold_tasks, return_exceptions=True)
+    assert len(cold_outcomes) == 20
+    assert all(isinstance(o, iap.IapCertUnavailableError) for o in cold_outcomes)
+    assert fetch_calls == 1
+
+    # During cold-start cooldown, HTTP returns 503 and WS is denied before accept with 0 extra fetches
+    verifier._cert_fetcher = controlled_fetcher
+    r_503 = client.get(
+        "/missing",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "x-goog-iap-jwt-assertion": tok_k1,
+        },
+    )
+    assert r_503.status_code == 503
+    assert r_503.headers["cache-control"] == "no-store"
+
+    with pytest.raises(WebSocketDisconnect) as ws_503_exc:
+        with client.websocket_connect(
+            "/ws/agent",
+            headers={
+                "host": _TEST_IAP_HOST,
+                "origin": _TEST_IAP_ORIGIN,
+                "x-goog-iap-jwt-assertion": tok_k1,
+            },
+        ):
+            pass
+    assert getattr(ws_503_exc.value, "status_code", None) == 503
+    assert fetch_calls == 1
+
+    # 2. Advance past cold-start cooldown and populate initial cache with kid-1
+    fake_now[0] += 35.0
+    fetch_calls = 0
+    mode = "initial"
+    assert (await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
+    assert (await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
+    assert fetch_calls == 1
+
+    # 3. Unknown kid-2 across 8 concurrent tasks triggers EXACTLY ONE single-flight refetch
+    mode = "rotate_single_flight"
+    tasks = [
+        asyncio.create_task(verifier.verify_token(tok_k2, (_TEST_IAP_AUDIENCE,)))
+        for _ in range(8)
+    ]
+    await asyncio.sleep(0.02)
+    gate.set()
+    principals = await asyncio.gather(*tasks)
+    assert len(principals) == 8
+    assert fetch_calls == 2
+    last_good_fetch_at = fake_now[0]
+
+    # 4. Rate-limited: bogus unknown kid-3 within 30s does ZERO extra fetches and fails 401
+    for _ in range(4):
+        with pytest.raises(iap.IapAuthError):
+            await verifier.verify_token(tok_k3, (_TEST_IAP_AUDIENCE,))
+    assert fetch_calls == 2
+
+    # 5. Advancing monotonic clock past rate-limit window allows 1 refresh, and empty/broken
+    #    payload NEVER clobbers the existing valid cached keys!
+    fake_now[0] += 35.0
+    mode = "empty_bad_payload"
+    with pytest.raises(iap.IapAuthError):
+        await verifier.verify_token(tok_k3, (_TEST_IAP_AUDIENCE,))
+    assert fetch_calls == 3
+    assert (await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
+    assert (await verifier.verify_token(tok_k2, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
+
+    # 6. Hard maximum stale age (24h = 86400s): just inside 24h still serves stale keyset on
+    #    refresh outage; past 24h fails closed with IapCertUnavailableError (HTTP 503)!
+    mode = "outage"
+    fake_now[0] = last_good_fetch_at + 86399.0
+    assert (await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))).sub.endswith("100001")
+
+    # Inside failure cooldown AND past 24h hard cap -> 503!
+    fake_now[0] = last_good_fetch_at + 86401.0
+    with pytest.raises(iap.IapCertUnavailableError):
+        await verifier.verify_token(tok_k1, (_TEST_IAP_AUDIENCE,))
+
+    # Past failure cooldown AND past 24h hard cap (90 days later) -> still 503!
+    fake_now[0] = last_good_fetch_at + (90 * 86400.0)
+    r_stale_503 = client.get(
+        "/missing",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "x-goog-iap-jwt-assertion": tok_k1,
+        },
+    )
+    assert r_stale_503.status_code == 503
+
+
+@pytest.mark.asyncio
+async def test_iap_middleware_order_health_exact_exemption_and_dual_token_iap(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    priv_ec, pem_ec = _generate_p256_keypair()
+
+    async def ok_certs() -> dict[str, str]:
+        return {"kid-1": pem_ec}
+
+    monkeypatch.setattr(main, "_iap_verifier", iap.IapVerifier(cert_fetcher=ok_certs))
+    _set_valid_iap_env(monkeypatch)
+    valid_tok = _sign_es256_jwt(priv_ec)
+
+    # 1. Host middleware runs BEFORE IAP middleware: bad Host without IAP token returns 400 (not 401)
+    bad_host_resp = client.get("/not-health", headers={"host": "evil.example.com"})
+    assert bad_host_resp.status_code == 400
+    assert bad_host_resp.text == "Invalid host header"
+
+    # 2. Exact /health is exempt without IAP token; /health/, /health/x, //health, /HEALTH are NOT exempt
+    assert client.get("/health", headers={"host": _TEST_IAP_HOST}).status_code == 200
+    assert client.head("/health", headers={"host": _TEST_IAP_HOST}).status_code == 200
+    for non_exempt in ("/health/", "/health/x", "/HEALTH"):
+        resp = client.get(non_exempt, headers={"host": _TEST_IAP_HOST})
+        assert resp.status_code == 401, non_exempt
+
+    # Test //health via raw ASGI scope so httpx URL normalization does not rewrite path
+    sent_double_slash: list[dict[str, Any]] = []
+    req_q: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+    await req_q.put({"type": "http.request", "body": b"", "more_body": False})
+
+    async def recv_ds() -> Message:
+        return await req_q.get()
+
+    async def send_ds(msg: Message) -> None:
+        sent_double_slash.append(dict(msg))
+
+    await app(
+        {
+            "type": "http",
+            "asgi": {"version": "3.0"},
+            "http_version": "1.1",
+            "method": "GET",
+            "scheme": "https",
+            "path": "//health",
+            "raw_path": b"//health",
+            "query_string": b"",
+            "headers": [(b"host", _TEST_IAP_HOST.encode("ascii"))],
+            "client": ("169.254.8.1", 50000),
+        },
+        recv_ds,
+        send_ds,
+    )
+    assert sent_double_slash[0]["status"] == 401
+
+    # WebSocket to /health is NOT exempt from IAP
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            "/health",
+            headers={"host": _TEST_IAP_HOST, "origin": _TEST_IAP_ORIGIN},
+        ):
+            pass
+
+    # 3. Dual PROXY_AUTH_TOKEN + PROXY_IAP_AUDIENCE requires BOTH to pass
+    monkeypatch.setenv("PROXY_AUTH_TOKEN", "dual-secret-token")
+    main.validate_runtime_security_config()
+
+    # Valid IAP alone without token -> rejected before accept
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            "/ws/agent",
+            headers={
+                "host": _TEST_IAP_HOST,
+                "origin": _TEST_IAP_ORIGIN,
+                "x-goog-iap-jwt-assertion": valid_tok,
+            },
+        ):
+            pass
+
+    # Valid token alone without IAP -> rejected before accept
+    with pytest.raises(WebSocketDisconnect):
+        with client.websocket_connect(
+            "/ws/agent",
+            headers={
+                "host": _TEST_IAP_HOST,
+                "origin": _TEST_IAP_ORIGIN,
+                "x-proxy-token": "dual-secret-token",
+            },
+        ):
+            pass
+
+    # Both valid -> accepted!
+    with client.websocket_connect(
+        "/ws/agent",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "origin": _TEST_IAP_ORIGIN,
+            "x-goog-iap-jwt-assertion": valid_tok,
+            "x-proxy-token": "dual-secret-token",
+        },
+    ) as ws:
+        ws.send_text("not json")
+        assert "malformed" in _recv_error_payload(ws)["message"]
+
+
+def test_iap_and_static_startup_security_guards_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    (dist_dir / "assets").mkdir(parents=True)
+    (dist_dir / "index.html").write_text(_PRODUCTION_INDEX_HTML, encoding="utf-8")
+
+    # 1. Malformed PROXY_IAP_AUDIENCE values fail closed
+    _set_valid_iap_env(monkeypatch)
+    for bad_aud in (
+        "   ",
+        ",",
+        "projects/123/locations/eu/services/cb",
+        "/projects/notanumber/locations/eu/services/cb",
+        "/projects/123/locations/EU_UPPER/services/cb",
+        "/projects/123/locations/eu/services/cb,",
+        f"{_TEST_IAP_AUDIENCE},invalid",
+    ):
+        monkeypatch.setenv("PROXY_IAP_AUDIENCE", bad_aud)
+        with pytest.raises(RuntimeError):
+            main.validate_runtime_security_config()
+
+    # 2. IAP mode requires explicit non-loopback https:// origins, bare hosts, and no test hosts
+    _set_valid_iap_env(monkeypatch)
+    monkeypatch.delenv("PROXY_ALLOWED_ORIGINS", raising=False)
+    with pytest.raises(RuntimeError, match="PROXY_ALLOWED_ORIGINS"):
+        main.validate_runtime_security_config()
+
+    _set_valid_iap_env(monkeypatch)
+    monkeypatch.delenv("PROXY_ALLOWED_HOSTS", raising=False)
+    with pytest.raises(RuntimeError, match="PROXY_ALLOWED_HOSTS"):
+        main.validate_runtime_security_config()
+
+    for bad_origin in (
+        "*",
+        "https://*.example.com",
+        "http://cloudbank.example.com",
+        "https://localhost:5173",
+        "https://127.0.0.1:8765",
+        "https://cloudbank.example.com/",
+        "https://cloudbank.example.com?x=1",
+    ):
+        _set_valid_iap_env(monkeypatch)
+        monkeypatch.setenv("PROXY_ALLOWED_ORIGINS", bad_origin)
+        with pytest.raises(RuntimeError):
+            main.validate_runtime_security_config()
+
+    for bad_host in (
+        "*",
+        "*.example.com",
+        "https://cloudbank.example.com",
+        "cloudbank.example.com:443",
+        "localhost",
+        "127.0.0.1",
+        "[::1]",
+        "testserver",
+    ):
+        _set_valid_iap_env(monkeypatch)
+        monkeypatch.setenv("PROXY_ALLOWED_HOSTS", bad_host)
+        with pytest.raises(RuntimeError):
+            main.validate_runtime_security_config()
+
+    _set_valid_iap_env(monkeypatch)
+    monkeypatch.setenv("PROXY_ALLOW_TEST_HOSTS", "1")
+    with pytest.raises(RuntimeError, match="PROXY_ALLOW_TEST_HOSTS"):
+        main.validate_runtime_security_config()
+
+    # 3. PROXY_STATIC_DIR with non-loopback bind or PROXY_ALLOW_REMOTE=1 requires PROXY_IAP_AUDIENCE
+    #    even when PROXY_AUTH_TOKEN is set (A6)
+    monkeypatch.delenv("PROXY_IAP_AUDIENCE", raising=False)
+    monkeypatch.delenv("PROXY_ALLOW_TEST_HOSTS", raising=False)
+    monkeypatch.setenv("PROXY_STATIC_DIR", str(dist_dir))
+    monkeypatch.setenv("PROXY_AUTH_TOKEN", "token-cannot-protect-browser-spa")
+    monkeypatch.setenv("PROXY_ALLOW_REMOTE", "1")
+    with pytest.raises(RuntimeError, match="PROXY_IAP_AUDIENCE"):
+        main.validate_runtime_security_config()
+
+    monkeypatch.delenv("PROXY_ALLOW_REMOTE", raising=False)
+    with pytest.raises(RuntimeError, match="PROXY_IAP_AUDIENCE"):
+        main.validate_runtime_security_config(bind_host="192.0.2.10")
+
+    # Loopback static serving for local E2E succeeds without IAP
+    main.validate_runtime_security_config(bind_host="127.0.0.1")
+
+
+@pytest.mark.asyncio
+async def test_iap_session_sub_binding_per_user_cap_and_log_privacy(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    priv_ec, pem_ec = _generate_p256_keypair()
+
+    async def ok_certs() -> dict[str, str]:
+        return {"kid-1": pem_ec}
+
+    monkeypatch.setattr(main, "_iap_verifier", iap.IapVerifier(cert_fetcher=ok_certs))
+    _set_valid_iap_env(monkeypatch)
+    _set_valid_gcp_env(monkeypatch)
+    monkeypatch.setattr(main._tokens, "get_token", _async_return("tok-iap"))
+
+    captured_frames: list[dict[str, Any]] = []
+
+    class ShortUpstream:
+        async def __aenter__(self) -> ShortUpstream:
+            return self
+
+        async def __aexit__(self, *_exc: object) -> bool:
+            return False
+
+        async def send(self, raw: str) -> None:
+            captured_frames.append(json.loads(raw))
+
+        def __aiter__(self) -> ShortUpstream:
+            return self
+
+        async def __anext__(self) -> str:
+            raise StopAsyncIteration
+
+        async def close(self) -> None:
+            pass
+
+    monkeypatch.setattr(main.websockets, "connect", lambda *_a, **_kw: ShortUpstream())
+
+    alice_tok = _sign_es256_jwt(
+        priv_ec, sub="accounts.google.com:alice-111", email="alice.secret@example.com"
+    )
+    bob_tok = _sign_es256_jwt(
+        priv_ec, sub="accounts.google.com:bob-222", email="bob.secret@example.com"
+    )
+
+    # 1. Alice starts Chloe session -> bound to ("chloe", "accounts.google.com:alice-111")
+    with caplog.at_level(logging.INFO, logger="proxy"):
+        with client.websocket_connect(
+            "/ws/agent",
+            headers={
+                "host": _TEST_IAP_HOST,
+                "origin": _TEST_IAP_ORIGIN,
+                "x-goog-iap-jwt-assertion": alice_tok,
+            },
+        ) as ws:
+            ws.send_text(json.dumps({"type": "start", "persona": "chloe"}))
+            alice_ready = json.loads(ws.receive_text())
+    alice_sid = alice_ready["sessionId"]
+    assert main._session_personas[alice_sid] == ("chloe", "accounts.google.com:alice-111")
+    assert "accounts.google.com:alice-111" in caplog.text
+    assert "alice.secret@example.com" not in caplog.text
+    assert alice_tok not in caplog.text
+
+    # 2. Bob attempting to resume Alice's sessionId (even with different persona "david")
+    #    gets a fresh UUID with is_resume=False (zero persona oracle, Alice's binding intact)
+    captured_frames.clear()
+    with client.websocket_connect(
+        "/ws/agent",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "origin": _TEST_IAP_ORIGIN,
+            "x-goog-iap-jwt-assertion": bob_tok,
+        },
+    ) as ws:
+        ws.send_text(
+            json.dumps({"type": "start", "persona": "david", "sessionId": alice_sid})
+        )
+        bob_ready = json.loads(ws.receive_text())
+    bob_sid = bob_ready["sessionId"]
+    assert bob_sid != alice_sid
+    assert len(captured_frames) == 2  # config + seeded variables (is_resume=False)
+    assert main._session_personas[alice_sid] == ("chloe", "accounts.google.com:alice-111")
+    assert main._session_personas[bob_sid] == ("david", "accounts.google.com:bob-222")
+
+    # 3. Alice resuming her own sessionId succeeds with is_resume=True (config only)
+    captured_frames.clear()
+    with client.websocket_connect(
+        "/ws/agent",
+        headers={
+            "host": _TEST_IAP_HOST,
+            "origin": _TEST_IAP_ORIGIN,
+            "x-goog-iap-jwt-assertion": alice_tok,
+        },
+    ) as ws:
+        ws.send_text(
+            json.dumps({"type": "start", "persona": "chloe", "sessionId": alice_sid})
+        )
+        alice_resumed = json.loads(ws.receive_text())
+    assert alice_resumed == {"type": "ready", "sessionId": alice_sid}
+    assert len(captured_frames) == 1
+
+    # 4. Per-iap_sub concurrent session cap (PROXY_MAX_SESSIONS_PER_USER=2, PROXY_MAX_SESSIONS=6)
+    monkeypatch.setenv("PROXY_MAX_SESSIONS", "6")
+    monkeypatch.setenv("PROXY_MAX_SESSIONS_PER_USER", "2")
+    main._get_session_semaphore()
+
+    release = asyncio.Event()
+    alice_two_open = asyncio.Event()
+    active_for_alice = 0
+
+    async def hold_session(_ws: Any, *, iap_sub: str | None = None) -> None:
+        nonlocal active_for_alice
+        if iap_sub == "accounts.google.com:alice-111":
+            active_for_alice += 1
+            if active_for_alice == 2:
+                alice_two_open.set()
+        try:
+            await release.wait()
+        finally:
+            if iap_sub == "accounts.google.com:alice-111":
+                active_for_alice -= 1
+
+    monkeypatch.setattr(main, "_run_session", hold_session)
+
+    async def open_iap_ws(tok: str) -> list[dict[str, Any]]:
+        sent: list[dict[str, Any]] = []
+        inbox: asyncio.Queue[dict[str, Any]] = asyncio.Queue()
+        await inbox.put({"type": "websocket.connect"})
+        scope: dict[str, Any] = {
+            "type": "websocket",
+            "asgi": {"version": "3.0"},
+            "scheme": "wss",
+            "path": "/ws/agent",
+            "raw_path": b"/ws/agent",
+            "query_string": b"",
+            "headers": [
+                (b"host", _TEST_IAP_HOST.encode("ascii")),
+                (b"origin", _TEST_IAP_ORIGIN.encode("ascii")),
+                (b"x-goog-iap-jwt-assertion", tok.encode("ascii")),
+            ],
+            "client": ("169.254.8.1", 52000),
+            "subprotocols": [],
+        }
+
+        async def recv() -> Message:
+            return await inbox.get()
+
+        async def snd(msg: Message) -> None:
+            await asyncio.sleep(0)
+            sent.append(dict(msg))
+
+        await app(scope, recv, snd)
+        return sent
+
+    alice_tasks = [asyncio.create_task(open_iap_ws(alice_tok)) for _ in range(4)]
+    await asyncio.wait_for(alice_two_open.wait(), timeout=1.0)
+    await asyncio.sleep(0.02)
+
+    # While Alice is capped at 2, Bob can still open a session!
+    bob_task = asyncio.create_task(open_iap_ws(bob_tok))
+    await asyncio.sleep(0.02)
+    release.set()
+
+    alice_results = await asyncio.gather(*alice_tasks)
+    bob_result = await bob_task
+
+    alice_busy = sum(
+        1
+        for evs in alice_results
+        if any(
+            e.get("type") == "websocket.send"
+            and "too many active sessions" in str(e.get("text", ""))
+            for e in evs
+        )
+    )
+    assert alice_busy == 2
+    assert bob_result == [{"type": "websocket.accept", "subprotocol": None, "headers": []}]
+    assert main._active_user_sessions == {}
+
+
+def test_static_spa_serving_methods_mime_traversal_and_csp_startup_guards(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    dist_dir = tmp_path / "dist"
+    assets_dir = dist_dir / "assets"
+    assets_dir.mkdir(parents=True)
+    (dist_dir / "index.html").write_text(_PRODUCTION_INDEX_HTML, encoding="utf-8")
+    (dist_dir / "robots.txt").write_text("User-agent: *\n", encoding="utf-8")
+    (assets_dir / "index-abc123.js").write_text("export const x = 1;\n", encoding="utf-8")
+    (assets_dir / "brand-font.woff2").write_bytes(b"wOF2\x00\x01\x00\x00")
+    (assets_dir / "styles.css").write_text("body{margin:0}\n", encoding="utf-8")
+    (assets_dir / ".hidden.json").write_text('{"secret":true}\n', encoding="utf-8")
+
+    outside_secret = tmp_path / "outside_secret.js"
+    outside_secret.write_text("secret = true;\n", encoding="utf-8")
+    (assets_dir / "symlink-escape.js").symlink_to(outside_secret)
+
+    monkeypatch.setenv("PROXY_STATIC_DIR", str(dist_dir))
+    static_app = main.create_app()
+
+    with TestClient(static_app) as static_client:
+        # 1. GET and HEAD on / return index.html, Cache-Control: no-cache, and all 5 security headers
+        for method in ("GET", "HEAD"):
+            r_root = static_client.request(method, "/")
+            assert r_root.status_code == 200
+            assert r_root.headers["cache-control"] == "no-cache"
+            assert r_root.headers["content-type"].startswith("text/html")
+            assert r_root.headers["content-security-policy"].endswith(
+                "; frame-ancestors 'none'"
+            )
+            assert (
+                r_root.headers["permissions-policy"]
+                == "microphone=(self), camera=(), geolocation=()"
+            )
+            assert r_root.headers["x-content-type-options"] == "nosniff"
+            assert (
+                r_root.headers["referrer-policy"]
+                == "strict-origin-when-cross-origin"
+            )
+            assert r_root.headers["x-frame-options"] == "DENY"
+            if method == "GET":
+                assert '<div id="root"></div>' in r_root.text
+            else:
+                assert r_root.content == b""
+
+        # 2. Explicit MIME types and immutable caching on /assets/* for GET and HEAD
+        for method in ("GET", "HEAD"):
+            r_js = static_client.request(method, "/assets/index-abc123.js")
+            assert r_js.status_code == 200
+            assert r_js.headers["content-type"].startswith("text/javascript")
+            assert (
+                r_js.headers["cache-control"]
+                == "public, max-age=31536000, immutable"
+            )
+            assert r_js.headers["x-content-type-options"] == "nosniff"
+
+            r_woff2 = static_client.request(method, "/assets/brand-font.woff2")
+            assert r_woff2.status_code == 200
+            assert r_woff2.headers["content-type"] == "font/woff2"
+            assert (
+                r_woff2.headers["cache-control"]
+                == "public, max-age=31536000, immutable"
+            )
+
+        # 3. Missing assets, symlinks, traversals, root files, arbitrary SPA paths, and OpenAPI routes ALL 404
+        for must_404 in (
+            "/assets/missing.js",
+            "/assets/.hidden.json",
+            "/assets/symlink-escape.js",
+            "/assets/%2e%2e/index.html",
+            "/assets/..%5cindex.html",
+            "/index.html",
+            "/robots.txt",
+            "/favicon.ico",
+            "/spending",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/ws/agent",
+            "/health/",
+        ):
+            r_404 = static_client.get(must_404, follow_redirects=False)
+            assert r_404.status_code == 404, must_404
+            assert '<div id="root"></div>' not in r_404.text
+
+    # 4. Startup CSP validation fails closed on missing meta, dev unsafe-inline, or ws:/wss:/VITE_PROXY_URL
+    bad_html_cases = [
+        "<!doctype html><html><head><title>No CSP</title></head><body></body></html>",
+        _PRODUCTION_INDEX_HTML.replace("script-src 'self'", "script-src 'self' 'unsafe-inline'"),
+        _PRODUCTION_INDEX_HTML.replace("connect-src 'self'", "connect-src 'self' ws: wss:"),
+        _PRODUCTION_INDEX_HTML.replace(
+            "connect-src 'self'", "connect-src 'self' wss://other.example.com"
+        ),
+    ]
+    for idx, bad_html in enumerate(bad_html_cases):
+        bad_dist = tmp_path / f"bad_dist_{idx}"
+        (bad_dist / "assets").mkdir(parents=True)
+        (bad_dist / "index.html").write_text(bad_html, encoding="utf-8")
+        monkeypatch.setenv("PROXY_STATIC_DIR", str(bad_dist))
+        with pytest.raises(RuntimeError):
+            main.validate_runtime_security_config()
+        with pytest.raises(RuntimeError):
+            with TestClient(main.create_app()):
+                pass

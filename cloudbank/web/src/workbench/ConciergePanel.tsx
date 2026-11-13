@@ -254,6 +254,14 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
   )
   const spacebarEnabled = agent.spacebarShortcutEnabled ?? true
   const isMicBlockedOnly = agent.micDenied && agent.connState !== 'error'
+  const isAuthExpired = Boolean(agent.authExpired)
+  const handleReloadPage = () => {
+    if (agent.reloadPage) {
+      agent.reloadPage()
+      return
+    }
+    window.location.reload()
+  }
   const isStreaming =
     agent.phase === 'thinking' || agent.turns.some((turn) => turn.partial)
   const politePhaseAnnouncement = describePoliteSessionStatus(agent.phase, agent.pushToTalk)
@@ -439,18 +447,22 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
             >
               <div className="inline-flex items-center gap-1.5 text-[0.75rem] font-semibold text-brand-muted mb-2">
                 <AlertCircle size={15} aria-hidden="true" className="text-brand-gold-text" />
-                <span>Concierge connection unavailable</span>
+                <span>
+                  {isAuthExpired ? 'Session expired' : 'Concierge connection unavailable'}
+                </span>
               </div>
               <p className="text-[0.9375rem] text-brand-text leading-relaxed">
-                We couldn&apos;t reach the concierge. Select Reconnect to try again.
+                {isAuthExpired
+                  ? 'Your sign-in session has expired. Reload the page to sign in again.'
+                  : "We couldn't reach the concierge. Select Reconnect to try again."}
               </p>
               <button
                 type="button"
-                onClick={agent.reconnect}
+                onClick={isAuthExpired ? handleReloadPage : agent.reconnect}
                 className="mt-4 min-h-9 inline-flex items-center gap-1.5 px-3.5 py-2 rounded-lg border border-brand-border-strong bg-[#faf9f6] text-[0.8125rem] font-semibold text-brand-green hover:border-brand-green transition-colors"
               >
                 <RefreshCw size={14} aria-hidden="true" />
-                <span>Reconnect</span>
+                <span>{isAuthExpired ? 'Reload page' : 'Reconnect'}</span>
               </button>
             </div>
           ) : agent.phase === 'paused' ? (
@@ -584,13 +596,17 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
                   role="alert"
                   className="p-3 rounded-xl border border-brand-divider bg-[#faf9f6] text-[0.8125rem] text-brand-text flex items-center justify-between gap-3"
                 >
-                  <span>We couldn&apos;t reach the concierge. Select Reconnect to continue.</span>
+                  <span>
+                    {isAuthExpired
+                      ? 'Your sign-in session has expired. Reload the page to continue.'
+                      : "We couldn't reach the concierge. Select Reconnect to continue."}
+                  </span>
                   <button
                     type="button"
-                    onClick={agent.reconnect}
+                    onClick={isAuthExpired ? handleReloadPage : agent.reconnect}
                     className="min-h-8 px-2 font-semibold text-brand-green hover:underline shrink-0"
                   >
-                    Reconnect
+                    {isAuthExpired ? 'Reload page' : 'Reconnect'}
                   </button>
                 </div>
               )

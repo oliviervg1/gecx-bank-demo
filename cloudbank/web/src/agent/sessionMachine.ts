@@ -63,6 +63,7 @@ export interface SessionMachineState {
   pendingPostConnect: PendingPostConnectAction
   userHasFloor: boolean
   micDenied: boolean
+  authExpired: boolean
   errorMessage: string | null
   turns: ConversationTurn[]
   activeAgentName: string
@@ -107,6 +108,7 @@ export type SessionEvent =
   | { type: 'CLIENT_TEXT_SUBMIT'; text: string }
   | { type: 'SERVER_MESSAGE'; epoch: number; msg: ServerMsg }
   | { type: 'WS_CLOSED'; epoch: number; reason?: string }
+  | { type: 'AUTH_SESSION_EXPIRED' }
   | { type: 'RECONNECT_TIMER_FIRED'; epoch: number }
   | { type: 'PLAYER_DRAINED'; playbackEpoch: number }
   | { type: 'THINKING_WATCHDOG_FIRED'; epoch: number }
@@ -149,6 +151,7 @@ export function createInitialSessionState(
     pendingPostConnect: null,
     userHasFloor: false,
     micDenied: false,
+    authExpired: false,
     errorMessage: null,
     turns: [],
     activeAgentName: 'root_agent',
@@ -395,6 +398,7 @@ export function reduceSessionMachine(
           phase: 'connecting',
           connectionEpoch: nextEpoch,
           resumeAttempts: 0,
+          authExpired: false,
           errorMessage: null,
           micDenied: false,
         },
@@ -433,6 +437,7 @@ export function reduceSessionMachine(
                 latestUiTier: null,
                 errorMessage: null,
                 micDenied: false,
+                authExpired: false,
               }
             : {}),
         },
@@ -538,6 +543,7 @@ export function reduceSessionMachine(
             pendingPostConnect: { kind: 'capture' },
             userHasFloor: false,
             micDenied: false,
+            authExpired: false,
             errorMessage: null,
           },
           effects,
@@ -828,6 +834,7 @@ export function reduceSessionMachine(
             playerActive: false,
             pendingPostConnect: { kind: 'text', text: clean },
             userHasFloor: false,
+            authExpired: false,
             errorMessage: null,
             micDenied: false,
             turns: updatedTurns,
@@ -1063,12 +1070,49 @@ export function reduceSessionMachine(
           errorMessage:
             state.errorMessage ??
             event.reason ??
-            'Connection lost. Check that the localhost proxy is running.',
+            'Connection lost. Unable to reach the concierge service.',
         },
         effects: [
           { type: 'CLEAR_RECONNECT_TIMER' },
           { type: 'CLEAR_THINKING_WATCHDOG' },
           { type: 'STOP_MIC_CAPTURE' },
+        ],
+      }
+    }
+
+    case 'AUTH_SESSION_EXPIRED': {
+      if (
+        state.phase !== 'connecting' &&
+        !(state.phase === 'error' && state.sessionId === null)
+      ) {
+        return { state, effects: [] }
+      }
+      const nextEpoch = state.connectionEpoch + 1
+      return {
+        state: {
+          ...state,
+          phase: 'error',
+          authExpired: true,
+          micActive: false,
+          micDenied: false,
+          hasCapturedAudioInTurn: false,
+          currentTurnHadAudio: false,
+          connectionEpoch: nextEpoch,
+          sessionId: null,
+          resumeSessionId: null,
+          resumeAttempts: 0,
+          playerActive: false,
+          pendingGoAwaySessionId: null,
+          pendingPostConnect: null,
+          userHasFloor: false,
+          errorMessage:
+            'Your sign-in session has expired. Reload the page to sign in again.',
+        },
+        effects: [
+          { type: 'CLEAR_RECONNECT_TIMER' },
+          { type: 'CLEAR_THINKING_WATCHDOG' },
+          { type: 'STOP_MIC_CAPTURE' },
+          { type: 'CLOSE_WS' },
         ],
       }
     }
@@ -1102,6 +1146,7 @@ function reduceServerMessage(
             resumeAttempts: 0,
             seenUiSeqKey,
             pendingPostConnect: null,
+            authExpired: false,
             errorMessage: null,
           },
           effects: [{ type: 'START_MIC_CAPTURE' }],
@@ -1119,6 +1164,7 @@ function reduceServerMessage(
             resumeAttempts: 0,
             seenUiSeqKey,
             pendingPostConnect: null,
+            authExpired: false,
             errorMessage: null,
           },
           effects: [
@@ -1141,6 +1187,7 @@ function reduceServerMessage(
           resumeSessionId: null,
           resumeAttempts: 0,
           seenUiSeqKey,
+          authExpired: false,
           errorMessage: null,
         },
         effects: [],

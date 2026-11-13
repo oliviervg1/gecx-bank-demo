@@ -483,4 +483,29 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
     fireEvent.keyDown(window, { key: 'Escape' })
     expect(screen.queryByTestId('mobile-concierge-drawer')).toBeNull()
   })
+
+  it('displays Session expired reload prompt when pre-ready WS close receives 401 from /health', async () => {
+    const origFetch = globalThis.fetch
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValue({ status: 401, type: 'basic' } as Response) as unknown as typeof fetch
+    try {
+      render(<App />)
+      const ws = sockets[sockets.length - 1]!
+      await act(async () => {
+        ws.close()
+        await Promise.resolve()
+      })
+      const unavailable = screen.getByTestId('concierge-unavailable-state')
+      expect(unavailable).toHaveTextContent('Session expired')
+      expect(unavailable).toHaveTextContent(
+        'Your sign-in session has expired. Reload the page to sign in again.',
+      )
+      expect(screen.getAllByRole('button', { name: 'Reload page' }).length).toBeGreaterThanOrEqual(
+        1,
+      )
+    } finally {
+      globalThis.fetch = origFetch
+    }
+  })
 })

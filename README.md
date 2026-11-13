@@ -1,6 +1,6 @@
 # Cloudbank: Multi-Product Retail Banking Reference on CX Agent Studio
 
-Cloudbank is a voice-and-chat multi-product retail banking reference application built on [CX Agent Studio](https://docs.cloud.google.com/gemini-enterprise-cx/cx-agent-studio) (`GECX`). It pairs a 4-agent, tool-first `gemini-composite-v2` application (`CXAS`) with a hardened localhost FastAPI `BidiRunSession` WebSocket proxy and a React 19 + Tailwind CSS v4 Split-Screen banking and concierge workbench. Cloudbank is a fictional bank; all four customer personas, sort codes, accounts, and transactions are synthetic.
+Cloudbank is a voice-and-chat multi-product retail banking reference application built on [CX Agent Studio](https://docs.cloud.google.com/gemini-enterprise-cx/cx-agent-studio) (`GECX`). It pairs a 4-agent, tool-first `gemini-composite-v2` application (`CXAS`) with a hardened FastAPI `BidiRunSession` WebSocket proxy (supporting both localhost workstation development and single-origin Cloud Run Direct IAP deployment) and a React 19 + Tailwind CSS v4 Split-Screen banking and concierge workbench. Cloudbank is a fictional bank; all four customer personas, sort codes, accounts, and transactions are synthetic.
 
 ```text
 Customer (Voice / Text)
@@ -65,6 +65,18 @@ gcloud auth application-default login
 
 Open `http://localhost:5173/` in Chrome. Use the top bar to switch across the four customer profiles (`Chloe · Homeowner`, `David · Remortgager`, `Tom · First-Time Buyer`, `Sarah · Pre-Retirement`). Hold **Hold to talk** (or hold **Spacebar**, which can be toggled off in the Concierge header), click or press **Enter** on the voice pill to toggle speech capture (`aria-pressed`), or type directly into the **Cloudbank Concierge** panel (`?ptt=0` enables continuous listening mode with a live Mute/Stop control).
 
+### Deploying a Shared Demo on Cloud Run Behind Direct IAP
+
+To host the compiled React workbench and `cloudbank/proxy` from a single HTTPS origin on Google Cloud Run behind Direct Identity-Aware Proxy (IAP) with cryptographic `ES256` `x-goog-iap-jwt-assertion` verification, use [`cloudbank/scripts/deploy_cloud_run.sh`](cloudbank/scripts/deploy_cloud_run.sh) (see the [Developer & CI/CD Guide](docs/guides/developer_workflow_and_cicd_guide.md) for prerequisites, required Google Cloud APIs, and offline verification notes):
+
+```bash
+./cloudbank/scripts/deploy_cloud_run.sh \
+  --service-account cloudbank-proxy@<your-gcp-project-id>.iam.gserviceaccount.com \
+  --iap-domains example.com \
+  --iap-members user:alice@example.com \
+  --yes
+```
+
 ## The 3 Agent Building Blocks
 
 | Building Block | Location | Role |
@@ -78,16 +90,17 @@ Open `http://localhost:5173/` in Chrome. Use the top bar to switch across the fo
 ```text
 Makefile                            # Unified install, lint, test, build, e2e, and hygiene gates
 LICENSE                             # Apache License 2.0
-SECURITY.md                         # Localhost ADC, snapshot trust boundary, and disclosure policy
+SECURITY.md                         # Localhost ADC, Cloud Run Direct IAP, and snapshot trust boundaries
 cloudbank/                          # Cloudbank application workspace
 ├── cxas_app/Cloudbank/             # 4-agent CXAS bundle, guardrails, synced callbacks, and Python tools
 ├── cxas_shared/                    # Canonical callbacks (capture_utterance, release_line) and controller_common.py
 ├── evals/                          # Multi-segment NAIVE golden YAML suites and SimulationEvals
-├── proxy/                          # Hardened localhost FastAPI BidiRunSession WebSocket proxy
-├── scripts/                        # Apache-2.0 lifecycle (manage_app.py), sync_shared.py, audit, and golden scripts
+├── proxy/                          # Hardened FastAPI BidiRunSession WebSocket and static SPA proxy
+├── scripts/                        # Lifecycle (manage_app.py), Cloud Run IAP deploy, sync, audit, and golden scripts
 ├── shared/                         # Server-owned personas/*.json, JSON Schemas, parity_vectors, and allowlists
-├── tests/                          # Offline pytest suite (bundle AST, controllers, callbacks, parity)
+├── tests/                          # Offline pytest suite (bundle AST, controllers, callbacks, parity, pipelines)
 ├── web/                            # React 19 + Tailwind v4 5-tab banking app, Concierge UI, and Playwright E2E
+├── Dockerfile                      # Single-origin multi-stage container for Cloud Run Direct IAP
 ├── cxaslint.yaml                   # Zero-warning CXAS structural and evaluation lint configuration
 ├── gecx-config.example.json        # Committed configuration template (local gecx-config.json is gitignored)
 └── push.sh                         # Gates + confirmed OVERWRITE import + tool check + golden sync

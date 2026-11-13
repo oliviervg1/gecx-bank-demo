@@ -483,6 +483,37 @@ describe('sessionMachine.ts: transition invariants, voice floor, continuous mode
     }).state
     expect(reReadyNewId.seenUiSeqKey).toEqual({ sessionId: 'sess-b', maxSeq: 0 })
   })
+
+  it('halts pending reconnects on AUTH_SESSION_EXPIRED and uses environment-neutral fallback error copy', () => {
+    const ready = connectedReadyState('sess-iap')
+    const reconnecting = reduceSessionMachine(ready, { type: 'WS_CLOSED', epoch: 1 })
+    expect(reconnecting.state.phase).toBe('connecting')
+    expect(reconnecting.state.resumeSessionId).toBe('sess-iap')
+
+    const expired = reduceSessionMachine(reconnecting.state, { type: 'AUTH_SESSION_EXPIRED' })
+    expect(expired.state.phase).toBe('error')
+    expect(expired.state.authExpired).toBe(true)
+    expect(expired.state.resumeSessionId).toBeNull()
+    expect(expired.state.errorMessage).toContain('Reload the page')
+    expect(expired.effects).toContainEqual({ type: 'CLEAR_RECONNECT_TIMER' })
+    expect(expired.effects).toContainEqual({ type: 'CLOSE_WS' })
+
+    // Ignored when a live session is already active
+    expect(reduceSessionMachine(ready, { type: 'AUTH_SESSION_EXPIRED' }).state).toBe(ready)
+
+    // Environment-neutral WS_CLOSED fallback copy (no "localhost proxy")
+    const initConnecting = reduceSessionMachine(createInitialSessionState('chloe'), {
+      type: 'CONNECT_REQUESTED',
+    }).state
+    const closedInitial = reduceSessionMachine(initConnecting, {
+      type: 'WS_CLOSED',
+      epoch: initConnecting.connectionEpoch,
+    }).state
+    expect(closedInitial.errorMessage).toBe(
+      'Connection lost. Unable to reach the concierge service.',
+    )
+    expect(closedInitial.errorMessage).not.toContain('localhost proxy')
+  })
 })
 
 describe('Assistant text accumulation and sanitizeAgentProse hardening', () => {
