@@ -295,14 +295,22 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
   test('passes WCAG 2.1 AA axe-core scans across all 5 tabs, SVG charts, renter Tom, and Mobile View', async ({
     page,
   }) => {
+    // 15 sequential full-DOM AxeBuilder scans need headroom beyond the 30s per-test default on slower runners.
+    test.setTimeout(90_000)
     await page.emulateMedia({ reducedMotion: 'reduce' })
     await page.goto('/')
     await expect(page.locator('[data-concierge-pill="true"]')).toContainText('Hold to talk')
 
     const primaryNav = page.getByRole('navigation', { name: 'Primary banking navigation' })
 
-    // 1. Home
+    // 1. Home (including Spacebar shortcut toggle On and Off for WCAG 2.5.3 Label in Name)
     await expectZeroAxeViolations(page, 'Split Workbench - Home (Chloe)')
+    const spacebarToggle = page.getByTestId('spacebar-shortcut-toggle')
+    await spacebarToggle.click()
+    await expect(spacebarToggle).toHaveAttribute('aria-pressed', 'false')
+    await expectZeroAxeViolations(page, 'Split Workbench - Home (Chloe, Spacebar Off)')
+    await spacebarToggle.click()
+    await expect(spacebarToggle).toHaveAttribute('aria-pressed', 'true')
 
     // 2. Spending: Overview, Subscriptions, 3-Month Trend SVG chart, and Category Drilldown SVG chart
     await primaryNav.getByRole('button', { name: 'Spending' }).click()
@@ -355,8 +363,14 @@ test.describe('Cloudbank live proxy E2E and WCAG 2.1 AA suite', () => {
     await expect(page.locator('[data-toast]')).toBeVisible()
     await expectZeroAxeViolations(page, 'Split Workbench - Profile with Active Toast')
 
-    // 6. Mobile View (?layout=mobile): Banking view + Mobile Concierge Drawer
+    // 6. Narrow Split Workbench (<768px) with responsive Chat toggle pressed + Mobile View (?layout=mobile)
     await page.setViewportSize({ width: 390, height: 844 })
+    const responsiveChatToggle = page.getByTestId('responsive-concierge-toggle')
+    await expect(responsiveChatToggle).toBeVisible()
+    await responsiveChatToggle.click()
+    await expect(responsiveChatToggle).toHaveAttribute('aria-pressed', 'true')
+    await expectZeroAxeViolations(page, 'Narrow Split Workbench - Responsive Chat Open')
+
     await page.goto('/?layout=mobile')
     await expect(page.getByRole('navigation', { name: 'Workbench view controls' })).toBeVisible()
     await expectZeroAxeViolations(page, 'Mobile View (?layout=mobile) - Home')

@@ -27,6 +27,11 @@ updates:
       # major TypeScript bumps gated until typescript-eslint widens its peer range.
       - dependency-name: typescript
         update-types: [version-update:semver-major]
+      # Keep @types/node major aligned with cloudbank/web/.nvmrc (22) and
+      # cloudbank/Dockerfile (node:22-slim) so TypeScript does not accept APIs
+      # absent from the pinned Node 22 runtime.
+      - dependency-name: "@types/node"
+        update-types: [version-update:semver-major]
 
   - package-ecosystem: uv
     directory: /cloudbank

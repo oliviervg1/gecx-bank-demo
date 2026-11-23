@@ -557,6 +557,8 @@ def test_dockerfile_and_ignore_files_preserve_layout_and_exclude_secrets() -> No
 
     assert "FROM node:22-slim AS web-builder" in active_docker
     assert "FROM python:3.12-slim AS runtime" in active_docker
+    ci_yml = (REPO_ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+    assert ci_yml.count('python-version: "3.12"') == 4
     assert "unset VITE_PROXY_URL && npm run build" in active_docker
     assert not re.search(r"ENV\s+VITE_PROXY_URL=", active_docker)
     assert "uv sync --locked --no-dev" in active_docker

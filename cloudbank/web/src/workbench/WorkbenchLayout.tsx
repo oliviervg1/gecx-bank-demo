@@ -269,7 +269,7 @@ export function WorkbenchLayout({ bankingContent }: Props) {
                 ref={responsiveToggleRef}
                 type="button"
                 data-testid="responsive-concierge-toggle"
-                aria-label={mobileConciergeOpen ? 'Show banking view' : 'Show concierge chat'}
+                aria-label="Concierge chat"
                 aria-pressed={mobileConciergeOpen}
                 onClick={toggleMobileConcierge}
                 className={

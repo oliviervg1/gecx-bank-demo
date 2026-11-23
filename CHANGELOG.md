@@ -2,7 +2,18 @@
 
 All notable changes to the Cloudbank Multi-Product Retail Banking Reference Application are documented in this file. Entries follow Why / Fix / Test / Docs so engineers and reviewers can trace both intent and verification.
 
-## [Unreleased] - 2026-11-12
+## [Unreleased] - 2026-11-23
+
+### Dependency Upgrades, `TaskGroup` Cancellation Isolation & WCAG 2.5.3 Toggle Labels
+
+- **Why:** Consolidate open Dependabot updates across GitHub Actions (`#29`), `cloudbank/web` (`#30`, `#31`, `#36`; `#33` declined via the `@types/node` semver-major gate), `cloudbank/proxy` (`#32`), and `cloudbank` (`#35`) while keeping `uv.lock` at `revision = 3` for local `uv 0.11.x` compatibility, keeping `@types/node` aligned with the pinned Node 22 runtime, resolving a CPython `<= 3.12` `asyncio.TaskGroup` cancellation-count leak surfaced by `starlette 1.10.0` and `anyio 4.16.0`, and fixing WCAG 2.1 SC 2.5.3 (`label-content-name-mismatch`) toggle labels caught by `@axe-core/playwright 4.14.0`.
+- **Fix:**
+  - Updated `.github/workflows/ci.yml` to `astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2` (`v10.3.3`) and pinned `python-version: "3.12"` across `agent`, `proxy`, `e2e`, and `python-audit` so CI matches `cloudbank/Dockerfile` (`python:3.12-slim`); gated `@types/node` `version-update:semver-major` in `.github/dependabot.yml` so Node typings stay aligned with `cloudbank/web/.nvmrc` (`22`) and `cloudbank/Dockerfile` (`node:22-slim`).
+  - Upgraded `cloudbank/uv.lock` (`ruff 0.17.6`) and `cloudbank/proxy/uv.lock` (`fastapi 0.165.0`, `starlette 1.10.0`, `anyio 4.16.0`, `pydantic 2.14.4`, `pydantic-core 2.50.5`, `typing-inspection 0.4.5`, API-only transitive `opentelemetry-api 1.45.2` with no SDK, `pytest 9.2.0`, `pytest-asyncio 1.5.0`, and `ruff 0.17.6`) at `revision = 3`, and set `asyncio_default_fixture_loop_scope = "function"` in `cloudbank/proxy/pyproject.toml`.
+  - Isolated the 4-pump `asyncio.TaskGroup` in `cloudbank/proxy/src/proxy/relay.py` (`Relay._run_pumps`) inside a dedicated child task with `finally: await self.upstream.close()` so CPython `<= 3.12` `TaskGroup._aexit` never leaves `cancelling() == 1` on the ASGI WebSocket handler task when a child pump fails after `__aexit__` has begun awaiting completion.
+  - Upgraded `cloudbank/web` dependencies (`vite 8.3.8`, `vitest 5.1.1`, `@vitejs/plugin-react 6.3.0`, `eslint 10.15.0`, `eslint-plugin-react-refresh 0.5.8`, `globals 17.14.0`, `typescript-eslint 8.73.0`, `lucide-react 1.78.0`, `@axe-core/playwright 4.14.0`, `@playwright/test 1.65.1`, `@tailwindcss/vite 4.3.5`, `tailwindcss 4.3.5`, `@testing-library/react 16.3.3`, and `@types/react` / `@types/react-dom 19.3.0`, raising `engines.node` to `>=22.13.0`), and fixed WCAG 2.1 SC 2.5.3 (`label-content-name-mismatch`) on `spacebar-shortcut-toggle` in `ConciergePanel.tsx` and `responsive-concierge-toggle` in `WorkbenchLayout.tsx` so each button's accessible name includes its visible text across both toggle states.
+- **Test:** Added `test_relay_child_failure_preserves_zero_caller_cancelling_count` and active-pump cancellation assertions in `cloudbank/proxy/tests/test_relay.py`, added WCAG 2.5.3 toggle accessible-name unit assertions in `cloudbank/web/src/__tests__/ConciergePanel.test.tsx`, expanded `cloudbank/web/e2e/cloudbank.spec.ts` with toggled Spacebar and narrow Split Workbench `axe-core` scans, and verified `make check`, `make e2e`, `pip-audit`, and `npm audit --audit-level=high` with zero warnings.
+- **Docs:** Updated `README.md`, `AGENTS.md`, `Makefile`, `docs/guides/developer_workflow_and_cicd_guide.md`, and `CHANGELOG.md`.
 
 ### Single-Origin Cloud Run Direct IAP Deployment & Proxy Hardening
 
