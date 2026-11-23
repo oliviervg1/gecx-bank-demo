@@ -1,5 +1,5 @@
 # Cloudbank developer workflow targets.
-# Requires Python 3.11+, uv, and Node.js 22+.
+# Requires Python 3.11+, uv, and Node.js 22.13+.
 
 SHELL := /usr/bin/env bash
 .SHELLFLAGS := -eu -o pipefail -c

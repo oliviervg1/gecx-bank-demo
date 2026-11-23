@@ -15,6 +15,7 @@ from proxy import relay as relay_mod
 from proxy.protocol import (
     MAX_CLIENT_FRAME_BYTES,
     AudioFrame,
+    BinaryFrameError,
     BrowserDisconnectError,
     ClientStart,
     ClientStop,
@@ -904,6 +905,7 @@ async def test_emits_server_end_from_diagnostic_tool_call_or_released_variable(
 async def test_relay_task_group_propagates_external_cancellation_cleanly(
     fake_upstream: FakeUpstream,
 ) -> None:
+    # 1. Cancellation immediately after initial config (before the pump group starts)
     browser = FakeBrowser()
     relay = Relay(
         browser=browser,
@@ -919,3 +921,55 @@ async def test_relay_task_group_propagates_external_cancellation_cleanly(
     with pytest.raises(asyncio.CancelledError):
         await task
     assert fake_upstream.closed is True
+    assert relay._tasks == []
+
+    # 2. Cancellation after all four child pumps are actively awaiting I/O
+    active_upstream = FakeUpstream()
+    active_browser = FakeBrowser()
+    active_relay = Relay(
+        browser=active_browser,
+        upstream=active_upstream,
+        app_resource="apps/x",
+        session_id="sess-cancel-active",
+    )
+    active_task = asyncio.create_task(
+        active_relay.run(start=ClientStart(type="start", persona="chloe"))
+    )
+    await active_upstream.recv_from_proxy()
+    await asyncio.sleep(0.01)
+    assert len(active_relay._tasks) == 4
+    active_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await active_task
+    assert active_upstream.closed is True
+    assert all(t.done() for t in active_relay._tasks)
+
+
+@pytest.mark.asyncio
+async def test_relay_child_failure_preserves_zero_caller_cancelling_count() -> None:
+    """Guard against CPython <= 3.12 TaskGroup._aexit leaving caller.cancelling() == 1."""
+
+    class FailingBrowser(FakeBrowser):
+        async def receive_text(self) -> str:
+            await asyncio.sleep(0.01)
+            raise BinaryFrameError("binary frame not allowed")
+
+    upstream = FakeUpstream()
+    browser = FailingBrowser()
+    relay = Relay(
+        browser=browser,
+        upstream=upstream,
+        app_resource="apps/x",
+        session_id="sess-cancelling-count",
+    )
+    caller = asyncio.current_task()
+    assert caller is not None
+    assert caller.cancelling() == 0
+
+    with pytest.raises(BinaryFrameError):
+        await relay.run(start=ClientStart(type="start", persona="chloe"))
+
+    assert caller.cancelling() == 0
+    assert upstream.closed is True
+    assert len(relay._tasks) == 4
+    assert all(t.done() for t in relay._tasks)

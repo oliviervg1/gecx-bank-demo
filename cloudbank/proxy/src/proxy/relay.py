@@ -723,16 +723,26 @@ class Relay:
             serialize_server_msg(ServerReady(sessionId=self.session_id))
         )
 
+        # CPython <= 3.12 leaves cancelling() == 1 on the task owning a TaskGroup
+        # when a child fails after __aexit__ starts awaiting completion (not on
+        # 3.13); awaiting the child task forwards cancellation cleanly, and
+        # finally closes upstream even if pumps were cancelled before their first step.
+        group_task = asyncio.create_task(self._run_pumps())
         try:
-            async with asyncio.TaskGroup() as tg:
-                self._tasks.append(tg.create_task(self._pump_upstream_to_browser()))
-                self._tasks.append(tg.create_task(self._pump_browser_to_upstream()))
-                self._tasks.append(tg.create_task(self._keepalive_loop()))
-                self._tasks.append(tg.create_task(self._idle_watchdog_loop()))
+            await group_task
         except BaseExceptionGroup as eg:
             if isinstance(eg, ExceptionGroup):
                 raise _unwrap_exception_group(eg) from None
             raise
+        finally:
+            await self.upstream.close()
+
+    async def _run_pumps(self) -> None:
+        async with asyncio.TaskGroup() as tg:
+            self._tasks.append(tg.create_task(self._pump_upstream_to_browser()))
+            self._tasks.append(tg.create_task(self._pump_browser_to_upstream()))
+            self._tasks.append(tg.create_task(self._keepalive_loop()))
+            self._tasks.append(tg.create_task(self._idle_watchdog_loop()))
 
     async def _send_upstream(self, payload: dict[str, Any]) -> None:
         await self.upstream.send(json.dumps(payload))

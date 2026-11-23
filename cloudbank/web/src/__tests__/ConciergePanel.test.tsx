@@ -508,4 +508,46 @@ describe('Executive ConciergePanel & full ui_view_state screen sync', () => {
       globalThis.fetch = origFetch
     }
   })
+
+  it('preserves WCAG 2.1 SC 2.5.3 Label in Name across spacebar and responsive concierge toggles', async () => {
+    render(<App />)
+    const ws = sockets[sockets.length - 1]!
+    await act(async () => {
+      ws.open()
+      ws.deliver({ type: 'ready', sessionId: 'sess-label-in-name' })
+    })
+
+    const assertVisibleTextInAriaLabels = () => {
+      for (const btn of Array.from(document.querySelectorAll('button[aria-label], a[aria-label]'))) {
+        const aria = (btn.getAttribute('aria-label') ?? '').trim().toLowerCase()
+        // Exclude screen-reader-only spans when computing visible label text
+        const clone = btn.cloneNode(true) as HTMLElement
+        for (const srOnly of Array.from(clone.querySelectorAll('.sr-only, [aria-hidden="true"]'))) {
+          srOnly.remove()
+        }
+        const visible = (clone.textContent ?? '').replace(/\s+/g, ' ').trim().toLowerCase()
+        if (visible) {
+          expect(aria).toContain(visible)
+        }
+      }
+    }
+
+    const spacebarToggle = screen.getByTestId('spacebar-shortcut-toggle')
+    expect(spacebarToggle).toHaveAttribute('aria-pressed', 'true')
+    expect(spacebarToggle).toHaveAccessibleName('Spacebar: On (hold-to-talk shortcut)')
+    assertVisibleTextInAriaLabels()
+
+    fireEvent.click(spacebarToggle)
+    expect(spacebarToggle).toHaveAttribute('aria-pressed', 'false')
+    expect(spacebarToggle).toHaveAccessibleName('Spacebar: Off (hold-to-talk shortcut)')
+    assertVisibleTextInAriaLabels()
+
+    const responsiveToggle = screen.getByTestId('responsive-concierge-toggle')
+    expect(responsiveToggle).toHaveAttribute('aria-pressed', 'false')
+    expect(responsiveToggle).toHaveAccessibleName('Concierge chat')
+    fireEvent.click(responsiveToggle)
+    expect(responsiveToggle).toHaveAttribute('aria-pressed', 'true')
+    expect(responsiveToggle).toHaveAccessibleName('Concierge chat')
+    assertVisibleTextInAriaLabels()
+  })
 })

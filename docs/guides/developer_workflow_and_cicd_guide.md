@@ -6,7 +6,7 @@ This guide covers local environment setup via the root `Makefile`, the zero-warn
 
 Prerequisites:
 - Python `3.11+` and [uv](https://docs.astral.sh/uv/getting-started/installation/)
-- Node.js `22+` (see `cloudbank/web/.nvmrc`)
+- Node.js `22.13+` (see `cloudbank/web/.nvmrc`)
 - `jq` (used by `cloudbank/push.sh`)
 
 Install all locked Python and Node dependencies from committed public PyPI and npm lockfiles:
@@ -184,11 +184,11 @@ Every pull request and `main` push runs seven credential-free jobs in `.github/w
 | CI Job | Working Directory | Checks Executed |
 | :--- | :--- | :--- |
 | `privacy-and-hygiene` | Repository root | Runs `make hygiene` (`gecx-config.json` untracked, placeholder check, PyPI/npmjs lockfile host allowlists, and zero internal leak patterns across `git ls-files`). |
-| `agent` | `cloudbank` | `uv sync --locked`, `sync_shared.py --check`, `ruff check .`, `pyright`, `cxas lint` (`E001`-`E011`), `audit_agent.py`, `pytest -v`. |
-| `proxy` | `cloudbank/proxy` | `uv sync --locked`, `ruff check .`, `pyright`, `pytest -v`. |
+| `agent` | `cloudbank` | Python `3.12`, `uv sync --locked`, `sync_shared.py --check`, `ruff check .`, `pyright`, `cxas lint` (`E001`-`E011`), `audit_agent.py`, `pytest -v`. |
+| `proxy` | `cloudbank/proxy` | Python `3.12`, `uv sync --locked`, `ruff check .`, `pyright`, `pytest -v`. |
 | `web` | `cloudbank/web` | `npm ci`, `npm test` (Vitest), `npm run typecheck`, `npm run lint` (`--max-warnings 0`), `npm run build`. |
-| `e2e` | `cloudbank/{proxy,web}` | Installs proxy + web + Chromium, builds `vite`, and runs Playwright + `@axe-core/playwright` (`npm run test:e2e`). |
-| `python-audit` | `cloudbank`, `cloudbank/proxy` | Exports locked requirements and runs locked `uv run --locked pip-audit` against PyPA / OSV advisories. |
+| `e2e` | `cloudbank/{proxy,web}` | Python `3.12` + Node `22`, installs proxy + web + Chromium, builds `vite`, and runs Playwright + `@axe-core/playwright` (`npm run test:e2e`). |
+| `python-audit` | `cloudbank`, `cloudbank/proxy` | Python `3.12`, exports locked requirements, and runs locked `uv run --locked pip-audit` against PyPA / OSV advisories. |
 | `web-audit` | `cloudbank/web` | Runs `npm audit --audit-level=high` in an isolated advisory job. |
 
-`.github/dependabot.yml` monitors `/cloudbank/web` (`npm`), `/cloudbank` (`uv`), `/cloudbank/proxy` (`uv`), and `/` (`github-actions`) weekly.
+`.github/dependabot.yml` monitors `/cloudbank/web` (`npm`), `/cloudbank` (`uv`), `/cloudbank/proxy` (`uv`), and `/` (`github-actions`) weekly, ignoring `version-update:semver-major` for `typescript` (until `typescript-eslint` widens its peer range) and `@types/node` (so Node.js type definitions move together with `cloudbank/web/.nvmrc` and `cloudbank/Dockerfile`). Because hosted Dependabot `uv` runners may bump the `uv.lock` format revision (`revision = 5`) ahead of workstation `uv 0.11+` installs (`revision = 3`), prefer applying `uv` upgrades locally with `uv lock --default-index https://pypi.org/simple --upgrade-package <name>` inside `cloudbank/` or `cloudbank/proxy/` followed by `make check`.

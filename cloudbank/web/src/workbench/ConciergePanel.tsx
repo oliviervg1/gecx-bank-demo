@@ -375,7 +375,6 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
               type="button"
               data-testid="spacebar-shortcut-toggle"
               aria-pressed={spacebarEnabled}
-              aria-label="Spacebar hold-to-talk shortcut"
               onClick={() => agent.setSpacebarShortcutEnabled?.(!spacebarEnabled)}
               className={
                 'min-h-8 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full border text-[0.6875rem] font-semibold transition-colors ' +
@@ -386,6 +385,7 @@ export function ConciergePanel({ headingLevel = 'h2' }: ConciergePanelProps = {}
             >
               <Keyboard size={12} aria-hidden="true" />
               <span>Spacebar: {spacebarEnabled ? 'On' : 'Off'}</span>
+              <span className="sr-only"> (hold-to-talk shortcut)</span>
             </button>
           )}
 

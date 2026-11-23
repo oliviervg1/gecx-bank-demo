@@ -18,7 +18,7 @@ Customer (Voice / Text)
 
 ## 2-Minute Offline Quickstart (Zero GCP Credentials)
 
-Requires Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Node.js 22+. Every structural lint, Composite v2 readiness audit, shared-bundle sync check, Ruff and Pyright check, Python controller/callback/parity test, proxy security test, React Vitest suite, and Playwright E2E test runs locally without cloud credentials:
+Requires Python 3.11+, [uv](https://docs.astral.sh/uv/getting-started/installation/), and Node.js 22.13+. Every structural lint, Composite v2 readiness audit, shared-bundle sync check, Ruff and Pyright check, Python controller/callback/parity test, proxy security test, React Vitest suite, and Playwright E2E test runs locally without cloud credentials:
 
 ```bash
 # 1. Install locked Python environments (cloudbank, proxy) and npm packages (web)
